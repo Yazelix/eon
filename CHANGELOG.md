@@ -22,6 +22,11 @@ installation, and proven contract changes.
   settle and refuses unexpected inheritable descriptors. After Update, local
   quota collection waits one normal interval. Usable shared Claude and Google
   schedules keep governing collection (EON-C27, `eon-t3fyd.9.1`).
+- Agents sidebar and attention inbox rows reserve a shared square icon slot so
+  row text aligns across all rows, including `status unavailable` and popup rows.
+  Unknown OSC 7501 `app` values render an uppercased alphanumeric monogram on a
+  contrast-adapted neutral rounded tile; punctuation-only or missing `app`
+  values render the generic agent glyph (`eon-sidebar-app-icons-y99b7.2`).
 
 - On Wayland, stopping one touchpad scroll axis no longer starts momentum
   while the other axis is still active.

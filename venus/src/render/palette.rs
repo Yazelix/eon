@@ -532,7 +532,7 @@ pub(super) fn linear_channel(channel: u8) -> f64 {
         ((value + 0.055) / 1.055).powf(2.4)
     }
 }
-fn encoded_channel(value: f64) -> f64 {
+pub(super) fn encoded_channel(value: f64) -> f64 {
     if value <= 0.0031308 {
         value * 12.92
     } else {

@@ -1134,7 +1134,11 @@ the panes' rows in pane order. A row shows:
   it started still run), or ○ idle; the dots take the window's focus colour
   (`[terminal] focus_color`); the same animation-off setting keeps Background
   dots steadily lit;
-- the Claude or Codex icon;
+- the program icon in a shared square slot so row text lines up: built-in marks
+  for Claude Code, Codex, OpenCode, and Antigravity, an uppercased monogram on a
+  neutral rounded tile for any other `app`, a generic agent glyph when a record
+  omits `app` or has no ASCII letter or digit, or an empty aligned slot when a terminal
+  has no status record;
 - a Claude Code session's name, such as `eon-9a` for a session started
   with `claude --name eon-9a`; otherwise the title the agent reports, and
   without that, the app's name, such as `Codex`;

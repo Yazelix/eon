@@ -481,11 +481,10 @@ fn agent_sidebar_pushes_columns_hides_for_width_and_shows_its_empty_state() {
     assert!(!project(&snapshot, 1400).sidebar_empty());
 }
 
-fn single_app_rows(app: &str, metrics: CellMetrics) -> [SidebarRow; 2] {
-    let mut snapshot = sidebar_snapshot();
-    let attention = Attention {
-        state: AttentionState::Idle,
-        record: Some(eon_workspace_protocol::v50::AttentionRecord {
+fn app_attention(app: Option<&str>) -> Attention {
+    Attention {
+        state: app.map_or(AttentionState::Unavailable, |_| AttentionState::Idle),
+        record: app.map(|app| eon_workspace_protocol::v50::AttentionRecord {
             app: app.into(),
             name: "not a session name".into(),
             title: String::new(),
@@ -496,7 +495,12 @@ fn single_app_rows(app: &str, metrics: CellMetrics) -> [SidebarRow; 2] {
             stale: false,
             others: 0,
         }),
-    };
+    }
+}
+
+fn single_app_rows(app: Option<&str>, metrics: CellMetrics) -> [SidebarRow; 2] {
+    let mut snapshot = sidebar_snapshot();
+    let attention = app_attention(app);
     snapshot.tabs[0].columns[0].panes[0].attention = Some(attention.clone());
     snapshot.tabs[0].attention_rollup = Some(attention.state);
     snapshot.attention_queue = vec![eon_workspace_protocol::v50::QueueEntry {
@@ -523,14 +527,15 @@ fn single_app_rows(app: &str, metrics: CellMetrics) -> [SidebarRow; 2] {
 
 #[test]
 fn opencode_rows_use_the_product_name_and_mark_without_changing_unknown_apps() {
+    use AppIcon::{Mark, Monogram};
     let metrics = CellMetrics::for_scale(1.0);
-    for (app, title) in [("opencode", "OpenCode"), ("other-agent", "other-agent")] {
-        for row in single_app_rows(app, metrics) {
+    for (app, title, expected) in [
+        ("opencode", "OpenCode", Some(Mark(AppMark::OpenCode))),
+        ("other-agent", "other-agent", Some(Monogram('O'))),
+    ] {
+        for row in single_app_rows(Some(app), metrics) {
             assert_eq!(row.title, title);
-            assert_eq!(
-                row.icon.map(|(mark, _)| mark),
-                (app == "opencode").then_some(AppMark::OpenCode),
-            );
+            assert_eq!(row.icon.map(|(icon, _)| icon), expected);
             assert!(
                 row.accessible_label
                     .starts_with(&format!("Idle: {title} in "))
@@ -541,20 +546,80 @@ fn opencode_rows_use_the_product_name_and_mark_without_changing_unknown_apps() {
 
 #[test]
 fn antigravity_rows_use_the_product_name_and_mark_and_reject_near_misses() {
+    use AppIcon::{Mark, Monogram};
     let metrics = CellMetrics::for_scale(1.0);
-    for (app, title, expected_mark) in [
-        ("antigravity", "Antigravity", Some(AppMark::Antigravity)),
-        ("agy", "agy", None),
-        ("Antigravity", "Antigravity", None),
-        ("antigravity-cli", "antigravity-cli", None),
+    for (app, title, expected) in [
+        (
+            "antigravity",
+            "Antigravity",
+            Some(Mark(AppMark::Antigravity)),
+        ),
+        ("agy", "agy", Some(Monogram('A'))),
+        ("Antigravity", "Antigravity", Some(Monogram('A'))),
+        ("antigravity-cli", "antigravity-cli", Some(Monogram('A'))),
     ] {
-        for row in single_app_rows(app, metrics) {
+        for row in single_app_rows(Some(app), metrics) {
             assert_eq!(row.title, title);
-            assert_eq!(row.icon.map(|(mark, _)| mark), expected_mark);
+            assert_eq!(row.icon.map(|(icon, _)| icon), expected);
             assert!(
                 row.accessible_label
                     .starts_with(&format!("Idle: {title} in "))
             );
+        }
+    }
+}
+
+#[test]
+fn app_icon_slot_monogram_generic_and_popup_alignment() {
+    use AppIcon::{Generic, Mark, Monogram};
+    use AppMark::{Antigravity, ClaudeCode, Codex, OpenCode};
+
+    let metrics = CellMetrics::for_scale(1.0);
+    let [base_s, base_i] = single_app_rows(Some("codex"), metrics);
+    let (sl, il) = (base_s.text_left, base_i.text_left);
+    for (app, expected) in [
+        (Some("claude-code"), Some(Mark(ClaudeCode))),
+        (Some("codex"), Some(Mark(Codex))),
+        (Some("opencode"), Some(Mark(OpenCode))),
+        (Some("antigravity"), Some(Mark(Antigravity))),
+        (Some("Claude-Code"), Some(Monogram('C'))),
+        (Some("CODEX"), Some(Monogram('C'))),
+        (Some("OpenCode"), Some(Monogram('O'))),
+        (Some("kiro-cli"), Some(Monogram('K'))),
+        (Some("9bot"), Some(Monogram('9'))),
+        (Some("_foo"), Some(Monogram('F'))),
+        (Some(".-3x"), Some(Monogram('3'))),
+        (Some("---"), Some(Generic)),
+        (Some("._+-/"), Some(Generic)),
+        (Some(""), Some(Generic)),
+        (None, None),
+    ] {
+        let [s, i] = single_app_rows(app, metrics);
+        let (si, ii) = (s.icon.map(|(x, _)| x), i.icon.map(|(x, _)| x));
+        assert_eq!(
+            (si, ii, s.text_left, i.text_left),
+            (expected, expected, sl, il)
+        );
+    }
+
+    for scale in [1.0, 1.5, 2.0] {
+        let m = CellMetrics::for_scale(scale);
+        let sz = PhysicalSize::new((1280.0 * scale) as u32, (800.0 * scale) as u32);
+        let fit = |_: HeaderText<'_>, t: &str| (t.into(), t.len() as f32 * m.width);
+        let mut shared_left = None;
+        for app in [Some("codex"), Some("kiro-cli"), Some("---"), None] {
+            let mut snap = sidebar_snapshot();
+            let att = app_attention(app);
+            snap.tabs[0].attention_rollup = Some(att.state);
+            snap.tabs[0].popups[0].attention = Some(att);
+            let scene = WorkspaceScene::from_snapshot(&snap, sz, m, 0.0, 0.0, fit);
+            let row = scene.sidebar_row("u1").unwrap();
+            let marker = row.popup_marker.unwrap();
+            assert_eq!(row.text_left, *shared_left.get_or_insert(row.text_left));
+            if let Some((_, slot)) = row.icon {
+                assert!(row.glyph.rect.right() < slot.left && slot.right() < row.text_left);
+            }
+            assert!(row.text_left < row.text_right && row.text_right < marker.left);
         }
     }
 }
@@ -744,7 +809,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         &str,
         AttentionState,
         bool,
-        Option<AppMark>,
+        Option<AppIcon>,
         &str,
         &str,
         Option<&str>,
@@ -754,7 +819,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
             row.target.as_str(),
             row.glyph.state,
             row.glyph.dimmed,
-            row.icon.map(|(provider, _)| provider),
+            row.icon.map(|(icon, _)| icon),
             row.title.as_str(),
             row.detail.as_str(),
             row.message.as_deref(),
@@ -778,7 +843,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 "p2",
                 AttentionState::NeedsInput,
                 false,
-                Some(AppMark::ClaudeCode),
+                Some(AppIcon::Mark(AppMark::ClaudeCode)),
                 "eon-9a",
                 "4m · p2 · +2",
                 Some("Allow Bash: cargo test?"),
@@ -788,7 +853,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 "p4",
                 AttentionState::Working,
                 true,
-                Some(AppMark::Codex),
+                Some(AppIcon::Mark(AppMark::Codex)),
                 "Fix tests",
                 "now · p4 · status stale",
                 None,
@@ -800,7 +865,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
                 "p5",
                 AttentionState::Idle,
                 false,
-                None,
+                Some(AppIcon::Monogram('A')),
                 "aider",
                 "2h · p5",
                 None,
@@ -889,7 +954,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         );
         for row in [sidebar.sidebar_row("p2").unwrap(), &inbox.attention_rows[0]] {
             assert_eq!(row.title, expected);
-            assert_eq!(row.icon.map(|(provider, _)| provider), Some(provider));
+            assert_eq!(row.icon.map(|(i, _)| i), Some(AppIcon::Mark(provider)));
             if pin.is_some() {
                 assert_eq!(
                     row.accessible_label,
@@ -1015,7 +1080,7 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
     assert_eq!(rows[1].rect.height - rows[3].rect.height, metrics.height);
     let (_, icon) = rows[1].icon.unwrap();
     assert!(rows[1].glyph.rect.right() < icon.left && icon.right() < rows[1].text_left);
-    assert!(rows[0].text_left < rows[1].text_left);
+    assert!(rows.iter().all(|row| row.text_left == rows[1].text_left));
     assert!(
         rows.iter()
             .all(|row| row.rect.left >= card.left && row.rect.right() <= card.right())

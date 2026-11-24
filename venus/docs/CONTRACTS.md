@@ -2416,7 +2416,9 @@ re-proved when that platform or feature is next touched.
   decorations](PRESENTATION.md#window-background-and-decorations)), and the
   current row's focus-colour outline and inset keyboard-focus treatment
   (`eon-wuau8.4`), and pointer scrolling/overflow indication (`eon-r1scq`),
-  and the Antigravity program mark (`eon-sidebar-app-icons-y99b7.13`).
+  and the Antigravity program mark (`eon-sidebar-app-icons-y99b7.13`), and the
+  reserved icon slot, unknown-app monogram and generic agent glyph
+  (`eon-sidebar-app-icons-y99b7.2`).
   Lucca approved the current-row outline presentation on 2026-11-11 ("ahhh
   i like it"); its live acceptance follows landing. The bare translucent-row
   badges, contour fallback and font-sized row badges (`eon-0ntg1`) have
@@ -2482,6 +2484,15 @@ re-proved when that platform or feature is next touched.
   official full-colour icon, unaltered and untinted, in place of the one-colour
   mask; the label and the other programs' marks are unchanged; installed proof
   pending.
+  Amended by `eon-sidebar-app-icons-y99b7.2` (approved 2026-11-23 by eon-desk under Lucca's delegation): every
+  row reserves the shared square icon slot so row text lines up (popup rows
+  keep both the left slot and right-edge popup marker without overlap); built-in
+  marks stay exact and case-sensitive; any other `app` shows an uppercased
+  first ASCII letter/digit monogram on a neutral rounded tile; a
+  punctuation-only `app` or a record without `app` shows the generic agent
+  glyph (Lucide `bot` mask); a terminal without records leaves the slot empty;
+  monogram tile, letter and generic glyph follow the row's contrast-adapted
+  and stale palette; installed proof pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. When
   admitted under VEN-C8 and VEN-C20, Alt+G and Alt+Shift+G work under `Off` too.
@@ -2538,19 +2549,33 @@ re-proved when that platform or feature is next touched.
       terminal with attention.
     - A row shows:
       - the state glyph;
-      - the app icon: Venus maps `app=claude-code` to Claude Code's official
-        standalone Clawd symbol, `app=codex` to a colour vector of Codex's
-        symbol, `app=opencode` to OpenCode's official transparent mark
-        (selecting the vendor's dark or light variant whose outer stroke
-        contrasts more with the row's resolved background, including hover and
-        keyboard-focus fills), and exact `app=antigravity` (no aliases or
-        process-name guessing) to Google Antigravity's official full-colour icon
-        (`Icon`), unaltered. Claude Code, Codex, and Antigravity keep their
-        supplied colours and transparency and are never tinted; OpenCode alone
-        selects its vendor dark or light variant by contrast. App marks are not
-        dimmed when stale and scale proportionally inside the icon slot. Eon Bar
-        quota chips keep their account/provider marks
-        ([Eon Bar](PRESENTATION.md#eon-bar)), including the Google quota chip;
+      - the app icon, in the shared square icon slot
+        ([Agents sidebar](PRESENTATION.md#agents-sidebar)) that every row
+        reserves so row text lines up (popup rows retain both this left slot
+        and the right-edge popup marker without text overlap):
+        - built-in marks (exact, case-sensitive `app` matching; no aliases or
+          process-name guessing): Venus maps `app=claude-code` to Claude Code's
+          official standalone Clawd symbol, `app=codex` to a colour vector of
+          Codex's symbol, `app=opencode` to OpenCode's official transparent mark
+          (selecting the vendor's dark or light variant whose outer stroke
+          contrasts more with the row's resolved background, including hover and
+          keyboard-focus fills), and `app=antigravity` to Google Antigravity's
+          official full-colour icon (`Icon`), unaltered. Claude Code, Codex, and
+          Antigravity keep their supplied colours and transparency and are never
+          tinted; OpenCode alone selects its vendor dark or light variant by
+          contrast. Built-in marks are not dimmed when stale and scale
+          proportionally inside the icon slot;
+        - unknown apps and missing `app`: any other nonempty `app` shows a
+          monogram—its first ASCII letter or digit, uppercased, drawn in the UI
+          font centred on a neutral rounded tile filling the icon slot. An `app`
+          with no ASCII letter or digit, or a record without `app`, shows the
+          generic agent glyph (Lucide `bot` mask) in the icon slot. Tile,
+          letter, and generic glyph follow the row's contrast-adapted and stale
+          palette (fixed neutral tones, not hashed colours);
+        - no record: a terminal without records (`status unavailable`) leaves
+          the icon slot empty while keeping its horizontal reserve;
+        - Eon Bar quota chips keep their account/provider marks
+          ([Eon Bar](PRESENTATION.md#eon-bar)), including the Google quota chip;
       - one label: a pane's nonempty `pinned_name` takes precedence, including over
         an agent-reported name. This also applies to an attention inbox row whose
         pane belongs to the shown session. Without a pane pin, use the first

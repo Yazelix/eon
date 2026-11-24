@@ -320,3 +320,37 @@ with the art unaltered and no implied endorsement or affiliation:
 
 > "this is nothing for us to worry about, in practice, they add this to protect
 > from people trying to use the logo for bad practices"
+
+## Lucide bot glyph
+
+`venus/assets/generic-agent-104.alpha` is a 104×104 8-bit alpha mask of
+`icons/bot.svg` from [`lucide-icons/lucide`](https://github.com/lucide-icons/lucide)
+release `1.78.0`, commit `e00b2b26350fe4dfb6f5273aa366f94974430903` (retrieved
+2026-11-23). Original SVG SHA-256:
+`e46fe72fc5b33d7a17b0112df85da9ded851860312e8353f4fe23d87a4ce77f5`.
+Alpha mask SHA-256:
+`e578a8aef86bd3289bed026f7e9c5e8cf1584f2ce9e641ac45ed8ea1f9f5d370`.
+`bot` is not among Lucide's Feather-derived icons; the ISC terms below apply.
+
+Prepared with `rsvg-convert` 2.62.3 (cairo 1.18.4) and ImageMagick 7.1.2-35 Q16-HDRI:
+
+```sh
+rsvg-convert --width=104 --height=104 --output=generic-agent-104.png bot.svg
+magick generic-agent-104.png -channel A -separate -depth 8 gray:generic-agent-104.alpha
+```
+
+> ISC License
+>
+> Copyright (c) 2026 Lucide Icons and Contributors
+>
+> Permission to use, copy, modify, and/or distribute this software for any
+> purpose with or without fee is hereby granted, provided that the above
+> copyright notice and this permission notice appear in all copies.
+>
+> THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+> WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+> MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+> ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+> WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+> ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+> OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.

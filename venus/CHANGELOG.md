@@ -7,6 +7,14 @@
 - VEN-C7: Hold a drag selection at or below the bottom visible row to
   extend it toward live output. ORBS v15 supplies each tick's frame before
   Venus continues. Ticks stop at live or on release (`eon-fojjj`).
+- VEN-C30: Agents sidebar and attention inbox rows reserve the shared square
+  icon slot so row text aligns across built-in marks, monograms, generic glyphs,
+  and no-record rows without overlapping popup markers; unknown `app` values
+  show an uppercased first ASCII letter/digit monogram on a neutral rounded tile,
+  and punctuation-only or missing `app` values show the Lucide `bot` generic
+  glyph in the row's contrast-adapted, stale-aware palette
+  (`eon-sidebar-app-icons-y99b7.2`, approved 2026-11-23 by eon-desk under
+  Lucca's delegation).
 
 - Consume EONW v49 input-lock state and the resolved toggle. While locked,
   send other keys through ordinary focused terminal input, suppress their

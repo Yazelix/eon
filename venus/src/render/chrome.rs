@@ -10,20 +10,23 @@ use super::{
     CellFont, CellMetrics, CursorPoint, DrawStyleKind, PlacedText, RectangleBatch, Renderer,
     SceneColor,
     cells::card_surfaces,
-    palette::{self, blend_to_contrast, blend_to_contrast_pair, contrast_ratio},
+    palette::{
+        self, Palette, PaletteMode, blend_to_contrast, blend_to_contrast_pair, contrast_ratio,
+        relative_luminance,
+    },
     shape_styled_text, shaping,
 };
 use crate::{
     DialogScene, Load, SceneRect, WorkspaceFocus, WorkspaceHeaderControl, WorkspaceScene,
     scene::{
-        AppMark, HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE, ShortcutHintGroup,
-        ShortcutHintsScene, TabBadge, WorkspaceControl, tokens,
+        AppIcon, AppMark, HintSection, QuotaProvider, SIDEBAR_EMPTY, SIDEBAR_TITLE,
+        ShortcutHintGroup, ShortcutHintsScene, TabBadge, WorkspaceControl, tokens,
     },
 };
 use eon_workspace_protocol::v50::AttentionState;
 use glyphon::{
     Attrs, Buffer, Color, ContentType, CustomGlyph, Family, FontSystem, Metrics,
-    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Wrap,
+    RasterizeCustomGlyphRequest, RasterizedCustomGlyph, SwashCache, TextBounds, Weight, Wrap,
 };
 use winit::dpi::PhysicalSize;
 
@@ -36,7 +39,9 @@ const GEMINI_SPARK_ID: u16 = 6;
 const OPENCODE_DARK_ID: u16 = 7;
 const OPENCODE_LIGHT_ID: u16 = 8;
 const ANTIGRAVITY_MARK_ID: u16 = 9;
-const QUOTA_ICON_SIZE: usize = 104;
+const GENERIC_AGENT_ID: u16 = 10;
+const GENERIC_AGENT_OUTLINE_ID: u16 = 11;
+const ALPHA_MASK_SIZE: usize = 104;
 /// The sides an Eon icon image may have, in pixels.
 const EON_ICON_SIDES: std::ops::RangeInclusive<usize> = 16..=512;
 /// The last row of a keycap popup that cannot show every column: the Shortcuts viewer lists them.
@@ -334,12 +339,14 @@ fn quota_pace_color(shortfall: f32) -> SceneColor {
         })
 }
 
-const OPENAI_BLOSSOM_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
+const OPENAI_BLOSSOM_ALPHA: &[u8; ALPHA_MASK_SIZE * ALPHA_MASK_SIZE] =
     include_bytes!("../../assets/openai-blossom-104.alpha");
-const CLAUDE_SPLAT_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
+const CLAUDE_SPLAT_ALPHA: &[u8; ALPHA_MASK_SIZE * ALPHA_MASK_SIZE] =
     include_bytes!("../../assets/claude-splat-104.alpha");
-const GEMINI_SPARK_ALPHA: &[u8; QUOTA_ICON_SIZE * QUOTA_ICON_SIZE] =
+const GEMINI_SPARK_ALPHA: &[u8; ALPHA_MASK_SIZE * ALPHA_MASK_SIZE] =
     include_bytes!("../../assets/gemini-spark-104.alpha");
+const GENERIC_AGENT_ALPHA: &[u8; ALPHA_MASK_SIZE * ALPHA_MASK_SIZE] =
+    include_bytes!("../../assets/generic-agent-104.alpha");
 const CLAUDE_CODE_RGBA_22: &[u8; 22 * 22 * 4] =
     include_bytes!("../../assets/claude-code-clawd-22.rgba");
 const CLAUDE_CODE_RGBA_33: &[u8; 33 * 33 * 4] =
@@ -766,6 +773,7 @@ pub(super) fn rasterize_bar_icon(
         OPENAI_BLOSSOM_ID => (OPENAI_BLOSSOM_ALPHA, 1, ContentType::Mask),
         CLAUDE_SPLAT_ID => (CLAUDE_SPLAT_ALPHA, 1, ContentType::Mask),
         GEMINI_SPARK_ID => (GEMINI_SPARK_ALPHA, 1, ContentType::Mask),
+        GENERIC_AGENT_ID | GENERIC_AGENT_OUTLINE_ID => (GENERIC_AGENT_ALPHA, 1, ContentType::Mask),
         // Premultiplied, so averaging never bleeds a clear pixel's colour into the mark.
         EON_ICON_ID => (eon_icon?, 4, ContentType::Color),
         id => (
@@ -809,6 +817,26 @@ pub(super) fn rasterize_bar_icon(
                 *alpha = (coverage / count) as u8;
             } else {
                 pixel[0] = (sums[0] / count) as u8;
+            }
+        }
+    }
+    if matches!(request.id, GENERIC_AGENT_ID | GENERIC_AGENT_OUTLINE_ID) {
+        if let Some(peak @ 1..=254) = data.iter().copied().max() {
+            for a in &mut data {
+                *a = ((u16::from(*a) * 255 + u16::from(peak) / 2) / u16::from(peak)) as u8;
+            }
+        }
+        if request.id == GENERIC_AGENT_OUTLINE_ID {
+            let base = data.clone();
+            for (i, a) in data.iter_mut().enumerate() {
+                let (x, y) = (i % width, i / width);
+                let at = |ok: bool, idx: usize| if ok { base[idx] } else { 0 };
+                *a = (*a)
+                    .max(at(x > 0, i.wrapping_sub(1)))
+                    .max(at(x + 1 < width, i + 1))
+                    .max(at(y > 0, i.wrapping_sub(width)))
+                    .max(at(y + 1 < height, i + width))
+                    .saturating_mul(2);
             }
         }
     }
@@ -861,6 +889,19 @@ impl Backing {
             Self::Translucent(fill, opacity, srgb_target)
         }
     }
+
+    fn nominal(self) -> SceneColor {
+        match self {
+            Self::BarPill(c) | Self::Surface(c) | Self::Translucent(c, ..) => c,
+        }
+    }
+
+    fn surfaces(self) -> [SceneColor; 2] {
+        match self {
+            Self::BarPill(c) | Self::Surface(c) => [c; 2],
+            Self::Translucent(c, opacity, srgb) => card_surfaces(c, opacity, srgb),
+        }
+    }
 }
 
 /// Whether Working and Background badges animate: only on a hardware adapter, and only while
@@ -908,21 +949,7 @@ impl Spinners {
             Backing::Translucent(color, opacity, srgb) => {
                 match blend_to_contrast_pair(base, card_surfaces(color, opacity, srgb), 3.0) {
                     Some(color) => (color, None),
-                    None => {
-                        let black = SceneColor { r: 0, g: 0, b: 0 };
-                        let white = SceneColor {
-                            r: 255,
-                            g: 255,
-                            b: 255,
-                        };
-                        let outline = if contrast_ratio(base, black) >= contrast_ratio(base, white)
-                        {
-                            black
-                        } else {
-                            white
-                        };
-                        (base, Some(outline))
-                    }
+                    None => (base, Some(contrast_outline(base))),
                 }
             }
         };
@@ -1008,7 +1035,7 @@ fn push_popup_marker(
         top: front.top + offset,
         ..front
     };
-    let radius = tokens::popup_marker_radius(side);
+    let radius = tokens::rounded_square_radius(side);
     // Keep tiny squares hollow when the configured card stroke would fill them.
     let stroke = stroke.min(((side - 1.0) / 2.0).floor().max(1.0));
     let mask = CardFill {
@@ -1882,7 +1909,12 @@ impl Renderer {
             &mut self.spinners,
             rectangles,
         );
-        self.text.extend(attention_row_icon(row, list, fill));
+        let backing = if row.focused || hovered {
+            Backing::Surface(fill)
+        } else {
+            surface
+        };
+        self.push_row_icon(row, list, backing, rectangles);
         if let Some(marker) = row.popup_marker {
             push_popup_marker(
                 rectangles,
@@ -3617,50 +3649,193 @@ impl Renderer {
         };
         self.text.extend(bar_icon(id, color, rect, clip));
     }
+
+    /// Draws a row's app icon: unknown-app monogram tile or custom glyph mask/mark.
+    fn push_row_icon(
+        &mut self,
+        row: &crate::SidebarRow,
+        list: SceneRect,
+        backing: Backing,
+        rects: &mut RectangleBatch,
+    ) {
+        let Some((AppIcon::Monogram(ch), rect)) = row.icon else {
+            self.text.extend(attention_row_icon(row, list, backing));
+            return;
+        };
+        let Some(clip) = rect.intersection(list) else {
+            return;
+        };
+        let (tile, letter) = monogram_colors(backing, row.current, row.glyph.dimmed);
+        rects.push_rounded(rect, tokens::rounded_square_radius(rect.width), tile);
+        let mut text = [0u8; 4];
+        let glyph = ch.encode_utf8(&mut text);
+        let size = (rect.height * 0.62).round().max(1.0);
+        let mut buf = Buffer::new(&mut self.fonts.font_system, Metrics::new(size, rect.height));
+        buf.set_size(None, None);
+        buf.set_wrap(Wrap::None);
+        let attrs = Attrs::new().family(Family::SansSerif).weight(Weight::BOLD);
+        buf.set_text(glyph, &attrs, shaping(glyph), None);
+        buf.shape_until_scroll(&mut self.fonts.font_system, false);
+        let (l, t, r, b) = buffer_ink(&mut self.fonts.font_system, &mut self.swash_cache, &buf)
+            .unwrap_or((0, 0, rect.width as i32, rect.height as i32));
+        let bounds = super::text_clip_bounds(clip);
+        self.text.push(PlacedText {
+            buffer: buf.into(),
+            custom_glyph: None,
+            left: (rect.left + rect.width / 2.0 - (l + r) as f32 / 2.0).round(),
+            top: (rect.top + rect.height / 2.0 - (t + b) as f32 / 2.0).round(),
+            right: bounds.right,
+            bottom: bounds.bottom,
+            bound_left: bounds.left,
+            bound_top: bounds.top,
+            color: Color::rgb(letter.r, letter.g, letter.b),
+        });
+    }
+}
+
+const fn grey(v: u8) -> SceneColor {
+    SceneColor { r: v, g: v, b: v }
+}
+
+fn mix(a: SceneColor, b: SceneColor, s: u16) -> SceneColor {
+    palette::interpolate(a, b, f32::from(s) / 255.0)
+}
+
+fn contrast_outline(c: SceneColor) -> SceneColor {
+    let dark = contrast_ratio(c, grey(0)) >= contrast_ratio(c, grey(255));
+    grey(if dark { 0 } else { 255 })
+}
+
+fn palette_for(c: SceneColor) -> &'static Palette {
+    let mode = if contrast_outline(c).r == 255 {
+        PaletteMode::Dark
+    } else {
+        PaletteMode::Light
+    };
+    Palette::builtin(mode)
+}
+
+/// Nearest blend of `source` toward black or white reaching `ratio` outside `backing`'s desktop range.
+fn adapt_outside(source: SceneColor, backing: Backing, ratio: f64) -> Option<SceneColor> {
+    let [dark, light] = backing.surfaces();
+    let (low, high) = (relative_luminance(dark), relative_luminance(light));
+    let ok = |c| {
+        let l = relative_luminance(c);
+        (l <= low && contrast_ratio(c, dark) >= ratio)
+            || (l >= high && contrast_ratio(c, light) >= ratio)
+    };
+    let first = contrast_outline(backing.nominal());
+    let order = [first, grey(255 - first.r)];
+    order.into_iter().any(ok).then_some(())?;
+    (0..=255).find_map(|s| {
+        order
+            .map(|e| mix(source, e, s))
+            .into_iter()
+            .find(|&c| ok(c))
+    })
+}
+
+/// Pull `color` toward `to` while keeping `>= min` contrast and never raising contrast.
+fn dim_toward(color: SceneColor, to: SceneColor, s: [SceneColor; 2], min: f64) -> SceneColor {
+    let max = s.map(|bg| contrast_ratio(color, bg));
+    (1..=255)
+        .map(|i| mix(color, to, i))
+        .take_while(|&c| s.into_iter().all(|g| contrast_ratio(c, g) >= min))
+        .filter(|&c| s.iter().zip(max).all(|(&g, m)| contrast_ratio(c, g) <= m))
+        .last()
+        .unwrap_or(color)
+}
+
+/// Neutral tile and letter colours adapted to the row's resolved backing and stale state.
+fn monogram_colors(backing: Backing, current: bool, dimmed: bool) -> (SceneColor, SceneColor) {
+    let nom = backing.nominal();
+    let seed = palette_for(nom).chrome_highlight;
+    let tile =
+        adapt_outside(seed, backing, 1.5).unwrap_or_else(|| blend_to_contrast(seed, nom, 1.5));
+    let letter = blend_to_contrast(palette_for(tile).primary_text, tile, 4.5);
+    if current || !dimmed {
+        return (tile, letter);
+    }
+    let ceil = contrast_ratio(letter, tile);
+    let mut st = dim_toward(tile, nom, backing.surfaces(), 1.5);
+    let mut sl = blend_to_contrast(palette_for(st).secondary_text, st, 4.5);
+    if contrast_ratio(sl, st) > ceil {
+        sl = dim_toward(letter, st, [st; 2], 4.5);
+        if contrast_ratio(sl, st) > ceil {
+            (st, sl) = (tile, dim_toward(letter, tile, [tile; 2], 4.5));
+        }
+    }
+    (st, sl)
+}
+
+/// Contrast-adapted, stale-aware neutral ink and optional 1px contour for the generic agent mask.
+fn generic_icon_style(b: Backing, cur: bool, dim: bool) -> (SceneColor, Option<SceneColor>) {
+    let (nom, pal) = (b.nominal(), palette_for(b.nominal()));
+    let adapt = |c| adapt_outside(c, b, 4.5);
+    let (fresh, out, refs, stale, to) = match adapt(pal.primary_text) {
+        Some(f) => {
+            let s = adapt(pal.secondary_text).unwrap_or(f);
+            (f, None, b.surfaces(), s, nom)
+        }
+        None => {
+            // Black contour covers >= #757575 (4.56:1), white <= #767676 (4.54:1); ink covers the rest.
+            let dark = contrast_outline(nom) == grey(255);
+            let cut = grey(if dark { 117 } else { 118 });
+            let fit = |c| blend_to_contrast(blend_to_contrast(c, nom, 4.5), cut, 4.5);
+            let (f, s) = (fit(pal.primary_text), fit(pal.secondary_text));
+            let o = contrast_outline(f);
+            (f, Some(o), [nom, cut], s, o)
+        }
+    };
+    if cur || !dim {
+        return (fresh, out);
+    }
+    let ok =
+        |s| contrast_ratio(stale, s) >= 4.5 && contrast_ratio(stale, s) <= contrast_ratio(fresh, s);
+    let ink = if refs.into_iter().all(ok) {
+        stale
+    } else {
+        dim_toward(fresh, to, refs, 4.5)
+    };
+    (ink, out)
 }
 
 /// Choose the vendor artwork with the more readable outer stroke on the painted row.
 fn opencode_mark_id(background: SceneColor) -> u16 {
-    let light_ink = SceneColor {
-        r: 238,
-        g: 238,
-        b: 238,
-    };
-    let dark_ink = SceneColor {
-        r: 31,
-        g: 31,
-        b: 31,
-    };
-    if contrast_ratio(light_ink, background) >= contrast_ratio(dark_ink, background) {
+    if contrast_ratio(grey(238), background) >= contrast_ratio(grey(31), background) {
         OPENCODE_DARK_ID
     } else {
         OPENCODE_LIGHT_ID
     }
 }
 
-/// Product images retain their own colours; OpenCode alone adapts to the row's resolved backing.
+/// Product images retain their own colours; OpenCode alone adapts to the row's resolved backing;
+/// the generic agent mask follows the row's contrast-adapted, stale-aware neutral palette.
 fn attention_row_icon(
     row: &crate::SidebarRow,
     clip: SceneRect,
-    background: SceneColor,
-) -> Option<PlacedText> {
-    let (mark, rect) = row.icon?;
-    let id = match mark {
-        AppMark::Codex => CODEX_SYMBOL_ID,
-        AppMark::ClaudeCode => CLAUDE_CODE_ID,
-        AppMark::OpenCode => opencode_mark_id(background),
-        AppMark::Antigravity => ANTIGRAVITY_MARK_ID,
+    backing: Backing,
+) -> impl Iterator<Item = PlacedText> {
+    let slots = match row.icon {
+        Some((AppIcon::Mark(m), r)) => {
+            let id = match m {
+                AppMark::Codex => CODEX_SYMBOL_ID,
+                AppMark::ClaudeCode => CLAUDE_CODE_ID,
+                AppMark::OpenCode => opencode_mark_id(backing.nominal()),
+                AppMark::Antigravity => ANTIGRAVITY_MARK_ID,
+            };
+            [bar_icon(id, grey(255), r, Some(clip)), None]
+        }
+        Some((AppIcon::Generic, r)) => {
+            let (ink, out) = generic_icon_style(backing, row.current, row.glyph.dimmed);
+            [
+                out.and_then(|c| bar_icon(GENERIC_AGENT_OUTLINE_ID, c, r, Some(clip))),
+                bar_icon(GENERIC_AGENT_ID, ink, r, Some(clip)),
+            ]
+        }
+        _ => [None, None],
     };
-    bar_icon(
-        id,
-        SceneColor {
-            r: 255,
-            g: 255,
-            b: 255,
-        },
-        rect,
-        Some(clip),
-    )
+    slots.into_iter().flatten()
 }
 
 /// Draws the custom glyph `id` in `rect`, a mask tinted `color` or a colour image as it is,
@@ -7330,7 +7505,7 @@ mod tests {
                             (scene.sidebar_row("p1").unwrap(), scene.sidebar_list),
                             (&inbox.attention_rows[0], inbox.content),
                         ] {
-                            assert_eq!(row.icon.unwrap().0, mark);
+                            assert_eq!(row.icon.unwrap().0, AppIcon::Mark(mark));
                             assert_eq!(row.glyph.dimmed, stale);
                             let symbol = row.icon.unwrap().1;
                             let status = row.glyph.rect;
@@ -7351,9 +7526,8 @@ mod tests {
                                     _ => unreachable!(),
                                 }
                             );
-                            let icon =
-                                attention_row_icon(row, clip, palette::DARK.terminal_fallback)
-                                    .unwrap();
+                            let bg = Backing::Surface(palette::DARK.terminal_fallback);
+                            let icon = attention_row_icon(row, clip, bg).next().unwrap();
                             let glyph = icon.custom_glyph.as_ref().unwrap();
                             assert_eq!(glyph.id, id);
                             assert_eq!(icon.color, color);
@@ -7781,19 +7955,19 @@ mod tests {
             let glyph = icon.custom_glyph.as_ref().unwrap();
             assert_eq!(glyph.id, id, "{provider:?} quota keeps its provider mark");
             assert_eq!(icon.color, Color::rgb(color.r, color.g, color.b));
-            let pixels = rasterize_bar_icon(
-                RasterizeCustomGlyphRequest {
-                    id: glyph.id,
-                    width: 16,
-                    height: 16,
-                    x_bin: SubpixelBin::Zero,
-                    y_bin: SubpixelBin::Zero,
-                    scale: 1.0,
-                },
-                None,
-            )
-            .unwrap();
+            let pixels = rasterize_bar_icon(icon_req(glyph.id, 16), None).unwrap();
             assert_eq!(pixels.content_type, ContentType::Mask);
+        }
+    }
+
+    fn icon_req(id: u16, size: u16) -> RasterizeCustomGlyphRequest {
+        RasterizeCustomGlyphRequest {
+            id,
+            width: size,
+            height: size,
+            x_bin: SubpixelBin::Zero,
+            y_bin: SubpixelBin::Zero,
+            scale: f32::from(size) / 16.0,
         }
     }
 
@@ -7803,20 +7977,10 @@ mod tests {
             (OPENAI_BLOSSOM_ID, OPENAI_BLOSSOM_ALPHA),
             (CLAUDE_SPLAT_ID, CLAUDE_SPLAT_ALPHA),
             (GEMINI_SPARK_ID, GEMINI_SPARK_ALPHA),
+            (GENERIC_AGENT_ID, GENERIC_AGENT_ALPHA),
         ] {
-            for size in [16, 20, 32, 104] {
-                let image = rasterize_bar_icon(
-                    RasterizeCustomGlyphRequest {
-                        id,
-                        width: size,
-                        height: size,
-                        x_bin: SubpixelBin::Zero,
-                        y_bin: SubpixelBin::Zero,
-                        scale: f32::from(size) / 16.0,
-                    },
-                    None,
-                )
-                .unwrap();
+            for size in [11, 16, 20, 22, 32, 33, 44, 104] {
+                let image = rasterize_bar_icon(icon_req(id, size), None).unwrap();
                 assert_eq!(image.content_type, ContentType::Mask);
                 assert_eq!(image.data.len(), usize::from(size * size));
                 assert_eq!(image.data[0], 0, "transparent corner remains clear");
@@ -7824,25 +7988,177 @@ mod tests {
                     image.data.iter().any(|alpha| *alpha > 200),
                     "the mark remains visible"
                 );
-                if usize::from(size) == QUOTA_ICON_SIZE {
+                if usize::from(size) == ALPHA_MASK_SIZE {
                     assert_eq!(image.data.as_slice(), original);
+                }
+                if id == GENERIC_AGENT_ID {
+                    let out =
+                        rasterize_bar_icon(icon_req(GENERIC_AGENT_OUTLINE_ID, size), None).unwrap();
+                    let lit = |d: &[u8]| d.iter().filter(|a| **a > 0).count();
+                    let zip = || out.data.iter().zip(&image.data);
+                    assert_eq!((out.content_type, out.data[0]), (ContentType::Mask, 0));
+                    assert!(image.data.contains(&255) && lit(&out.data) > lit(&image.data));
+                    assert!(zip().all(|(o, b)| o >= b) && zip().any(|(&o, &b)| o == 255 && b == 0));
                 }
             }
         }
-        assert!(
-            rasterize_bar_icon(
-                RasterizeCustomGlyphRequest {
-                    id: u16::MAX,
-                    width: 16,
-                    height: 16,
-                    x_bin: SubpixelBin::Zero,
-                    y_bin: SubpixelBin::Zero,
-                    scale: 1.0,
-                },
-                Some(&[255; 256]),
-            )
-            .is_none()
-        );
+        assert!(rasterize_bar_icon(icon_req(u16::MAX, 16), Some(&[255; 256])).is_none());
+    }
+
+    fn rgb(c: Color) -> SceneColor {
+        let [r, g, b] = [c.r(), c.g(), c.b()];
+        SceneColor { r, g, b }
+    }
+
+    fn blend(res: Backing, desk: SceneColor, layers: &[(SceneColor, u8)]) -> SceneColor {
+        let (bg, mut a, srgb) = match res {
+            Backing::Translucent(c, o, s) => (c, f64::from(o), s),
+            Backing::BarPill(c) | Backing::Surface(c) => (c, 1.0, true),
+        };
+        let lin = palette::linear_channel;
+        let dec = |v| if srgb { lin(v) } else { f64::from(v) / 255.0 };
+        let mut px = [bg.r, bg.g, bg.b].map(|v| dec(v) * a);
+        for &(c, u) in layers {
+            let sa = f64::from(u) / 255.0;
+            for (p, v) in px.iter_mut().zip([c.r, c.g, c.b]) {
+                *p = dec(v) * sa + *p * (1.0 - sa);
+            }
+            a = sa + a * (1.0 - sa);
+        }
+        let [r, g, b] = [0, 1, 2].map(|i| {
+            let v = px[i].clamp(0.0, 1.0);
+            let pm = if srgb { palette::encoded_channel(v) } else { v };
+            let d = f64::from([desk.r, desk.g, desk.b][i]);
+            (pm * 255.0 + d * (1.0 - a)).round().clamp(0.0, 255.0) as u8
+        });
+        SceneColor { r, g, b }
+    }
+
+    #[test]
+    fn monogram_and_generic_icons_adapt_contrast_and_stale_palette_across_backgrounds() {
+        let cr = contrast_ratio;
+        let pal = &palette::DARK;
+        let (dark, dialog) = (pal.terminal_fallback, pal.dialog_background);
+        let [r, g, b] = [239, 241, 245];
+        let light = SceneColor { r, g, b };
+        let [low, g74, cut, mid_g, g180, white] = [25, 74, 118, 119, 180, 255].map(grey);
+        let card = |c, o| Backing::card(c, o, true);
+        let desktops = [0, 50, 100, 116, 117, 119, 154, 255].map(grey);
+        let is_k = |t: &PlacedText| t.buffer.lines.first().map(|l| l.text()) == Some("K");
+        let (dev, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let fonts = FontSetup::new(&FontSettings::default()).unwrap();
+        let fmt = wgpu::TextureFormat::Rgba8Unorm;
+        let mut r = Renderer::hosted(dev, queue, fmt, (1280, 800), 1.0, fonts).unwrap();
+        let (m, sz) = (r.metrics(), PhysicalSize::new(1280, 800));
+        let fit = |_: crate::scene::HeaderText<'_>, t: &str| (t.into(), t.len() as f32 * m.width);
+        let scene = WorkspaceScene::from_snapshot(&popup_sidebar_snapshot(), sz, m, 0.0, 0.0, fit);
+        let (base, list) = (scene.sidebar_row("p1").unwrap(), scene.sidebar_list);
+        let slot = base.icon.unwrap().1;
+        assert_eq!((slot.width, slot.height), (22.0, 22.0));
+        let rs = [11, 22].map(|s| {
+            [GENERIC_AGENT_ID, GENERIC_AGENT_OUTLINE_ID]
+                .map(|id| rasterize_bar_icon(icon_req(id, s), None).unwrap().data)
+        });
+        let paint = |r: &mut Renderer, row: &crate::SidebarRow, clip, hov, surface: Backing| {
+            r.text.clear();
+            let mut b = RectangleBatch::new(1280, 800);
+            b.clip = Some(clip);
+            r.push_attention_row(row, clip, hov, surface, surface.nominal(), &mut b);
+            b.bytes
+        };
+        let plain = |s| (s, false, false);
+        let mut cases = vec![
+            plain(Backing::card(dark, 0.8, false)),
+            plain(Backing::card(light, 0.8, false)),
+            plain(card(low, 0.1)),
+            (card(light, 0.8), true, false),
+            (card(light, 0.8), false, true),
+        ];
+        for bg in [dark, dialog, g74, cut, mid_g, g180, light, white] {
+            cases.extend([Backing::Surface(bg), card(bg, 0.8), card(bg, 0.0)].map(plain));
+        }
+        for (s, hov, foc) in cases {
+            let (mut row, mut res) = (base.clone(), s);
+            (row.focused, row.icon) = (foc, None);
+            if foc || hov {
+                res = Backing::Surface(vertex_color(&paint(&mut r, &row, list, hov, s)[..24]));
+            }
+            let peak = |desk, out: Option<SceneColor>, ink, [mask, halo]: &[Vec<u8>; 2]| {
+                let bg = blend(res, desk, &[]);
+                let px = |(&m, &h)| match out {
+                    Some(o) if m > 0 || h > 0 => cr(blend(res, desk, &[(o, h), (ink, m)]), bg),
+                    None if m > 0 => cr(blend(res, desk, &[(ink, m)]), bg),
+                    _ => 0.0,
+                };
+                mask.iter().zip(halo).map(px).fold(0.0_f64, f64::max)
+            };
+            let (pair, nom) = (res.surfaces(), res.nominal());
+            assert_eq!([grey(0), white].map(|d| blend(res, d, &[])), pair);
+            let tiled = cr(grey(0), pair[0]) >= 1.5 || cr(white, pair[1]) >= 1.5;
+            let mut eval = |cur, stale| {
+                (row.current, row.glyph.dimmed, row.icon) = (cur, stale, None);
+                let base_b = paint(&mut r, &row, list, hov, s);
+                let empty = |t: &PlacedText| t.custom_glyph.is_none() && t.left == row.text_left;
+                assert!(r.text.iter().all(empty));
+                row.icon = Some((AppIcon::Monogram('K'), slot));
+                let mono_b = paint(&mut r, &row, list, hov, s);
+                let tile = vertex_color(&mono_b[base_b.len()..base_b.len() + 24]);
+                let mono = r.text.iter().find(|t| is_k(t)).unwrap();
+                let (l, t, ri, b) =
+                    buffer_ink(&mut r.fonts.font_system, &mut r.swash_cache, &mono.buffer).unwrap();
+                let dx = mono.left + (l + ri) as f32 / 2.0 - (slot.left + slot.width / 2.0);
+                let dy = mono.top + (t + b) as f32 / 2.0 - (slot.top + slot.height / 2.0);
+                let ch = rgb(mono.color);
+                assert!(dx.abs() <= 0.5 && dy.abs() <= 0.5 && (mono.right as f32) < row.text_left);
+                assert!(cr(ch, tile) >= 4.5 && cr(tile, nom) >= 1.5);
+                let ok_t = |d| cr(tile, blend(res, d, &[])) >= 1.5;
+                assert!(!tiled || desktops.into_iter().all(ok_t));
+                row.icon = Some((AppIcon::Generic, slot));
+                let _ = paint(&mut r, &row, list, hov, s);
+                let gs: Vec<_> = r.text.iter().filter(|t| t.custom_glyph.is_some()).collect();
+                let ids: Vec<_> = gs.iter().map(|g| g.custom_glyph.unwrap().id).collect();
+                assert!(gs.iter().all(|g| (g.left, g.top) == (slot.left, slot.top)));
+                let (ink, out) = if ids == [GENERIC_AGENT_OUTLINE_ID, GENERIC_AGENT_ID] {
+                    let (o, i) = (rgb(gs[0].color), rgb(gs[1].color));
+                    assert!(o == contrast_outline(i) && cr(i, o) >= 4.5 && cr(i, nom) >= 4.5);
+                    (i, Some(o))
+                } else {
+                    assert_eq!(ids, [GENERIC_AGENT_ID]);
+                    (rgb(gs[0].color), None)
+                };
+                let ok = |d| rs.iter().all(|g| peak(d, out, ink, g) >= 4.5);
+                assert!(desktops.into_iter().all(ok));
+                ((tile, ch), (ink, out))
+            };
+            let ((ft, fl), (fg, fo)) = eval(false, false);
+            let ((st, sl), (sg, so)) = eval(false, true);
+            assert_eq!((eval(true, true), fo), (eval(true, false), so));
+            let need = pair == [grey(0), white]
+                || [card(cut, 0.8), card(mid_g, 0.8), card(low, 0.1)].contains(&s);
+            assert_eq!(fo.is_some(), need);
+            assert!(!tiled || pair.into_iter().all(|s| cr(st, s) <= cr(ft, s)));
+            assert!(cr(sl, st) < cr(fl, ft));
+            assert!(cr(sg, nom) <= cr(fg, nom) && fo.is_none_or(|o| cr(sg, o) <= cr(fg, o)));
+            let le = |d| rs.iter().all(|g| peak(d, so, sg, g) <= peak(d, fo, fg, g));
+            assert!(desktops.into_iter().all(le));
+        }
+        let (mut row, mut clipped) = (base.clone(), list);
+        clipped.top = slot.top + slot.height / 2.0;
+        clipped.height = list.bottom() - clipped.top;
+        let w = super::super::text_clip_bounds(slot.intersection(clipped).unwrap());
+        let want = [w.left, w.top, w.right, w.bottom];
+        for (icon, surface) in [
+            (AppIcon::Monogram('K'), Backing::Surface(dark)),
+            (AppIcon::Generic, Backing::Surface(dark)),
+            (AppIcon::Generic, card(mid_g, 0.8)),
+        ] {
+            row.icon = Some((icon, slot));
+            let _ = paint(&mut r, &row, clipped, false, surface);
+            let hit = |t: &&PlacedText| t.custom_glyph.is_some() || is_k(t);
+            let eq = |p: &PlacedText| [p.bound_left, p.bound_top, p.right, p.bottom] == want;
+            let drawn: Vec<_> = r.text.iter().filter(hit).collect();
+            assert!(!drawn.is_empty() && drawn.into_iter().all(eq));
+        }
     }
 
     #[test]

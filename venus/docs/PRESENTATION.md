@@ -669,7 +669,25 @@ can be softer. Clawd is proportionally pitch-scaled with whole-pixel column
 starts and art top, plus an approved sub-pixel right-edge trim; the supplied
 SVG's vertical pitch and overlapping cell edges retain fractional coverage.
 Codex's, OpenCode's, and Antigravity's complete vectors are rasterized directly
-at each box size. Quota marks are unchanged. Tab, session-label and edge badges retain their independent
+at each box size. Every sidebar and attention inbox row reserves this square
+icon slot after the state glyph so row text aligns across built-in marks,
+monograms, generic glyphs, and unavailable rows (popup rows keep both this left
+slot and the right-edge popup marker without overlap). Built-in marks match
+`app` case-sensitively (`claude-code`, `codex`, `opencode`, `antigravity`). Any
+other nonempty `app` draws a monogram—its first ASCII letter or digit,
+uppercased, in bold UI sans-serif ink-centred on an opaque neutral rounded tile
+(corner radius `round(size / 4)`) filling the slot. An `app` without an ASCII
+letter or digit, or a record without `app`, draws the Lucide `bot` alpha mask in
+the row's contrast-adapted, stale-aware neutral palette (≥ 4.5:1 across the
+backing's desktop luminance range where reachable; else ink fitted to both the
+nominal backing and the cut grey, with a 1-physical-pixel black or white
+glyph-shaped contour, whichever contrasts more with the ink, and no tile); a
+terminal without records leaves the slot empty.
+Monogram tiles use fixed neutral chrome tones from the resolved backing (≥ 1.5:1
+against the desktop luminance range where reachable, else nominal; ≥ 4.5:1
+letter-to-tile, dimmed when stale and restored on current) rather than hashed
+colours so colour stays reserved for attention states.
+Quota marks are unchanged. Tab, session-label and edge badges retain their independent
 0.75× font size and padding cap. Working's square spinner dots are 4px across
 in default 1x sidebar/inbox rows and retain their 2px size on the bar. Row dots
 and gaps scale with the status box; the contour stays about one physical

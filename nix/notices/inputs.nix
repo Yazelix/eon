@@ -266,6 +266,7 @@ import ./default.nix {
       "opencode-mark"
       "antigravity-mark"
       "gemini-mark"
+      "lucide-bot"
     ];
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
     ${pkgs.keyutils.name} = {
@@ -631,6 +632,19 @@ import ./default.nix {
         {
           file = ../../venus/assets/gemini-spark-104.alpha;
           hash = "cc2c2e82d6cc9d4fba14a8f64b02632ae1d652d8ad839db1278650bf25404524";
+        }
+      ];
+    }
+    {
+      id = "lucide-bot";
+      version = "1.78.0";
+      source = "https://github.com/lucide-icons/lucide@e00b2b26350fe4dfb6f5273aa366f94974430903, icons/bot.svg rasterized mask ${../../venus/assets/generic-agent-104.alpha}";
+      licenses = [ "ISC" ];
+      notice_files = [ "${../../venus/THIRD_PARTY_NOTICES.md}" ];
+      notice_hashes = noticeHashes [
+        {
+          file = ../../venus/assets/generic-agent-104.alpha;
+          hash = "e578a8aef86bd3289bed026f7e9c5e8cf1584f2ce9e641ac45ed8ea1f9f5d370";
         }
       ];
     }

@@ -39,8 +39,8 @@ pub(crate) const fn card_radius(metrics: CellMetrics) -> f32 {
     card_gap(metrics)
 }
 
-/// The popup marker's rounded-square corners, snapped to physical pixel rows.
-pub(crate) const fn popup_marker_radius(size: f32) -> f32 {
+/// Quarter-size rounded-square corners for popup markers and monogram tiles, snapped to physical pixels.
+pub(crate) const fn rounded_square_radius(size: f32) -> f32 {
     (size / 4.0).round()
 }
 

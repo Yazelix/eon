@@ -150,7 +150,7 @@ The checked-in 104×104 alpha mask has SHA-256
 `7bf5bf047a493ef0d76177d74a3de81783b5d1038dd13fcc6cd9b1db20edec91`.
 The mark remains OpenAI's property and is subordinate to Eon's identity. The
 existing glyphon 0.12 custom-glyph hook scales and caches that fixed mask;
-image generation, a decoder, second GPU pipeline, generic icon API, altered
+image generation, a decoder, second GPU pipeline, generic quota-icon API, altered
 mark, and text-shaped lookalike are rejected.
 
 The Claude chip consumes typed Claude facts from canonical EONW v8 at Runtime
@@ -158,6 +158,21 @@ The Claude chip consumes typed Claude facts from canonical EONW v8 at Runtime
 native comparison: reuse measurement, row priority, hover and static AccessKit
 projection. Claude uses a plain C monogram, without copied brand artwork.
 Provider collection and freshness remain Runtime responsibilities.
+
+### Agents sidebar icon slot and fallbacks
+
+`eon-sidebar-app-icons-y99b7.2` compares Orca (`stablyai/orca`,
+`src/renderer/src/lib/agent-type-icon.tsx`) and `herdr-app`
+(`3130e416ce3d1d39c83f64413728ea070a845424`, `src/programs.rs:259-329`) against
+the OSC 7501 Program Status specification (rev 0.4, `app` as icon key). Venus
+keeps exact, case-sensitive `app` matching with Orca-style first-alphanumeric
+monograms on fixed neutral rounded tiles (rejecting `herdr-app`'s argv guessing
+under EON-C31 and hash-coloured tiles so colour stays with attention state) and
+uses Lucide `bot` (`lucide-icons/lucide` `1.78.0`,
+`e00b2b26350fe4dfb6f5273aa366f94974430903`, `icons/bot.svg`, ISC; hashes and
+rasterization recipe in `venus/THIRD_PARTY_NOTICES.md` and
+`THIRD_PARTY_NOTICES.md`) through the existing glyphon mask pipeline when `app`
+is absent or has no ASCII letter or digit.
 
 ### NVIDIA utilization without continuous driver activity
 

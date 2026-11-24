@@ -177,9 +177,9 @@ pub struct SidebarRow {
     pub(crate) rect: SceneRect,
     /// The state glyph, dimmed while the record is stale.
     pub(crate) glyph: TabBadge,
-    /// The reporting program's mark, separate from its account's quota mark.
-    pub(crate) icon: Option<(AppMark, SceneRect)>,
-    /// Where the row's text lines start, after the glyph and any icon.
+    /// The reporting program's icon, separate from its account's quota mark.
+    pub(crate) icon: Option<(AppIcon, SceneRect)>,
+    /// Where the row's text lines start, after the glyph and reserved icon slot.
     pub(crate) text_left: f32,
     /// Where every text line stops, clear of the popup marker.
     pub(crate) text_right: f32,
@@ -457,6 +457,13 @@ pub(crate) enum AppMark {
     ClaudeCode,
     OpenCode,
     Antigravity,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum AppIcon {
+    Mark(AppMark),
+    Monogram(char),
+    Generic,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2507,11 +2514,17 @@ fn attention_row(
     let pinned_name = pinned_name.filter(|name| !name.is_empty());
     let record = attention.record.as_ref();
     let (icon, app) = match record.map(|record| record.app.as_str()) {
-        Some("claude-code") => (Some(AppMark::ClaudeCode), "Claude"),
-        Some("codex") => (Some(AppMark::Codex), "Codex"),
-        Some("opencode") => (Some(AppMark::OpenCode), "OpenCode"),
-        Some("antigravity") => (Some(AppMark::Antigravity), "Antigravity"),
-        Some(app) => (None, app),
+        Some("claude-code") => (Some(AppIcon::Mark(AppMark::ClaudeCode)), "Claude"),
+        Some("codex") => (Some(AppIcon::Mark(AppMark::Codex)), "Codex"),
+        Some("opencode") => (Some(AppIcon::Mark(AppMark::OpenCode)), "OpenCode"),
+        Some("antigravity") => (Some(AppIcon::Mark(AppMark::Antigravity)), "Antigravity"),
+        Some(app) => {
+            let icon = match app.bytes().find(u8::is_ascii_alphanumeric) {
+                Some(byte) => AppIcon::Monogram(char::from(byte).to_ascii_uppercase()),
+                None => AppIcon::Generic,
+            };
+            (Some(icon), app)
+        }
         None => (None, ""),
     };
     let reported_title = record
@@ -2612,17 +2625,13 @@ fn attention_row(
         width: status_size,
         height: status_size,
     };
-    let icon = icon.map(|provider| {
-        (
-            provider,
-            SceneRect {
-                left: glyph.right() + spacing,
-                top: (top + (rect.height - app_size) / 2.0).floor(),
-                width: app_size,
-                height: app_size,
-            },
-        )
-    });
+    let icon_slot = SceneRect {
+        left: glyph.right() + spacing,
+        top: (top + (rect.height - app_size) / 2.0).floor(),
+        width: app_size,
+        height: app_size,
+    };
+    let icon = icon.map(|icon| (icon, icon_slot));
     let right = (rect.right() - inner_inset(metrics)).max(rect.left);
     let popup_marker = popup.then(|| {
         let size = (metrics.font_size * 1.25)
@@ -2645,7 +2654,7 @@ fn attention_row(
             dimmed: stale,
             rect: glyph,
         },
-        text_left: icon.map_or(glyph.right(), |(_, rect)| rect.right()) + spacing,
+        text_left: icon_slot.right() + spacing,
         text_right: popup_marker.map_or(right, |marker| marker.left - spacing),
         icon,
         title,
