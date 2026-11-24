@@ -516,7 +516,7 @@ impl Host {
             .map(|launch| launch.prepare(&serve.socket))
             .transpose()?;
         bench_trace("pty_spawn_start", "");
-        let orbit = Orbit::spawn(&serve.command, serve.palette, 80, 24)?;
+        let orbit = Orbit::spawn(&serve.command, serve.palette, serve.default_colors, 80, 24)?;
         bench_trace("pty_spawned", "");
         // Ready: the live record names both sockets and this process.
         let management = prepared

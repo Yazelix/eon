@@ -917,20 +917,21 @@ fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
     drop(second);
     assert!(server.shutdown()?.success());
 
-    let invalid_socket = dir.0.join("invalid.sock");
+    let invalid_socket = dir.0.join("bad.sock");
     let child_marker = dir.0.join("child-started");
-    let status = server_command()
-        .arg(&invalid_socket)
-        .arg("--ansi-palette-v1")
-        .arg("incomplete")
-        .arg("--")
-        .arg("/bin/sh")
-        .arg("-c")
-        .arg(format!(": > {}", child_marker.display()))
-        .status()?;
-    assert!(!status.success());
-    assert!(!invalid_socket.exists());
-    assert!(!child_marker.exists());
+    for (option, invalid) in [
+        ("--ansi-palette-v1", "incomplete"),
+        ("--default-colors-v1", "123456"),
+    ] {
+        let status = server_command()
+            .arg(&invalid_socket)
+            .args([option, invalid, "--", "/bin/sh", "-c", ": > \"$1\"", "sh"])
+            .arg(&child_marker)
+            .status()?;
+        assert!(!status.success(), "{option}");
+        assert!(!invalid_socket.exists(), "{option}");
+        assert!(!child_marker.exists(), "{option}");
+    }
     Ok(())
 }
 

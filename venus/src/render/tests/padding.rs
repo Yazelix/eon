@@ -1,6 +1,139 @@
 use super::*;
 
 #[test]
+fn frame_background_changes_keep_opacity_in_the_grid_and_padding() {
+    use orbit_protocol::{
+        Capabilities, Cell, CellStyle, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Row,
+        StyleColor, Underline,
+    };
+
+    let style = CellStyle {
+        foreground: StyleColor::None,
+        background: StyleColor::None,
+        underline_color: StyleColor::None,
+        bold: false,
+        italic: false,
+        faint: false,
+        blink: false,
+        inverse: false,
+        invisible: false,
+        strikethrough: false,
+        overline: false,
+        selected: false,
+        protected: false,
+        underline: Underline::None,
+    };
+    let explicit = Rgb {
+        r: 34,
+        g: 180,
+        b: 220,
+    };
+    let fg = Rgb {
+        r: 213,
+        g: 171,
+        b: 195,
+    };
+    let mut frame = Frame {
+        revision: 1,
+        dimensions: Dimensions { cols: 2, rows: 1 },
+        screen: Screen::Primary,
+        title: String::new(),
+        working_directory: String::new(),
+        capabilities: Capabilities { hyperlinks: true },
+        colors: Colors {
+            background: Rgb::BLACK,
+            foreground: fg,
+            cursor: None,
+            palette: [Rgb::BLACK; 256],
+        },
+        cursor: Cursor {
+            visible: false,
+            blinking: false,
+            password_input: false,
+            shape: CursorShape::Block,
+            viewport: None,
+        },
+        scroll_position: Default::default(),
+        rows: vec![Row {
+            wrapped: false,
+            wrap_continuation: false,
+            cells: [StyleColor::None, StyleColor::Rgb(explicit)]
+                .map(|background| Cell {
+                    width: CellWidth::Narrow,
+                    style: CellStyle {
+                        background,
+                        ..style
+                    },
+                    text: " ".into(),
+                    hyperlink: String::new(),
+                })
+                .into(),
+        }],
+        graphics: None,
+    };
+    let metrics = CellMetrics::for_scale(1.0);
+    let viewport = SceneRect {
+        left: 0.0,
+        top: 0.0,
+        width: 100.0,
+        height: 100.0,
+    };
+    let card = CardFill {
+        bounds: viewport,
+        radius: 0.0,
+    };
+    let launch = Rgb {
+        r: 23,
+        g: 43,
+        b: 63,
+    };
+    let update = Rgb {
+        r: 128,
+        g: 128,
+        b: 128,
+    };
+    for background in [launch, update, launch] {
+        frame.colors.background = background;
+        let scene = Scene::from_frame(&frame, 1);
+        assert_eq!(scene.content[0].cells[0].style.foreground, fg.into());
+        assert_eq!(
+            scene.content[0].cells[0].style.background,
+            background.into()
+        );
+
+        let mut backdrop = RectangleBatch::new(100, 100);
+        push_card_backdrop(
+            &mut backdrop,
+            viewport,
+            &[(Some(card), scene.background)],
+            0.8,
+        );
+        let mut expected = RectangleBatch::new(100, 100);
+        expected.push(0.0, 0.0, 100.0, 100.0, background.into(), 0.8);
+        assert_eq!(backdrop.bytes, expected.bytes);
+
+        let mut padding = RectangleBatch::new(100, 100);
+        build_padding_rectangles(
+            &mut padding,
+            &scene,
+            metrics,
+            viewport,
+            viewport,
+            PaddingColor::Extend,
+            (None, 0.0),
+        );
+        let grid = scene_grid(&scene, viewport, metrics);
+        let y = grid.top + metrics.height / 2.0;
+        assert_eq!(padding_pixel(&padding, grid.left / 2.0, y), None);
+        assert_eq!(
+            padding_pixel(&padding, (grid.right() + viewport.right()) / 2.0, y),
+            Some(explicit.into())
+        );
+        frame.revision += 1;
+    }
+}
+
+#[test]
 fn padding_color_follows_scrolled_rows_and_orbit_preview_edges() {
     let metrics = CellMetrics::for_scale(1.0);
     let viewport = SceneRect {

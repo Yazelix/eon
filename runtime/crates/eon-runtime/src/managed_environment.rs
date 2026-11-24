@@ -220,6 +220,8 @@ pub struct Defaults {
     pub editor_kind: EditorKind,
     pub custom_popup_keep_alive: bool,
     pub ansi_palette: &'static str,
+    /// The terminal's default foreground and background, in RGB byte order.
+    pub terminal_default_colors: [[u8; 3]; 2],
     pub agent_commands: &'static [&'static [&'static str]],
     /// A managed Agent launch for its config root and directory, or None for built-ins.
     pub agent_launch: AgentLaunch,
@@ -4726,6 +4728,7 @@ mod tests {
                 .unwrap_or(defaults.editor_open_in),
             custom_popup_keep_alive: defaults.custom_popup_keep_alive,
             ansi_palette: defaults.ansi_palette,
+            terminal_default_colors: defaults.terminal_default_colors,
             agent_commands: defaults.agent_commands,
             agent_launch: defaults.agent_launch,
         };

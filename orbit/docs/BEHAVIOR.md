@@ -56,7 +56,8 @@ blind to the schema.
 
 ```sh
 yazelix-orbit serve [SOCKET] [--management-v9 SESSION_ID RUN_ID COMPONENT_GENERATION]
-                  [--ansi-palette-v1 RGB,...] [-- COMMAND ...]
+                  [--ansi-palette-v1 RGB,...] [--default-colors-v1 FG,BG]
+                  [-- COMMAND ...]
 ```
 
 It runs COMMAND, or `$SHELL`, or `/bin/sh`, as its PTY child, and peers may
@@ -74,15 +75,19 @@ both failures. The real-PTY palette-reset check has the child override colors
 to the supplied 16 and xterm's defaults above them. Installing the palette as
 current colors instead of defaults made it fail.
 
-The default foreground is white and the default background is black. OSC 10
-and 11 change either independently; OSC 110 and 111 reset it to its default
-without changing the other. OSC 10/11 queries answer the effective colors,
-including those defaults before any program changes them. Reattachment's
-first full frame carries the current colors. The lifecycle regression
-`default_colors_follow_independent_osc_updates_resets_and_reattachment`
-checks these effects through the real PTY and canonical frames. Terminal
-hosts started before this initialization fix keep the previous behavior until
-the terminal restarts; supervisor recovery reuses that same host.
+The launch pair sets the terminal's default foreground and background. A
+standalone launch without it starts white on black. OSC 10 and 11 change
+their respective colors, and OSC 110 and 111 restore the respective launch
+values. Queries return the current value on the PTY, including while
+detached. Resize and reattachment to the same Orbit process retain the live
+colors. Each fresh Orbit starts with its own launch defaults.
+
+The `orbit-command-line` check exercises distinct launch colors, exact PTY
+replies and canonical frames through sets, resize, detachment,
+reattachment and resets. The lifecycle tests cover the omitted-pair
+defaults and launch refusal before the child starts (ORB-C2). Substituting
+the standalone background for the supplied one in a scratch build makes
+the initial PTY query fail.
 
 A start replaces a stale socket pathname, a private socket nobody listens on,
 under a lock on its private directory, so one of two racing starts wins

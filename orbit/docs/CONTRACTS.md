@@ -88,26 +88,54 @@ PTY pixel size rule needs no wire change.
 - **Consumer:** Every Orbit runtime and attached client.
 - **Trigger:** PTY bytes, client interaction, or terminal-generated responses
   change terminal state.
-- **Result:** Orbit alone owns libghostty terminal state and alone sends
-  terminal-generated responses to the PTY.
-- **Important failures:** Client failure cannot duplicate a terminal response or
-  transfer parser authority.
+- **Result:**
+  - Orbit alone owns libghostty terminal state and alone sends
+    terminal-generated responses to the PTY.
+  - A launcher can supply a foreground and background RGB pair as the
+    terminal's initial and reset defaults. If omitted, those defaults are
+    white foreground and black background. The pair is independent of the
+    ANSI palette.
+  - A single-colour OSC 10 (foreground) or OSC 11 (background) set changes
+    the corresponding default for drawing. OSC 110 and OSC 111 restore the
+    respective launch values. Each operation leaves the other slot and the
+    ANSI palette intact.
+  - An OSC 10 or OSC 11 query returns the slot's current RGB value to the
+    same PTY, including before any override and after a reset. Queries work
+    whether a client is attached or detached.
+  - A resize or later attachment to the same live terminal retains these
+    colours. The first complete frame after attachment reflects the live
+    values under ORB-C4. Each fresh terminal starts from its own launch
+    defaults.
+- **Important failures:**
+  - An invalid supplied pair refuses terminal launch before starting a PTY.
+  - Client failure cannot duplicate a terminal response or transfer parser
+    authority.
 - **Owner:** Orbit's Rust host, the sole holder of libghostty terminal state.
 - **Boundary:** Ordered client-visible effects beyond the current transport
   contract remain unproved.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
-  for the palette reset
-  - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
-    `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
-    check); sandboxed `nix develop -c eon-test` (workspace and installer,
-    `tests/lifecycle.rs` unmodified)
+  for the palette reset and the `eon-jjix` commit for launch colors.
+  - **Environment:**
+    - `eon-awmq.3` import on x86_64 Linux. `nix flake check -L` covered
+      `orbit-laws`, `orbit-boundary`, `orbit-terminfo` and every
+      `orbit-<name>` real-PTY check. Sandboxed `nix develop -c eon-test`
+      ran the workspace and installer suites with `tests/lifecycle.rs`
+      unmodified.
+    - `eon-jjix` on x86_64 Linux. The packaged `orbit-command-line` check
+      and sandboxed workspace and installer suites passed with libghostty-rs
+      `9b598d6528c08c013407052767bb2e885ba869ba` and Ghostty
+      `0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec`.
   - **Evidence:**
     - [`palettes_are_exactly_sixteen_hex_colors`](../src/cli.rs)
     - [`ansi_palette_launch_is_visible_and_survives_reattachment`](../tests/lifecycle.rs)
-    - [`orbit-command-line`](../tests/real_pty/command_line.rs)
+    - [`orbit-command-line`](../tests/real_pty/command_line.rs) checks the
+      launch palette, supplied default colors, exact replies, resets, resize
+      and reattachment.
     - [`conformance_c2_parser_state_and_terminal_replies_survive_client_failure`](../tests/lifecycle.rs)
     - [`orbit-terminal-replies`](../tests/real_pty/terminal_replies.rs)
     - [`orbit-palette-reset`](../tests/real_pty/palette_reset.rs)
+    - The [lifecycle cases](../tests/lifecycle.rs) exercise the standalone
+      fallback and rejection before child launch.
     - Workspace suite
 
 ## ORB-C3 — Bounded interactive and metadata attachment

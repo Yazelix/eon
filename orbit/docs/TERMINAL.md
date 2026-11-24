@@ -140,6 +140,11 @@ optional `serve --ansi-palette-v1 RGB,...` component input accepts exactly 16
 six-digit sRGB entries before the command separator. It replaces only
 libghostty palette indices 0 through 15 for that process; omission retains the
 built-in defaults, and ordinary OSC overrides and resets remain terminal-owned.
+The optional `--default-colors-v1 FG,BG` input gives Orbit two six-digit sRGB
+values in foreground, background order. It supplies their initial and reset
+values independently of the palette. Eon passes the product defaults at
+launch. Standalone Orbit uses white on black when the pair is omitted
+(ORB-C2).
 The authoritative extractor uses `RenderState::update` and its public row and cell
 iterators to encode a complete versioned frame containing geometry, styled
 graphemes, colors and palette, cursor state, active screen, title, working

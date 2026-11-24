@@ -51,6 +51,16 @@ Mars, Mars Next, or another project by default.
 
 ## Attachment and terminal state
 
+- For OSC 10/11 and 110/111 (ORB-C2), Ghostty
+  `0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec` keeps launch defaults and
+  overrides in `DynamicRGB` and replies from that effective state. Its
+  `RenderState.update` reads both effective colors together. The Rust
+  bindings at `9b598d6528c08c013407052767bb2e885ba869ba` expose setters for
+  both defaults. Orbit uses those setters and the existing bounded PTY
+  reply path. XTerm Patch #411 describes the corresponding dynamic color
+  operations separately from palette operations. The `orbit-command-line`
+  real-PTY check exercises the launch pair and the existing canonical
+  frames. [XTerm control sequences](https://invisible-island.net/xterm/ctlseqs/ctlseqs.html)
 - Scroll-position extraction uses `libghostty-vt` 0.2.1 `Terminal::scrollbar`
   and Ghostty `a887df42c56f6de86c0fe6da9c4eeca37931e083`, public
   `terminal.h` and `PageList.zig::scrollbar`. The engine owns cached viewport

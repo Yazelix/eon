@@ -6,6 +6,10 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Orbit accepts a foreground and background pair at launch. OSC 10/11
+  query and change the current colors, and OSC 110/111 restore the launch
+  values. Eon supplies its default white on black (`eon-jjix`, ORB-C2).
+
 - Management generation 9 adds a lease key input (kind 3: quiet window,
   physical key, modifiers): one key that produces no text (F1-F12, arrows,
   Home, End, PageUp, PageDown, Insert, Delete) with only Shift, Ctrl, Alt and

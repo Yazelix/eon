@@ -1,6 +1,6 @@
 //! Orbit's `serve` command line (consumer compatibility):
 //! `serve [SOCKET] [--management-v9 SESSION_ID RUN_ID COMPONENT_GENERATION]
-//! [--ansi-palette-v1 RGB,...] [-- COMMAND ...]`.
+//! [--ansi-palette-v1 RGB,...] [--default-colors-v1 FG,BG] [-- COMMAND ...]`.
 
 use crate::management::Launch;
 use libghostty_vt::style::RgbColor;
@@ -13,16 +13,18 @@ use std::{
 };
 
 const ANSI_PALETTE_ARGUMENT: &str = "--ansi-palette-v1";
+const DEFAULT_COLORS_ARGUMENT: &str = "--default-colors-v1";
 const MANAGEMENT_ARGUMENT: &str = "--management-v9";
-const USAGE: &str = "usage: yazelix-orbit serve [SOCKET] [--management-v9 SESSION_ID RUN_ID COMPONENT_GENERATION] [--ansi-palette-v1 RGB,...] [-- COMMAND ...]";
+const USAGE: &str = "usage: yazelix-orbit serve [SOCKET] [--management-v9 SESSION_ID RUN_ID COMPONENT_GENERATION] [--ansi-palette-v1 RGB,...] [--default-colors-v1 FG,BG] [-- COMMAND ...]";
 
 /// One session to serve: its socket pathname, its management identities, the
-/// terminal's default ANSI colors, and the PTY child's command line.
+/// terminal's starting colors, and the PTY child's command line.
 #[derive(Debug, PartialEq)]
 pub(crate) struct Serve {
     pub(crate) socket: PathBuf,
     pub(crate) management: Option<Launch>,
     pub(crate) palette: Option<[RgbColor; 16]>,
+    pub(crate) default_colors: Option<[RgbColor; 2]>,
     pub(crate) command: Vec<OsString>,
 }
 
@@ -38,7 +40,11 @@ pub(crate) fn parse(arguments: &[OsString]) -> Result<Serve, String> {
     }
     let mut arguments = arguments.to_vec();
     let management = take_management(&mut arguments)?;
-    let palette = take_ansi_palette(&mut arguments)?;
+    let palette = take_colors(&mut arguments, ANSI_PALETTE_ARGUMENT)?;
+    let default_colors = take_colors(&mut arguments, DEFAULT_COLORS_ARGUMENT)?;
+    if (palette.is_some() || default_colors.is_some()) && launch_end(&arguments) > 1 {
+        return Err("unexpected argument before the command separator".into());
+    }
     let socket = if arguments.first().is_some_and(|value| value != "--") {
         PathBuf::from(arguments.remove(0))
     } else {
@@ -54,6 +60,7 @@ pub(crate) fn parse(arguments: &[OsString]) -> Result<Serve, String> {
         socket,
         management,
         palette,
+        default_colors,
         command: arguments,
     })
 }
@@ -87,40 +94,39 @@ fn take_management(arguments: &mut Vec<OsString>) -> Result<Option<Launch>, Stri
     Ok(Some(launch))
 }
 
-fn take_ansi_palette(arguments: &mut Vec<OsString>) -> Result<Option<[RgbColor; 16]>, String> {
+fn take_colors<const N: usize>(
+    arguments: &mut Vec<OsString>,
+    option: &str,
+) -> Result<Option<[RgbColor; N]>, String> {
     let launch_end = launch_end(arguments);
     let mut positions = arguments[..launch_end]
         .iter()
         .enumerate()
-        .filter_map(|(index, argument)| (argument == ANSI_PALETTE_ARGUMENT).then_some(index));
+        .filter_map(|(index, argument)| (argument == option).then_some(index));
     let Some(index) = positions.next() else {
         return Ok(None);
     };
     if positions.next().is_some() {
-        return Err("duplicate --ansi-palette-v1 argument".into());
-    }
-    if launch_end > 3 {
-        return Err("unexpected argument before the command separator".into());
+        return Err(format!("duplicate {option} argument"));
     }
     let value = arguments
         .get(index + 1)
         .filter(|_| index + 1 < launch_end)
         .and_then(|value| value.to_str())
-        .ok_or("missing --ansi-palette-v1 value")?;
-    let colors = parse_ansi_palette(value)?;
+        .ok_or_else(|| format!("{option} requires a UTF-8 value"))?;
+    let colors = parse_colors(value, option)?;
     arguments.drain(index..=index + 1);
     Ok(Some(colors))
 }
 
-fn parse_ansi_palette(value: &str) -> Result<[RgbColor; 16], String> {
+fn parse_colors<const N: usize>(value: &str, option: &str) -> Result<[RgbColor; N], String> {
     let mut entries = value.split(',');
-    let mut colors = [RgbColor::default(); 16];
+    let count_error = || format!("{option} must contain exactly {N} colors");
+    let mut colors = [RgbColor::default(); N];
     for color in &mut colors {
-        let entry = entries
-            .next()
-            .ok_or("ANSI palette must contain exactly 16 colors")?;
+        let entry = entries.next().ok_or_else(count_error)?;
         if entry.len() != 6 || !entry.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err("ANSI palette colors must be six hexadecimal digits".into());
+            return Err(format!("{option} colors must be six hexadecimal digits"));
         }
         let channel = |range| u8::from_str_radix(&entry[range], 16).map_err(|e| e.to_string());
         *color = RgbColor {
@@ -130,7 +136,7 @@ fn parse_ansi_palette(value: &str) -> Result<[RgbColor; 16], String> {
         };
     }
     if entries.next().is_some() {
-        return Err("ANSI palette must contain exactly 16 colors".into());
+        return Err(count_error());
     }
     Ok(colors)
 }
@@ -296,7 +302,7 @@ mod tests {
 
     #[test]
     fn palettes_are_exactly_sixteen_hex_colors() {
-        assert!(parse_ansi_palette(PALETTE).is_ok());
+        assert!(parse_colors::<16>(PALETTE, ANSI_PALETTE_ARGUMENT).is_ok());
         for value in [
             "",
             "000000",
@@ -305,7 +311,85 @@ mod tests {
             PALETTE.trim_end_matches(",f0f1f2"),
             &format!("{PALETTE},000000"),
         ] {
-            assert!(parse_ansi_palette(value).is_err(), "accepted {value:?}");
+            assert!(
+                parse_colors::<16>(value, ANSI_PALETTE_ARGUMENT).is_err(),
+                "accepted {value:?}"
+            );
         }
+    }
+
+    #[test]
+    fn default_colors_are_a_pair_of_hex_colors_before_the_child_separator() {
+        use std::os::unix::ffi::OsStringExt;
+
+        let pair = "012345,aBcDeF";
+        let serve = parse(&args(&[
+            "serve",
+            "/tmp/orbit.sock",
+            DEFAULT_COLORS_ARGUMENT,
+            pair,
+            ANSI_PALETTE_ARGUMENT,
+            PALETTE,
+            MANAGEMENT_ARGUMENT,
+            "session-1",
+            "run-1",
+            "component-1",
+            "--",
+            "child",
+            DEFAULT_COLORS_ARGUMENT,
+            "child-option",
+        ]))
+        .unwrap();
+        assert_eq!(
+            serve.default_colors,
+            Some([
+                RgbColor {
+                    r: 1,
+                    g: 0x23,
+                    b: 0x45
+                },
+                RgbColor {
+                    r: 0xab,
+                    g: 0xcd,
+                    b: 0xef
+                },
+            ])
+        );
+        assert!(serve.palette.is_some() && serve.management.is_some());
+        assert_eq!(
+            serve.command,
+            args(&["child", DEFAULT_COLORS_ARGUMENT, "child-option"])
+        );
+        let bare = parse(&args(&["serve", "/tmp/orbit.sock", "child", "value"])).unwrap();
+        assert_eq!(bare.default_colors, None);
+        assert_eq!(bare.command, args(&["child", "value"]));
+
+        for invalid in ["", "012345", "012345,abcdef,000000", "012345,abcdeg"] {
+            assert!(parse(&args(&["serve", DEFAULT_COLORS_ARGUMENT, invalid])).is_err());
+        }
+        let mut invalid_bytes = args(&["serve", DEFAULT_COLORS_ARGUMENT]);
+        assert!(parse(&invalid_bytes).is_err());
+        invalid_bytes.push(OsString::from_vec(vec![0xff]));
+        assert!(parse(&invalid_bytes).is_err());
+        assert!(
+            parse(&args(&[
+                "serve",
+                DEFAULT_COLORS_ARGUMENT,
+                pair,
+                DEFAULT_COLORS_ARGUMENT,
+                pair
+            ]))
+            .is_err()
+        );
+        let mut extra = args(&[
+            "serve",
+            "/tmp/orbit.sock",
+            "extra",
+            DEFAULT_COLORS_ARGUMENT,
+            pair,
+        ]);
+        assert!(parse(&extra).is_err());
+        extra.extend(args(&[ANSI_PALETTE_ARGUMENT, PALETTE, "--", "child"]));
+        assert!(parse(&extra).is_err());
     }
 }

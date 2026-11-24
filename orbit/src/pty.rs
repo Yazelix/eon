@@ -187,19 +187,22 @@ pub(crate) struct Orbit {
 }
 
 impl Orbit {
-    /// Spawns the PTY child as the host's direct child. A palette replaces
-    /// the terminal's default ANSI colors, which a reset restores.
+    /// Spawns the PTY child as the host's direct child after installing the
+    /// terminal's launch defaults, which color resets restore.
     pub(crate) fn spawn(
         command: &[OsString],
         palette: Option<[RgbColor; 16]>,
+        default_colors: Option<[RgbColor; 2]>,
         cols: u16,
         rows: u16,
     ) -> io::Result<Self> {
         let mut terminal = Terminal::new(cols, rows).map_err(|_| errno(libc::EIO))?;
         // libghostty's render snapshot updates either colour only when both exist.
+        let [foreground, background] =
+            default_colors.unwrap_or([DEFAULT_FOREGROUND, DEFAULT_BACKGROUND]);
         terminal
-            .set_default_fg_color(Some(DEFAULT_FOREGROUND))
-            .and_then(|terminal| terminal.set_default_bg_color(Some(DEFAULT_BACKGROUND)))
+            .set_default_fg_color(Some(foreground))
+            .and_then(|terminal| terminal.set_default_bg_color(Some(background)))
             .map_err(|_| errno(libc::EIO))?;
         // Grapheme clustering (mode 2027) is on, as in Ghostty, and a reset keeps it.
         terminal

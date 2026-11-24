@@ -2397,6 +2397,8 @@ fn orbit_command(
     log: Option<&DiagnosticLog>,
 ) -> Result<Command, String> {
     let mut orbit_command = Command::new(&inputs.orbit);
+    let [foreground, background] = inputs.defaults.terminal_default_colors;
+    let hex = |[red, green, blue]: [u8; 3]| format!("{red:02x}{green:02x}{blue:02x}");
     managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
@@ -2406,6 +2408,8 @@ fn orbit_command(
         .arg(component_generation)
         .arg("--ansi-palette-v1")
         .arg(inputs.defaults.ansi_palette)
+        .arg("--default-colors-v1")
+        .arg(format!("{},{}", hex(foreground), hex(background)))
         .arg("--")
         .env("EON_CONFIG_HOME", config)
         .env(TERMINAL_VARIABLE, terminal_identity(session_id, run_id))
@@ -5732,6 +5736,7 @@ pub(crate) mod tests {
         inputs.venus = "/managed/venus".into();
         inputs.managed.shell_bin = Some("/managed/bin".into());
         inputs.defaults.ansi_palette = "101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010,101010";
+        inputs.defaults.terminal_default_colors = [[1, 0x23, 0x45], [0x67, 0x89, 0xab]];
         let config = root.as_path();
         let socket = Path::new("/runtime/orbit.sock");
         fs::write(
@@ -5764,6 +5769,8 @@ pub(crate) mod tests {
                 "g1-00000000000000000000000000000001",
                 "--ansi-palette-v1",
                 inputs.defaults.ansi_palette,
+                "--default-colors-v1",
+                "012345,6789ab",
                 "--",
                 "eon-bash",
                 "--norc",
@@ -5861,6 +5868,8 @@ pub(crate) mod tests {
                 "component-2",
                 "--ansi-palette-v1",
                 inputs.defaults.ansi_palette,
+                "--default-colors-v1",
+                "012345,6789ab",
                 "--",
                 "codex",
                 "--model",

@@ -244,6 +244,7 @@ pub(crate) fn inputs() -> Inputs {
                 .collect(),
             },
             ansi_palette: "111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111,111111",
+            terminal_default_colors: [[0xff; 3], [0; 3]],
             custom_popup_keep_alive: true,
             editor: Some(&["fixture-editor"]),
             editor_kind: crate::EditorKind::Auto,
