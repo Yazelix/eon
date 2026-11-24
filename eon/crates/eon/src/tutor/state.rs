@@ -126,7 +126,7 @@ fn identity(root: &File) -> Result<Option<(u64, u64)>, String> {
     }
 }
 
-pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
+fn open_state(create: bool) -> Result<Option<(PathBuf, File)>, String> {
     let absolute = |key| {
         env::var_os(key)
             .map(PathBuf::from)
@@ -136,8 +136,7 @@ pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
         .or_else(|| absolute("HOME").map(|p| p.join(".local/state")))
         .ok_or("Tutor needs an absolute XDG_STATE_HOME or HOME")?
         .join("eon");
-    let mutate = operation != Operation::List;
-    if mutate {
+    if create {
         fs::DirBuilder::new()
             .recursive(true)
             .mode(0o700)
@@ -150,12 +149,30 @@ pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
         .open(&path)
     {
         Ok(root) => root,
-        Err(error) if !mutate && error.kind() == std::io::ErrorKind::NotFound => {
-            return Ok(Progress::default());
-        }
+        Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
         Err(error) => return Err(format!("Cannot open tutor state directory: {error}")),
     };
     private(&root, Some(&path))?;
+    Ok(Some((path, root)))
+}
+
+pub(super) fn claim_discovery() -> bool {
+    open_state(true).ok().flatten().is_some_and(|(_, root)| {
+        // Exclusive creation of the empty versioned marker is the whole claim.
+        open_at(
+            &root,
+            c"tutor-discovery-v1.seen",
+            OFlags::WRONLY | OFlags::CREATE | OFlags::EXCL,
+        )
+        .is_ok()
+    })
+}
+
+pub(super) fn progress(operation: Operation) -> Result<Progress, String> {
+    let mutate = operation != Operation::List;
+    let Some((path, root)) = open_state(mutate)? else {
+        return Ok(Progress::default());
+    };
     let _lock = if mutate {
         let lock = open_at(&root, c"tutor-v1.lock", OFlags::RDWR | OFlags::CREATE)
             .map_err(|e| format!("Cannot lock tutor progress: {e}"))?;

@@ -759,8 +759,8 @@ candidate's `bin/eon`; `--bundle` names the Nix-free release archive (see
 [Nix-free bundle journeys](#nix-free-bundle-journeys)). The case starts bare `eon` with two
 projects in private Zoxide history, selects one through the startup picker,
 and checks that the first pane runs its shell in that project. The picker PNG
-must show foreground pixels in the prompt and both result rows. The pane
-PNG must show non-background pixels in the pane text area. The run passes
+must show the prompt, tutor hint and both result rows. The pane PNG must show
+non-background pixels in the pane text area. The run passes
 after `eon window stop all --json`
 acknowledges the observed generation and no candidate process remains.
 

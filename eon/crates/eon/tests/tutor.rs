@@ -3,7 +3,7 @@ use std::{
     fs,
     os::unix::fs::{PermissionsExt, symlink},
     path::Path,
-    process::{Command, Output},
+    process::{Command, Output, Stdio},
 };
 
 fn run(root: &Path, arguments: &[&str]) -> Output {
@@ -231,6 +231,92 @@ fn tutor_does_not_take_over_eonbase() {
         .unwrap();
     assert_eq!(output.status.code(), Some(2), "{output:?}");
     assert!(!root.path().join(".local").exists());
+}
+
+#[test]
+fn initial_picker_header_claims_once_and_only_with_ready_context() {
+    const COMMAND: [&str; 2] = ["--eon-initial-picker-header", "initial"];
+    const PEER: &str = "1 other Eon window is still running";
+    const COMBINED: &str = "1 other Eon window is still running\nNew to Eon? Run eon tutor.";
+    let root = tempfile::tempdir().unwrap();
+    let root = root.path();
+    let ready = root.join("terminal.quick");
+    let state = root.join("state/eon/tutor-discovery-v1.seen");
+    let eon = Path::new(env!("CARGO_BIN_EXE_eon"));
+    let eonbase = root.join("eonbase");
+    symlink(eon, &eonbase).unwrap();
+    let command = |program: &Path| {
+        let mut command = Command::new(program);
+        command
+            .env_clear()
+            .env("HOME", root)
+            .env("XDG_STATE_HOME", root.join("state"))
+            .env("EON_FILES_START", "quick")
+            .env("EON_QUICK_TOKEN", "initial")
+            .env("EON_QUICK_MARKER", &ready)
+            .env("EON_FILES_NOTICE", PEER)
+            .stdin(Stdio::null());
+        command
+    };
+    assert_eq!(
+        command(eon).args(COMMAND).output().unwrap().status.code(),
+        Some(2)
+    );
+    fs::write(&ready, "").unwrap();
+    assert_eq!(
+        command(eon).args(COMMAND).output().unwrap().status.code(),
+        Some(2)
+    );
+    fs::write(&ready, "initial").unwrap();
+    for output in [
+        command(&eonbase).args(COMMAND).output().unwrap(),
+        command(eon).args(COMMAND).arg("extra").output().unwrap(),
+        command(eon)
+            .args(COMMAND)
+            .env_remove("EON_FILES_NOTICE")
+            .output()
+            .unwrap(),
+        command(eon)
+            .args(COMMAND)
+            .env("EON_QUICK_TOKEN", "later")
+            .output()
+            .unwrap(),
+    ] {
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+    }
+    for args in [&["--help"][..], &["tutor", "--help"]] {
+        let help = command(eon).args(args).output().unwrap();
+        assert!(help.status.success(), "{help:?}");
+        assert!(!String::from_utf8_lossy(&help.stdout).contains(COMMAND[0]));
+    }
+    assert!(!state.exists());
+    let first = command(eon)
+        .args(COMMAND)
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let second = command(eon).args(COMMAND).output().unwrap();
+    let first = first.wait_with_output().unwrap();
+    let mut headers = [first, second].map(|output| {
+        assert!(output.status.success(), "{output:?}");
+        String::from_utf8(output.stdout).unwrap()
+    });
+    headers.sort();
+    assert_eq!(headers, [PEER, COMBINED]);
+    let metadata = fs::symlink_metadata(&state).unwrap();
+    assert!(metadata.is_file());
+    assert_eq!(metadata.permissions().mode() & 0o777, 0o600);
+    assert_eq!(metadata.len(), 0);
+
+    fs::remove_file(&state).unwrap();
+    let victim = root.join("unrelated");
+    fs::write(&victim, "preserve").unwrap();
+    symlink(&victim, &state).unwrap();
+    let output = command(eon).args(COMMAND).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(output.stdout, PEER.as_bytes());
+    assert_eq!(fs::read_link(&state).unwrap(), victim);
+    assert_eq!(fs::read_to_string(victim).unwrap(), "preserve");
 }
 
 #[test]

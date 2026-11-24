@@ -3014,9 +3014,9 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 
 - **Tutor amendment (2026-11-15):** Exact text approved by eon-overseer under
-  Lucca's delegation on `eon-orp67` (23:50Z comment). Core CLI/progress is
-  implemented by `eon-orp67.1`; optional checking (`eon-orp67.3`) and the startup
-  hint (`eon-orp67.2`) remain Planned. Proof pending the respective slices.
+  Lucca's delegation on `eon-orp67` (23:50Z comment). Core CLI and progress
+  proof belongs to `eon-orp67.1`. Startup hint proof belongs to `eon-orp67.4`.
+  Optional checking (`eon-orp67.3`) remains Planned.
 
 ### Tutor CLI and progress
 

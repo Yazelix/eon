@@ -7,6 +7,8 @@ installation, and proven contract changes.
 
 - Fresh Eon supervisors isolate inherited descriptors on Linux and macOS.
   On Linux, only the initial Venus process receives a caller's Wayland socket.
+- The first startup directory picker points to `eon tutor` once per Eon user
+  state directory (`eon-orp67.4`).
 
 - An `eon.sock` client now has 250 ms from its accept to send its whole
   request; one that sends it too slowly gets a `malformed-action` failure and

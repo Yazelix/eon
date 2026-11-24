@@ -15797,6 +15797,7 @@ fn quit_all_stops_the_default_namespace_and_every_window_caller_last() {
 
 #[test]
 fn fresh_window_pair_counts_other_running_windows_and_attach_shows_none() {
+    const TUTOR_HINT: &str = "New to Eon? Run eon tutor.";
     // Independent windows need short socket paths on macOS too.
     let root = (0_u32..)
         .map(|n| std::env::temp_dir().join(format!("ep{n:x}")))
@@ -15816,27 +15817,129 @@ fn fresh_window_pair_counts_other_running_windows_and_attach_shows_none() {
     fs::create_dir(&bin).unwrap();
     fs::create_dir(&logs).unwrap();
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    symlink(&binary, bin.join("eon-files")).unwrap();
+    let direct = root.join("direct");
+    fs::create_dir(&direct).unwrap();
+    symlink(&binary, direct.join("eon-files")).unwrap();
+    executable(
+        &bin.join("eon-files"),
+        r#"#!/bin/sh
+if [ -n "$EON_TEST_FILES_GATE" ]; then
+    while [ ! -e "$EON_TEST_FILES_GATE" ]; do
+        [ ! -e "$EON_TEST_STOP" ] || exit 0
+        sleep 0.01
+    done
+fi
+exec "$EON_TEST_FILES_BIN" "$@"
+"#,
+    );
+    executable(
+        &bin.join("eon-nu"),
+        "#!/bin/sh\nwhile [ ! -e \"$EON_TEST_STOP\" ]; do sleep 0.01; done\n",
+    );
     // Each pair's Yazi logs its arguments and its quick search's notice.
     executable(
         &root.join("yazi"),
         r#"#!/bin/sh
-printf '%s\n' "$*" "$EON_FILES_NOTICE" > "$EON_TEST_YAZI_LOG.$$.tmp"
+notice=$EON_FILES_NOTICE
+if [ "${EON_FILES_NOTICE+set}" = set ] && [ "$EON_FILES_START" = quick ]; then
+    printf initial > "$EON_QUICK_MARKER"
+    notice=$(EON_QUICK_TOKEN=initial "$EON_FILES_CLI" --eon-initial-picker-header initial) || exit 1
+fi
+printf '%s\n' "$*" "$notice" > "$EON_TEST_YAZI_LOG.$$.tmp"
 mv "$EON_TEST_YAZI_LOG.$$.tmp" "$EON_TEST_YAZI_LOG.$$"
 while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
 "#,
     );
+    let state = root.join("state");
+    let marker = "eon/tutor-discovery-v1.seen";
     let command = || {
         let mut command = quit_command(&root);
         command
             .current_dir(&root)
+            .env("XDG_STATE_HOME", &state)
             .env("EON_SESSION_BIN", &bin)
             .env("EON_TEST_RUN_CHILD", "1")
+            .env("EON_TEST_FILES_BIN", direct.join("eon-files"))
             .env("EON_YAZI", root.join("yazi"))
             .env("EON_FILES_CONFIG", &root)
             .env("EON_TEST_YAZI_LOG", logs.join("yazi"));
         command
     };
+    for args in [
+        &["tutor"][..],
+        &["tutor", "list"],
+        &["tutor", "--json"],
+        &["tutor", "--reset"],
+    ] {
+        let output = command().args(args).output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert!(!stdout(&output).contains(TUTOR_HINT), "{output:?}");
+        assert!(!state.join(marker).exists());
+    }
+    let failed = command()
+        .env("EON_RUNTIME_DIR", root.join("f"))
+        .env("EON_VENUS", root.join("missing-venus"))
+        .env("EON_TEST_YAZI_LOG", root.join("failed-yazi"))
+        .output()
+        .unwrap();
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    assert!(String::from_utf8_lossy(&failed.stderr).contains("cannot launch Eon Desktop"));
+    assert!(!state.join(marker).exists());
+
+    let dismissed_logs = root.join("dismissed");
+    fs::create_dir(&dismissed_logs).unwrap();
+    let gate = root.join("release-files");
+    let dismissed_runtime = root.join("d");
+    let dismissed_command = || {
+        let mut command = command();
+        command
+            .env("EON_RUNTIME_DIR", &dismissed_runtime)
+            .env("EON_TEST_FILES_GATE", &gate)
+            .env("EON_TEST_YAZI_LOG", dismissed_logs.join("yazi"));
+        command
+    };
+    let mut dismissed = TestProcess {
+        child: dismissed_command()
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    let control = generation_runtime(&dismissed_runtime).join("eon.sock");
+    wait_for_ready(&control);
+    let hidden = dismissed_command()
+        .args(["popup", "hide", "u1"])
+        .output()
+        .unwrap();
+    assert!(hidden.status.success(), "{hidden:?}");
+    fs::write(&gate, "").unwrap();
+
+    let wait_for_pairs = |directory: &Path, count| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        loop {
+            let logs = fs::read_dir(directory)
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .filter(|path| path.extension().is_none_or(|extension| extension != "tmp"))
+                .map(|path| fs::read_to_string(path).unwrap())
+                .collect::<Vec<_>>();
+            if logs.len() == count {
+                break logs;
+            }
+            assert!(Instant::now() < deadline, "pair logs: {logs:?}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    };
+    assert!(!wait_for_pairs(&dismissed_logs, 1)[0].contains(TUTOR_HINT));
+    assert!(!state.join(marker).exists());
+    let stopped = dismissed_command()
+        .args(["window", "stop", "default", "--json"])
+        .output()
+        .unwrap();
+    assert!(stopped.status.success(), "{stopped:?}");
+    wait_for_successful_exit(&mut dismissed.child);
+
     let mut first = TestProcess {
         child: command()
             .stdout(Stdio::null())
@@ -15847,40 +15950,36 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     };
     let control = generation_runtime(&runtime).join("eon.sock");
     wait_for_ready(&control);
-    let pair_logs = || {
-        fs::read_dir(&logs)
-            .unwrap()
-            .map(|entry| entry.unwrap().path())
-            .filter(|path| path.extension().is_none_or(|extension| extension != "tmp"))
-            .map(|path| fs::read_to_string(path).unwrap())
-            .collect::<Vec<_>>()
-    };
-    let wait_for_pairs = |count| {
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let logs = pair_logs();
-            if logs.len() == count {
-                break logs;
-            }
-            assert!(Instant::now() < deadline, "pair logs: {logs:?}");
-            thread::sleep(Duration::from_millis(10));
-        }
-    };
-    assert!(!wait_for_pairs(1)[0].contains("still running"));
+    let first_notice = &wait_for_pairs(&logs, 1)[0];
+    assert!(!first_notice.contains("still running"), "{first_notice:?}");
+    assert_eq!(
+        first_notice.lines().last(),
+        Some(TUTOR_HINT),
+        "{first_notice:?}"
+    );
+    let first_marker = object_identity(&state.join(marker));
+    let reset = command().args(["tutor", "--reset"]).output().unwrap();
+    assert!(reset.status.success(), "{reset:?}");
+    assert!(!stdout(&reset).contains(TUTOR_HINT), "{reset:?}");
+    assert_eq!(object_identity(&state.join(marker)), first_marker);
     let name = root.file_name().unwrap().to_str().unwrap();
     let hint = "See them or quit one: Window menu (Eon icon, top left)\nCLI: eon window ls · eon window stop ID";
     let mut windows = Vec::new();
     for count in 1..=2 {
-        let output = command().args(["window", "new"]).output().unwrap();
+        let mut launch = command();
+        if count == 1 {
+            launch.env("XDG_STATE_HOME", root.join("other-state"));
+        }
+        let output = launch.args(["window", "new"]).output().unwrap();
         assert!(output.status.success(), "{output:?}");
         windows.push(stdout(&output).trim().to_owned());
-        let logs = wait_for_pairs(count + 1);
+        let logs = wait_for_pairs(&logs, count + 1);
         let text = if count == 1 {
-            format!("1 other Eon window is still running: {name}\n{hint}")
+            format!("1 other Eon window is still running: {name}\n{hint}\n{TUTOR_HINT}\n")
         } else {
-            format!("2 other Eon windows are still running: {name}, {name}\n{hint}")
+            format!("2 other Eon windows are still running: {name}, {name}\n{hint}\n")
         };
-        assert!(logs.iter().any(|log| log.contains(&text)), "{logs:?}");
+        assert!(logs.iter().any(|log| log.ends_with(&text)), "{logs:?}");
     }
     // A later tab's pair stays plain, in window A, which already lists D.
     let output = command()
@@ -15888,13 +15987,21 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
         .output()
         .unwrap();
     assert!(output.status.success(), "{output:?}");
-    let logs = wait_for_pairs(4);
+    let all_logs = wait_for_pairs(&logs, 4);
     assert_eq!(
-        logs.iter()
+        all_logs
+            .iter()
             .filter(|log| log.contains("still running"))
             .count(),
         2,
-        "{logs:?}"
+        "{all_logs:?}"
+    );
+    assert_eq!(
+        all_logs
+            .iter()
+            .filter(|log| log.contains(TUTOR_HINT))
+            .count(),
+        2
     );
     for args in [
         vec!["window", "attach", &windows[0]],
@@ -15902,7 +16009,7 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
     ] {
         let output = command().args(args).output().unwrap();
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(pair_logs().len(), 4);
+        assert_eq!(fs::read_dir(&logs).unwrap().count(), 4);
     }
     for window in &windows {
         let output = command()

@@ -63,11 +63,12 @@ pub(crate) fn leave_input() -> LeaseInput {
 /// The fzf arguments quick search adds, one per line in
 /// `EON_QUICK_FZF_ARGS`: fzf's start action, which runs once fzf holds the
 /// terminal in raw mode and before it reads input, writes the request token
-/// to `$EON_QUICK_MARKER`, and the leave key ends fzf with status 11. Both run
-/// under `/bin/sh`, whatever the person's shell.
+/// to `$EON_QUICK_MARKER`. Keep the marker empty if initial startup was
+/// cancelled before readiness. The leave key ends fzf with status 11.
+/// Both run under `/bin/sh`, whatever the person's shell.
 pub(crate) const FZF_ARGUMENTS: [&str; 3] = [
     "--with-shell=/bin/sh -c",
-    "--bind=start:execute-silent(printf '%s' \"$EON_QUICK_TOKEN\" > \"$EON_QUICK_MARKER\")",
+    "--bind=start:execute-silent(if [ \"$EON_QUICK_TOKEN\" != initial ] || [ -f \"$EON_QUICK_MARKER.initial.pending\" ]; then printf '%s' \"$EON_QUICK_TOKEN\"; fi > \"$EON_QUICK_MARKER\")",
     "--bind=ctrl-alt-shift-page-down:become(exit 11)",
 ];
 

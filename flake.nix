@@ -862,8 +862,7 @@
             local notice = ya.sync(function(state)
               if state.noticed then return nil end
               state.noticed = true
-              local text = os.getenv("EON_FILES_NOTICE")
-              return text ~= "" and text or nil
+              return os.getenv("EON_FILES_NOTICE")
             end)
 
             local function fail(content)
@@ -933,7 +932,11 @@
                 end
               end
               local header = notice()
-              if header then arguments[#arguments + 1] = "--header=" .. header end
+              if header and header ~= "" then arguments[#arguments + 1] = "--header=" .. header end
+              if token == "initial" and header ~= nil and pending(request) then
+                -- Extend the ready action so a picker that fails to start leaves discovery unclaimed.
+                arguments[#arguments + 1] = [[--bind=start:+transform-header([ -n "$EON_FILES_CLI" ] && [ -f "$EON_QUICK_MARKER" ] && "$EON_FILES_CLI" --eon-initial-picker-header initial || printf '%s' "$EON_FILES_NOTICE")]]
+              end
               local permit = ui.hide()
               -- fzf reads the history as it arrives instead of waiting for all of it.
               local child, spawn_err = Command("fzf")

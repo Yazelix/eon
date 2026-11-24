@@ -14,11 +14,12 @@ const DECOY: &str = "journey-linen";
 const QUERY: &str = "cobalt";
 const SHELL_MARK: &str = "EON journey shell";
 const QUICK_PROMPT: &str = "Quick search >";
+const TUTOR_HINT: &str = "New to Eon? Run eon tutor.";
 const NON_BACKGROUND_FLOOR: f64 = 0.002;
 const MARKER_PIXELS: usize = 64;
 
 // shortcut: default fullscreen layout at 1280x800, revisit if the text areas move.
-const PICKER_ROWS: [Rect; 3] = [
+const PICKER_ROWS: [Rect; 4] = [
     Rect {
         x: 316,
         y: 84,
@@ -26,7 +27,7 @@ const PICKER_ROWS: [Rect; 3] = [
         h: 17,
     },
     Rect {
-        x: 335,
+        x: 316,
         y: 102,
         w: 260,
         h: 16,
@@ -34,6 +35,12 @@ const PICKER_ROWS: [Rect; 3] = [
     Rect {
         x: 335,
         y: 120,
+        w: 260,
+        h: 17,
+    },
+    Rect {
+        x: 335,
+        y: 138,
         w: 260,
         h: 17,
     },
@@ -144,7 +151,7 @@ fn picker(journey: &mut Journey, snapshot: &Value, deadline: Instant) -> Result<
         .get("text")
         .and_then(Value::as_str)
         .ok_or("picker read has no text")?;
-    let found = [QUICK_PROMPT, PROJECT, DECOY]
+    let found = [QUICK_PROMPT, TUTOR_HINT, PROJECT, DECOY]
         .into_iter()
         .all(|wanted| text.contains(wanted));
     let observation = object([("session", snapshot.clone()), ("screen", screen)]);
@@ -308,19 +315,19 @@ mod tests {
     use super::*;
 
     #[test]
-    fn picker_requires_foreground_in_the_prompt_and_both_results() {
+    fn picker_requires_foreground_in_the_prompt_hint_and_both_results() {
         let mut picture = Picture {
             width: 1280,
             height: 800,
             pixels: vec![0; 1280 * 800 * 3],
         };
-        let selected = PICKER_ROWS[1];
+        let selected = PICKER_ROWS[2];
         for y in selected.y..selected.y + selected.h {
             let start = (y * 1280 + selected.x) as usize * 3;
             picture.pixels[start..start + selected.w as usize * 3].fill(160);
         }
         assert!(!picker_pixels(&picture).unwrap().0);
-        let colors = [[0, 96, 255], [0, 0, 0], [230, 235, 240]];
+        let colors = [[0, 96, 255], [230, 235, 240], [0, 0, 0], [230, 235, 240]];
         for (index, (row, color)) in PICKER_ROWS.iter().zip(colors).enumerate() {
             let start = (row.y * 1280 + row.x) as usize * 3;
             for pixel in picture.pixels[start..start + (PICKER_FOREGROUND_FLOOR + 1) * 3]
@@ -329,7 +336,10 @@ mod tests {
             {
                 *pixel = color;
             }
-            assert_eq!(picker_pixels(&picture).unwrap().0, index == 2);
+            assert_eq!(
+                picker_pixels(&picture).unwrap().0,
+                index == PICKER_ROWS.len() - 1
+            );
         }
     }
 

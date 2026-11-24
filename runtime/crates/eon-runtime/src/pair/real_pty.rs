@@ -41,6 +41,8 @@ struct Pair {
 struct Start {
     /// On quick search, as a pending tab's pair does.
     quick: bool,
+    /// Supply the startup header to exercise fzf's tutor action.
+    tutor_notice: bool,
     /// Seconds fzf waits before it starts.
     slow_fzf: Option<f32>,
     /// Hold Yazi's first DDS registration until one real ya command has exited.
@@ -97,6 +99,11 @@ impl Pair {
             &bin.join("eon"),
             &format!(
                 "#!/bin/sh\nprintf '%s\\n' \"$*\" >> '{}'\n\
+                 if [ \"$1\" = --eon-initial-picker-header ]; then\n\
+                   IFS= read -r token < \"$EON_QUICK_MARKER\"\n\
+                   [ \"$2\" = initial ] && [ \"$token\" = initial ] && printf 'Tutor header fixture\\n'\n\
+                   exit\n\
+                 fi\n\
                  [ \"$1\" = session ] && \
                  printf '{{\"tabs\":[{{\"id\":\"t1\",\"popups\":[{{\"id\":\"u1\",\"terminal\":\"terminal-1\"}}]}}]}}\\n'\n\
                  exit 0\n",
@@ -140,7 +147,7 @@ impl Pair {
                  export PATH='{root}/bin':\"$PATH\"\n\
                  export EON_QUICK_MARKER='{marker}' EON_QUICK_FZF_ARGS=\"$(cat '{root}/fzf-args')\"\n\
                  export EON_FILES_CLI='{root}/bin/eon' EON_TAB=t1 EON_TERMINAL=terminal-1.g1\n\
-                 {quick}\
+                 {quick}{notice}\
                  while [ -e '{gate}' ]; do sleep 0.05; done\n\
                  cd '{files}' && exec '{yazi}' --client-id {id} '{files}'\n",
                 root = root.display(),
@@ -152,6 +159,11 @@ impl Pair {
                 yazi = yazi.display(),
                 quick = if start.quick {
                     "export EON_FILES_START=quick\n"
+                } else {
+                    ""
+                },
+                notice = if start.tutor_notice {
+                    "export EON_FILES_NOTICE=''\n"
                 } else {
                     ""
                 },
@@ -814,10 +826,14 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
         "keys",
         Start {
             quick: true,
+            tutor_notice: true,
             ..Start::default()
         },
     );
-    let quick = pair.quick_search_shown();
+    let quick = pair.until(
+        "quick search with the tutor header after readiness",
+        |text| text.contains("Quick search >") && text.contains("Tutor header fixture"),
+    );
     let mut keyboard = pair.keyboard();
     assert!(quick.contains("beta") && quick.contains("alpha"), "{quick}");
     // fzf can draw before its start action writes the ready marker, and the

@@ -14,6 +14,7 @@ local plugin, marker = arg[1], arg[2]
 -- Stand-ins for the runtime's arguments, which its own tests check.
 local fzf_args = { "--with-shell=/bin/sh -c", "--bind=start:execute-silent(mark)", "--bind=key:become(exit 11)" }
 local marker_set = true
+local startup_notice
 
 local function exists(path)
   local file = io.open(path)
@@ -117,7 +118,7 @@ local getenv = os.getenv
 os.getenv = function(name)
   if name == "EON_QUICK_MARKER" then return marker_set and marker or "" end
   if name == "EON_QUICK_FZF_ARGS" then return table.concat(fzf_args, "\n") end
-  if name == "EON_FILES_NOTICE" then return "" end
+  if name == "EON_FILES_NOTICE" then return startup_notice end
   return getenv(name)
 end
 
@@ -289,6 +290,33 @@ check(coroutine.resume(old), "initial search closes")
 during_close = nil
 check(#reports == count and spawned == before, "an expired reopen never opens")
 check(coroutine.resume(invocation("12-345-3")) and spawned == before, "late deliveries are inert")
+
+local transform = [[--bind=start:+transform-header([ -n "$EON_FILES_CLI" ] && [ -f "$EON_QUICK_MARKER" ] && "$EON_FILES_CLI" --eon-initial-picker-header initial || printf '%s' "$EON_FILES_NOTICE")]]
+local function check_header(token, header, action)
+  local run = invocation(token)
+  check(select(2, coroutine.resume(run)) == "fzf up", "the header case starts fzf")
+  local expected = { table.unpack(fzf_args) }
+  if header then expected[#expected + 1] = "--header=" .. header end
+  if action then expected[#expected + 1] = transform end
+  check(table.concat(fzf_arguments, "\n") == table.concat(expected, "\n"),
+    "startup header preserves the ready/leave bindings: " .. table.concat(fzf_arguments, " | "))
+  check(coroutine.resume(run) and coroutine.status(run) == "dead", "the header case finishes")
+end
+
+state, startup_notice = {}, nil
+check_header("initial")
+state, startup_notice = {}, ""
+check_header("initial")
+state = {}
+request("initial")
+check_header("initial", nil, true)
+state, startup_notice = {}, "Peer window"
+request("initial")
+check_header("initial", startup_notice, true)
+check_header("initial")
+state = {}
+request("12-345-9")
+check_header("12-345-9", startup_notice)
 
 -- The leave key in Yazi's notation: C, A and S on PageDown, in any order.
 local function binds_leave_key(text)

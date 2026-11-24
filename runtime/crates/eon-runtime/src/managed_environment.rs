@@ -3081,7 +3081,7 @@ pub(crate) const QUICK_MARKER_VARIABLE: &str = "EON_QUICK_MARKER";
 /// The fzf arguments the pair's quick search adds, one per line: the start
 /// action that creates the marker and the binding of the key that leaves.
 pub(crate) const QUICK_FZF_ARGS_VARIABLE: &str = "EON_QUICK_FZF_ARGS";
-/// The startup pair's "other windows" notice, its first quick search's header.
+/// The admitted startup pair's first quick-search header, empty when there are no peers to show.
 pub(crate) const FILES_NOTICE_VARIABLE: &str = "EON_FILES_NOTICE";
 
 /// Applies the runtime's pair launch flags, ahead of Yazi's own arguments, to
@@ -6411,11 +6411,7 @@ label = "Browse"
         );
         assert_eq!(
             command_environment(&command, "EON_QUICK_FZF_ARGS"),
-            Some(Some(OsStr::new(
-                "--with-shell=/bin/sh -c\n\
-                 --bind=start:execute-silent(printf '%s' \"$EON_QUICK_TOKEN\" > \"$EON_QUICK_MARKER\")\n\
-                 --bind=ctrl-alt-shift-page-down:become(exit 11)"
-            )))
+            Some(Some(OsStr::new(&crate::pair::FZF_ARGUMENTS.join("\n"))))
         );
         assert_eq!(
             command_environment(&command, "EON_FILES_NOTICE"),

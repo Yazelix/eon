@@ -2,6 +2,9 @@
 
 ## Tutor
 
+The initial directory picker points you to `eon tutor` once per Eon user state
+directory, independently of lesson progress.
+
 `eon tutor` prints a welcome and the current lesson in your own terminal, then
 returns to your shell. It opens no window, pane, project or tool. Practice in
 your own session when ready; use normal close confirmations for work you
@@ -214,9 +217,9 @@ window is ready. Press any key other than the style-browsing keys to dismiss it;
 set `[anima].enabled = false` in `config.toml` to skip it, or start with
 `eon --no-anima` to skip it once. Quick search then opens over the first tab's
 Files. `eon --dir DIR` skips both the animation and quick search: the first tab
-opens a terminal in DIR. When other Eon windows still run, a new
-window's first quick search says how many in its header, names up to three,
-and says how to see and quit them; `eon window ls` lists them, and
+opens a terminal in DIR. If the initial picker is still selected at startup,
+its header reports how many other Eon windows are running, names up to three
+and says how to see and quit them. `eon window ls` lists them, and
 `eon session --json` carries them as `running.others`. Press Enter to use a
 Zoxide history match, or Tab to move Files there and browse with Yazi, where
 Alt+Enter uses a folder (see

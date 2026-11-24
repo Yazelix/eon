@@ -119,7 +119,8 @@ run `nix profile remove eon` once, then the install line above.
 
 Run `eon`. After a short animation (most keys skip it), pick a directory: press
 Enter for a Zoxide match, or Tab to browse with Yazi and Alt+Enter to use a
-folder. A terminal opens there.
+folder. The picker points you to `eon tutor` once on first launch. A terminal
+opens in the directory you choose.
 
 Run `eon tutor` for ten short lessons printed in your current pane. Use
 `eon tutor next` to continue, `eon tutor list` to see progress, or `eon tutor 3`

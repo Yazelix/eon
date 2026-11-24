@@ -25,9 +25,9 @@ use super::{
     },
 };
 use eon_workspace_protocol::v50::{
-    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure, InputLock,
-    InvokeIntent, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side,
-    Snapshot, Tab, TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction,
+    Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, FILES_ENTRY, Failure,
+    InputLock, InvokeIntent, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response,
+    Side, Snapshot, Tab, TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction,
     WorkspaceInfo, WorkspaceTarget as SessionTarget, entry_popup, pane_label_character,
     valid_caller, validate_paste,
 };
@@ -711,25 +711,62 @@ fn packaged_fzf(prompt: &str, footer: &str) -> Command {
 }
 
 fn startup_notice(socket: &Path) -> Option<String> {
-    let deadline = Instant::now() + Duration::from_secs(1);
-    loop {
-        let ControlResponse::Workspace(Response::Snapshot(snapshot)) = send_action_from_until(
+    let tab_id = env::var(TAB_VARIABLE).ok()?;
+    let caller = env::var(TERMINAL_VARIABLE).ok()?;
+    let terminal = terminal_session(&caller)?;
+    poll_startup_notice(&tab_id, terminal, |deadline| {
+        send_action_from_until(
             socket,
             None,
             Action::Workspace(WorkspaceAction::Inspect),
             deadline,
         )
-        .ok()?
-        else {
-            return None;
+    })
+}
+
+fn poll_startup_notice(
+    tab_id: &str,
+    terminal: &str,
+    mut inspect: impl FnMut(Instant) -> Result<ControlResponse, EndpointFailure>,
+) -> Option<String> {
+    let deadline = Instant::now() + Duration::from_secs(1);
+    let mut admitted = false;
+    loop {
+        let snapshot = match inspect(deadline) {
+            Ok(ControlResponse::Workspace(Response::Snapshot(snapshot))) => snapshot,
+            Err(error)
+                if error.kind == EndpointFailureKind::Unreachable && Instant::now() >= deadline =>
+            {
+                break;
+            }
+            _ => return None,
         };
-        let running = snapshot.running?;
-        if let Some(others) = running.others {
-            return running_notice(&others, running.omitted);
+        // A request held during bootstrap may be answered after Venus dismisses the picker.
+        if snapshot.active_tab != tab_id {
+            return None;
         }
-        let remaining = deadline.checked_duration_since(Instant::now())?;
+        let tab = snapshot
+            .tabs
+            .iter()
+            .find(|tab| tab.id == tab_id && tab.pending)?;
+        if !tab.popups.iter().any(|popup| {
+            tab.selected_popup.as_ref() == Some(&popup.id)
+                && popup.entry == FILES_ENTRY
+                && popup.session == terminal
+        }) {
+            return None;
+        }
+        let running = snapshot.running?;
+        admitted = true;
+        if let Some(others) = running.others {
+            return Some(running_notice(&others, running.omitted).unwrap_or_default());
+        }
+        let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+            break;
+        };
         thread::sleep(remaining.min(Duration::from_millis(100)));
     }
+    admitted.then(String::new)
 }
 
 fn launch_managed(
@@ -3998,6 +4035,63 @@ mod parity;
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn startup_notice_fails_closed_if_supervision_is_lost_while_waiting_for_peers() {
+        use crate::workspace::{WorkspaceSet, tests};
+        use eon_workspace_protocol::v50::{RunningWindows, WindowEntry, WindowState};
+        let root = supervisor::temporary_directory();
+        let workspace = WorkspaceSet::pending(
+            root.join("runtime"),
+            root.clone(),
+            None,
+            tests::catalog(),
+            tests::prepared,
+            |_| Ok(()),
+        )
+        .unwrap();
+        let mut snapshot = workspace.snapshot();
+        snapshot.running = Some(RunningWindows {
+            this: WindowEntry {
+                window: None,
+                generation: String::new(),
+                created_build: None,
+                active_build: None,
+                name: None,
+                started_at: None,
+                live_terminals: None,
+                state: WindowState::Live,
+            },
+            others: None,
+            omitted: 0,
+        });
+        let terminal = &snapshot.tabs[0].popups[0].session;
+        for failure in [
+            Ok(ControlResponse::Workspace(Response::Failure(failure(
+                "stop-incomplete",
+                "test stopping",
+            )))),
+            Err(EndpointFailure::new(EndpointFailureKind::Dead, "test dead")),
+            Err(EndpointFailure::new(
+                EndpointFailureKind::Corrupt,
+                "test corrupt",
+            )),
+        ] {
+            let mut replies = [
+                Ok(ControlResponse::Workspace(Response::Snapshot(
+                    snapshot.clone(),
+                ))),
+                failure,
+            ]
+            .into_iter();
+            assert_eq!(
+                poll_startup_notice(&snapshot.active_tab, terminal, |_| replies.next().unwrap()),
+                None
+            );
+            assert!(replies.next().is_none());
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn launch_capture_survives_supervisor_self_launch_without_old_authority() {

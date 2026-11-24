@@ -17,7 +17,6 @@ fn main() -> ExitCode {
     unsafe {
         launch::clear_capture()
     };
-    let inputs = product::inputs(launch);
     let arguments: Vec<_> = std::env::args_os().collect();
     let product_cli = arguments.first().is_some_and(|program| {
         std::path::Path::new(program).file_name() == Some(std::ffi::OsStr::new("eon"))
@@ -25,6 +24,12 @@ fn main() -> ExitCode {
                 && std::env::current_exe()
                     .is_ok_and(|executable| executable.as_os_str() == program))
     });
+    if product_cli
+        && matches!(&arguments[1..], [flag, token] if flag == "--eon-initial-picker-header" && token == "initial")
+    {
+        return ExitCode::from(tutor::initial_picker_header());
+    }
+    let inputs = product::inputs(launch);
     if product_cli && arguments.get(1).is_some_and(|command| command == "tutor") {
         return ExitCode::from(tutor::run(&arguments[2..]));
     }

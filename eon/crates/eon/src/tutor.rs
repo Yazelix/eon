@@ -3,11 +3,58 @@ mod state;
 
 use serde_json::{Value, json};
 use std::{
+    env,
     ffi::OsString,
-    io::{self, Write},
+    fs,
+    io::{self, Read, Write},
+    os::unix::fs::OpenOptionsExt,
+    path::{Path, PathBuf},
     process::Command,
     time::Duration,
 };
+
+pub(crate) fn initial_picker_header() -> u8 {
+    let (Ok(mut notice), Some(marker)) = (
+        env::var("EON_FILES_NOTICE"),
+        env::var_os("EON_QUICK_MARKER").map(PathBuf::from),
+    ) else {
+        return 2;
+    };
+    if !env::var("EON_FILES_START").is_ok_and(|start| start == "quick")
+        || !env::var("EON_QUICK_TOKEN").is_ok_and(|token| token == "initial")
+        || !initial_picker_ready(&marker)
+    {
+        return 2;
+    }
+    if state::claim_discovery() {
+        if !notice.is_empty() {
+            notice.push('\n');
+        }
+        notice.push_str("New to Eon? Run eon tutor.");
+    }
+    u8::from(io::stdout().lock().write_all(notice.as_bytes()).is_err())
+}
+
+fn initial_picker_ready(marker: &Path) -> bool {
+    if !marker.is_absolute() {
+        return false;
+    }
+    let Ok(file) = fs::OpenOptions::new()
+        .read(true)
+        .custom_flags(libc::O_NOFOLLOW | libc::O_NONBLOCK)
+        .open(marker)
+    else {
+        return false;
+    };
+    let initial = b"initial";
+    let mut token = Vec::new();
+    file.metadata().is_ok_and(|metadata| metadata.is_file())
+        && file
+            .take((initial.len() + 1) as u64)
+            .read_to_end(&mut token)
+            .is_ok()
+        && token == initial
+}
 
 const HELP: &str = "\
 eon tutor [list|N|next|--reset] [--json]
