@@ -6,7 +6,7 @@
 
 use super::control::failure;
 use super::managed_environment::TerminalAccess;
-use eon_workspace_protocol::v49::{Action, Failure, InvokeIntent, Request};
+use eon_workspace_protocol::v50::{Action, Failure, InvokeIntent, Request};
 
 /// Who asks. Every client of the window's workspace socket is the person
 /// (`Owner`), with or without a calling terminal; `EON_TERMINAL` only routes.
@@ -148,7 +148,7 @@ fn terminal_access_off() -> Failure {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use eon_workspace_protocol::v49::{InvokeIntent, SendTarget, TerminalInput};
+    use eon_workspace_protocol::v50::{InvokeIntent, SendTarget, TerminalInput};
 
     fn request(caller: Option<&str>, action: Action) -> Request {
         Request {
@@ -259,7 +259,7 @@ mod tests {
             request(None, scrollback(InvokeIntent::Show)),
             request(
                 None,
-                Action::Workspace(eon_workspace_protocol::v49::WorkspaceAction::FocusId(
+                Action::Workspace(eon_workspace_protocol::v50::WorkspaceAction::FocusId(
                     "u1".into(),
                 )),
             ),

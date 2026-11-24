@@ -1,5 +1,5 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v49::{
+use eon_workspace_protocol::v50::{
     Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
     Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
     Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
@@ -9705,7 +9705,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -9715,7 +9715,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -9726,7 +9726,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -9741,7 +9741,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -9759,14 +9759,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -9788,7 +9788,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -12438,7 +12438,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v49::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -14349,6 +14349,118 @@ fn quit_from_default_and_commands_popup_callers_stops_only_their_windows() {
 }
 
 #[test]
+fn files_reveal_cli_targets_the_callers_tab_and_reuses_its_pair() {
+    let window = PairWindow::new();
+    executable(
+        &window.root.join("session-bin/ya"),
+        r#"#!/bin/sh
+[ "$1" = exec ] || exit 1
+printf '%s\000' "$YAZI_ID" "$@" >> "$EON_TEST_YA_LOG"
+"#,
+    );
+    let launch = window.launch.to_str().unwrap();
+    let mut supervisor = window.start(window.command_with_arguments(&["run", "--dir", launch]));
+    wait_for_ready(&window.control());
+    let caller = quit_terminal_caller(&window.generation().join("orbit.sock"));
+    let created = window.eon(&["tab", "create", "--dir", launch, "--json"]);
+    assert!(created.status.success(), "{created:?}");
+    let before = window.inspect("reveal-before");
+    let tab = &before.tabs[0];
+    assert_ne!(before.active_tab, tab.id);
+    assert!(tab.popups.is_empty());
+    let mut selected = stable_tabs(&before.tabs);
+    let reveal = || {
+        let mut command = eon_command(&window.binary);
+        window.select(&mut command);
+        command
+            .current_dir(&window.home)
+            .args(["files", "reveal", "--json"]);
+        command
+    };
+    let json =
+        |output: &Output| serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+
+    for (path, status) in [
+        (OsStr::new("missing.txt"), 1),
+        (OsStr::from_bytes(b"non-utf8-\xff"), 2),
+    ] {
+        let refused = reveal()
+            .args(["--tab", &tab.id, "--"])
+            .arg(path)
+            .output()
+            .unwrap();
+        assert_eq!(refused.status.code(), Some(status), "{refused:?}");
+        if status == 1 {
+            assert_eq!(json(&refused)["error"]["code"], "invalid-path");
+        }
+        let after = window.inspect(&format!("reveal-refused-{status}"));
+        assert_eq!(stable_tabs(&after.tabs), selected);
+        assert_eq!(after.active_tab, before.active_tab);
+    }
+    assert!(!window.files_log.exists());
+    assert!(!window.ya_log.exists());
+
+    let name = "-notes 雪 'quotes' \"double\"\nnext.txt";
+    let path = window.home.join(name);
+    fs::write(&path, "reveal me").unwrap();
+    let shown = reveal()
+        .env("EON_TERMINAL", OsStr::from_bytes(&caller))
+        .args(["--", name])
+        .output()
+        .unwrap();
+    assert!(shown.status.success(), "{shown:?}");
+    let after = window.inspect("reveal-fresh");
+    let [popup] = after.tabs[0].popups.as_slice() else {
+        panic!("reveal did not start one Files popup: {:?}", after.tabs[0]);
+    };
+    assert_eq!(popup.entry, "files");
+    assert_eq!(json(&shown)["active_tab"], before.active_tab);
+    assert_eq!(json(&shown)["tabs"][0]["selected_popup"], popup.id);
+    selected[0].selected_popup = Some(popup.id.clone());
+    selected[0].popups = vec![popup.clone()];
+    assert_eq!(stable_tabs(&after.tabs), selected);
+    let endpoint = Path::new(OsStr::from_bytes(&popup.endpoint));
+    let live = live_identity(endpoint);
+    let started = window.pair_launch(&popup.session);
+    assert_eq!(started.tab, tab.id);
+    assert_eq!(started.directory, window.home);
+
+    let again = reveal().args([launch, "--tab", &tab.id]).output().unwrap();
+    assert!(again.status.success(), "{again:?}");
+    assert_eq!(json(&again)["active_tab"], before.active_tab);
+    assert_eq!(json(&again)["tabs"][0]["selected_popup"], popup.id);
+    let after = window.inspect("reveal-live");
+    assert_eq!(after.active_workspace, before.active_workspace);
+    assert_eq!(stable_tabs(&after.tabs), selected);
+    assert_eq!(live_identity(endpoint), live);
+    assert_eq!(log_lines(&window.files_log).len(), 1);
+    assert!(window.visits().is_empty());
+    let id = started.client_id().to_string();
+    let expected = [
+        &id,
+        "exec",
+        "reveal",
+        "--raw",
+        path.to_str().unwrap(),
+        &id,
+        "exec",
+        "cd",
+        "--raw",
+        launch,
+    ];
+    let calls = fs::read(&window.ya_log).unwrap();
+    assert_eq!(
+        calls
+            .strip_suffix(b"\0")
+            .unwrap()
+            .split(|byte| *byte == 0)
+            .collect::<Vec<_>>(),
+        expected.map(str::as_bytes)
+    );
+    window.stop_generation(&mut supervisor);
+}
+
+#[test]
 fn popup_show_cli_creates_in_background_and_focuses_the_exact_instance() {
     let window = PairWindow::new();
     let mut supervisor = scrollback_window(&window, "\n[popups.anima]\nenabled = false\n");
@@ -16191,7 +16303,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v49::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v50::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -17930,7 +18042,7 @@ fn previous_runtime(id: &str) -> Runtime {
     Runtime {
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
-        terminal_inventory: vec![eon_workspace_protocol::v49::TerminalInventory {
+        terminal_inventory: vec![eon_workspace_protocol::v50::TerminalInventory {
             terminal: "terminal-1".into(),
             run: "fixture-run".into(),
             origin_build: None,
@@ -18067,7 +18179,7 @@ fn default_alias_fixture(
             snapshot.active_build = record.active_build.clone();
             snapshot.running = None;
             if current && id == ids.last().unwrap() {
-                use eon_workspace_protocol::v49::{RunningWindows, WindowEntry, WindowState};
+                use eon_workspace_protocol::v50::{RunningWindows, WindowEntry, WindowState};
                 snapshot.running = Some(RunningWindows {
                     this: WindowEntry {
                         window: None,
@@ -19060,7 +19172,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v49::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v50::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -20098,7 +20210,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             &control,
             id,
             ProtocolAction::SendTerminal {
-                target: eon_workspace_protocol::v49::SendTarget::Id(pane.id.clone()),
+                target: eon_workspace_protocol::v50::SendTarget::Id(pane.id.clone()),
                 force: false,
                 input,
             },
@@ -22435,7 +22547,7 @@ fn popup_show_scrollback_access_precedes_stale_and_replay_checks() {
         protocol_action(
             &window.control(),
             "hide",
-            ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
+            ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
                 tab: "t1".into(),
                 instance: popup.id
             })
@@ -22576,7 +22688,7 @@ fn popup_show_refusals_precede_history_pair_and_input_effects() {
     protocol_action(
         &window.control(),
         "hide-scrollback",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
             tab: "t1".into(),
             instance: popup.id,
         }),
@@ -22700,7 +22812,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
     protocol_action(
         &window.control(),
         "hide-background",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
             tab: target.id.clone(),
             instance: popup.id.clone(),
         }),
@@ -22768,7 +22880,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
         &window.control(),
         "hide-hidden",
         Some(&caller),
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v49::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
             tab: target.id.clone(),
             instance: hidden_popup.id.clone(),
         }),
@@ -23525,7 +23637,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
 
 #[test]
 fn focused_send_reports_the_persons_terminal_and_guards_enter() {
-    use eon_workspace_protocol::v49::{FocusReport, encode_focus_report};
+    use eon_workspace_protocol::v50::{FocusReport, encode_focus_report};
     let root = temporary_directory();
     let fifo = root.join("focus-reports");
     assert!(
@@ -23728,7 +23840,7 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
     let before = sent();
     assert!(
         matches!(protocol_action(&control, "guarded-old-pane", ProtocolAction::SendTerminal {
-        target: eon_workspace_protocol::v49::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
+        target: eon_workspace_protocol::v50::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
         force: true, input: TerminalInput::Enter,
     }), Response::Failure(failure) if failure.code == "focus-changed")
     );
@@ -25460,7 +25572,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         created_build: "g1-00000000000000000000000000000001".into(),
                         active_build: "g1-00000000000000000000000000000001".into(),
-                        terminal_inventory: vec![eon_workspace_protocol::v49::TerminalInventory {
+                        terminal_inventory: vec![eon_workspace_protocol::v50::TerminalInventory {
                             terminal: "terminal-1".into(),
                             run: "fixture-run".into(),
                             origin_build: None,
@@ -26449,7 +26561,7 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     assert_eq!(
         failure.reason,
-        eon_workspace_protocol::v49::QuotaFailureReason::Start
+        eon_workspace_protocol::v50::QuotaFailureReason::Start
     );
     drop(supervisor);
 }
@@ -26831,10 +26943,10 @@ fn native_quota_deadline_bounds_the_window_and_leaves_time_for_the_store() {
         let id = format!("g1-{:032x}", 151);
         write_native_quota_config(&root);
         let mut snapshot = inspected_snapshot();
-        snapshot.codex_quota = Some(eon_workspace_protocol::v49::CodexQuota {
-            state: eon_workspace_protocol::v49::CodexQuotaState::Fresh,
+        snapshot.codex_quota = Some(eon_workspace_protocol::v50::CodexQuota {
+            state: eon_workspace_protocol::v50::CodexQuotaState::Fresh,
             observed_at: 1,
-            windows: vec![eon_workspace_protocol::v49::QuotaWindow {
+            windows: vec![eon_workspace_protocol::v50::QuotaWindow {
                 duration_minutes: 300,
                 remaining_percent: 80,
                 resets_at: None,
@@ -27248,10 +27360,10 @@ fn native_quota_fills_only_the_providers_the_window_lacks_from_the_store() {
     let id = format!("g1-{:032x}", 156);
     let now = unix_seconds();
     let mut snapshot = inspected_snapshot();
-    snapshot.codex_quota = Some(eon_workspace_protocol::v49::CodexQuota {
-        state: eon_workspace_protocol::v49::CodexQuotaState::Fresh,
+    snapshot.codex_quota = Some(eon_workspace_protocol::v50::CodexQuota {
+        state: eon_workspace_protocol::v50::CodexQuotaState::Fresh,
         observed_at: now - 5,
-        windows: vec![eon_workspace_protocol::v49::QuotaWindow {
+        windows: vec![eon_workspace_protocol::v50::QuotaWindow {
             duration_minutes: 300,
             remaining_percent: 90,
             resets_at: None,

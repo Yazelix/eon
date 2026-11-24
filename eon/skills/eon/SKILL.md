@@ -136,6 +136,13 @@ popup refuses show/focus; don't dismiss it without permission. Scrollback
 creation/focus obeys `terminal_access`, even without a caller; `none` gives
 `terminal-access-off`. An ended popup gives `unknown-id`; inspect again.
 
+When asked to reveal a path in Files, run `eon files reveal --json -- PATH`.
+Quote PATH as one UTF-8 argument. Add `--tab TAB` before `--` to target another
+tab of your session. Read the target tab's `selected_popup` in the returned
+snapshot. `invalid-path` means Files could not locate the path. `unavailable`
+can mean a transient popup is covering the tab. Leave that popup in place
+unless asked to dismiss it.
+
 Hide popup `uN` with `eon popup hide uN --json` only when asked: a keep-alive
 popup keeps running, a transient one stops, and a pending tab's Files starts
 the tab's first pane at its starting directory.

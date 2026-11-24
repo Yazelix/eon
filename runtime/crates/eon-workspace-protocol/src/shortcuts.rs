@@ -1,6 +1,6 @@
 //! Eon's shared shortcut descriptors. This is Rust data, not an EONW codec.
 
-use crate::v49::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
+use crate::v50::{PopupEntry, PopupKey, Shortcut as ProtocolShortcut, Sidebar};
 
 pub const SHIFT: u8 = 1;
 pub const CTRL: u8 = 2;
@@ -415,7 +415,7 @@ pub fn popup_entry_for_chord<'a>(
     })
 }
 
-/// Config spelling for `(modifiers, key)` when `v49::Shortcut` accepts it, else `None`.
+/// Config spelling for `(modifiers, key)` when `v50::Shortcut` accepts it, else `None`.
 pub fn config_chord_if_valid(modifiers: u8, key: &str) -> Option<String> {
     ProtocolShortcut {
         modifiers,
@@ -431,7 +431,7 @@ const INPUT_LOCK_LABEL: &str = "Toggle input lock";
 
 /// A toggle cannot take a fixed shortcut or one of the bundled AppKit menu equivalents.
 /// Runtime and the Snapshot codec also check the window's effective popup catalog.
-pub fn validate_input_lock(chord: &ProtocolShortcut) -> crate::v49::Result<()> {
+pub fn validate_input_lock(chord: &ProtocolShortcut) -> crate::v50::Result<()> {
     chord.validate()?;
     let appkit_hide = chord.key == "KeyH" && [SUPER, ALT | SUPER].contains(&chord.modifiers);
     let reverse_traversal = chord.key == "Tab" && chord.modifiers == SHIFT;
@@ -445,7 +445,7 @@ pub fn validate_input_lock(chord: &ProtocolShortcut) -> crate::v49::Result<()> {
             })
     });
     if appkit_hide || reverse_traversal || fixed {
-        return Err(crate::v49::Error::InvalidValue {
+        return Err(crate::v50::Error::InvalidValue {
             field: "input lock shortcut",
         });
     }
@@ -1212,7 +1212,7 @@ pub fn effective_keymap(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::v49::fixture_input_lock;
+    use crate::v50::fixture_input_lock;
 
     #[test]
     fn input_lock_reserves_reverse_chrome_traversal() {
@@ -1290,10 +1290,10 @@ mod tests {
         assert_eq!(
             [SHIFT, CTRL, ALT, SUPER],
             [
-                crate::v49::SHIFT,
-                crate::v49::CTRL,
-                crate::v49::ALT,
-                crate::v49::SUPER
+                crate::v50::SHIFT,
+                crate::v50::CTRL,
+                crate::v50::ALT,
+                crate::v50::SUPER
             ]
         );
     }

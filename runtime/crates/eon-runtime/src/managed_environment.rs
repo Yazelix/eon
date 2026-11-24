@@ -22,7 +22,7 @@ use eon_workspace_protocol::shortcuts::{
     PopupPolicy, RELEASE_CHOICES, ReleasedShortcuts, config_chord, popup_policy,
     validate_input_lock,
 };
-use eon_workspace_protocol::v49::{
+use eon_workspace_protocol::v50::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES,
     MAX_QUOTA_SCOPE_BYTES, PopupGeometry, PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -1910,9 +1910,9 @@ pub(crate) fn prepare_edit(
     live: Option<&Path>,
     available: bool,
     log: Option<&DiagnosticLog>,
-) -> Result<super::editor::EditCommand, eon_workspace_protocol::v49::Failure> {
+) -> Result<super::editor::EditCommand, eon_workspace_protocol::v50::Failure> {
     use super::editor::{self, EditCommand, ListenerKind};
-    let command_error = |detail| eon_workspace_protocol::v49::Failure {
+    let command_error = |detail| eon_workspace_protocol::v50::Failure {
         code: "edit-command".into(),
         detail,
     };
@@ -5907,7 +5907,7 @@ label = "Browse"
 
     #[test]
     fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
-        use eon_workspace_protocol::v49::MAX_ENTRIES;
+        use eon_workspace_protocol::v50::MAX_ENTRIES;
 
         let mut defaults = crate::fixtures::inputs().defaults;
         let editor = PopupDefinition {

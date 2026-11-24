@@ -726,7 +726,7 @@ fn validate_check(
         .map_err(|error| failed(error.to_string()))?;
     Ok(TargetVerdict {
         target_build,
-        eonw: eon_workspace_protocol::v49::VERSION,
+        eonw: eon_workspace_protocol::v50::VERSION,
         update_schema: checkpoint::update::SCHEMA,
     })
 }

@@ -5,7 +5,7 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v49::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v50::{Filter, InvokeIntent, TerminalInput};
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -147,8 +147,8 @@ fn cli_path(action: &Action) -> CliPath {
             force,
         } => {
             let target = match target {
-                eon_workspace_protocol::v49::SendTarget::Id(id) => id.as_str(),
-                eon_workspace_protocol::v49::SendTarget::Focused { .. } => "focused",
+                eon_workspace_protocol::v50::SendTarget::Id(id) => id.as_str(),
+                eon_workspace_protocol::v50::SendTarget::Focused { .. } => "focused",
             };
             let mut arguments = words(&["pane", "send", target]);
             if *force {
@@ -185,6 +185,12 @@ fn cli_path(action: &Action) -> CliPath {
             },
         ]),
         Action::Edit { file } => [words(&["edit", "--"]), vec![bytes(file)]].concat(),
+        Action::RevealFiles { tab, path } => [
+            words(&["files", "reveal"]),
+            tab.iter().flat_map(|tab| words(&["--tab", tab])).collect(),
+            words(&["--", path]),
+        ]
+        .concat(),
         Action::CreatePane { tab, argv, focus } => [
             words(&["pane", "create"]),
             flag(!focus, "--no-focus"),
@@ -252,7 +258,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v49::VERSION,
+            eonw: eon_workspace_protocol::v50::VERSION,
             orbs: 14,
             orbf: 3,
         },
@@ -340,6 +346,10 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::Edit {
             file: b"/tmp/notes\xff.md".to_vec(),
         },
+        Action::RevealFiles {
+            tab: Some(text("t2")),
+            path: text("/tmp/-雪 'notes'\nnext line.md"),
+        },
         Action::CreatePane {
             tab: None,
             argv: Vec::new(),
@@ -386,22 +396,22 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ReadTerminalHistory { target: text("u1") },
         Action::EditTerminalHistory { target: text("p1") },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v49::SendTarget::Id(text("u1")),
+            target: eon_workspace_protocol::v50::SendTarget::Id(text("u1")),
             force: false,
             input: TerminalInput::Paste(text("echo hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v49::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v50::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Enter,
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v49::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v50::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Paste(text("hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v49::SendTarget::Focused {
+            target: eon_workspace_protocol::v50::SendTarget::Focused {
                 expected_terminal: None,
             },
             force: false,
@@ -478,11 +488,11 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                 assert_eq!(
                     Action::SendTerminal {
                         target: if send.target == "focused" {
-                            eon_workspace_protocol::v49::SendTarget::Focused {
+                            eon_workspace_protocol::v50::SendTarget::Focused {
                                 expected_terminal: None,
                             }
                         } else {
-                            eon_workspace_protocol::v49::SendTarget::Id(send.target)
+                            eon_workspace_protocol::v50::SendTarget::Id(send.target)
                         },
                         force: send.force,
                         input

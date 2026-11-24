@@ -29,8 +29,8 @@ fn launch_arguments_from_env() -> Result<launch::LaunchArguments> {
 }
 
 #[cfg(test)]
-fn fixture_input_lock() -> eon_workspace_protocol::v49::Shortcut {
-    use eon_workspace_protocol::v49::{ALT, SHIFT, Shortcut};
+fn fixture_input_lock() -> eon_workspace_protocol::v50::Shortcut {
+    use eon_workspace_protocol::v50::{ALT, SHIFT, Shortcut};
     Shortcut {
         modifiers: ALT | SHIFT,
         key: "KeyI".into(),

@@ -899,8 +899,10 @@
               state.searching = true
               return "claimed"
             end)
-            local closing = ya.sync(function(state, marker)
+            local closing = ya.sync(function(state, marker, request)
               state.closing = true
+              -- A tab-folder callback can wait on Runtime while it is waiting for Files.
+              if request then os.remove(request) end
               if marker then os.remove(marker) end
             end)
             local release = ya.sync(function(state)
@@ -909,7 +911,7 @@
               return reopen
             end)
 
-            local function search(marker, token)
+            local function search(marker, token, request)
               -- A marker an earlier fzf left says nothing: it goes before anything here can
               -- fail, so a failed search never leaves the runtime taking Files for quick
               -- search.
@@ -950,7 +952,7 @@
               local output, wait_err
               if child then output, wait_err = child:wait_with_output() end
               -- fzf has ended: quick search is no longer up.
-              closing(marker)
+              closing(marker, request)
               -- A query that already ended on its own and failed left fzf an empty list.
               local ended = history:try_wait()
               -- No exit needs the rest of the history, so stop and reap the query.
@@ -999,7 +1001,7 @@
                 return
               end
 
-              local ok, err = pcall(search, marker, token)
+              local ok, err = pcall(search, marker, token, request)
               if not ok and marker then os.remove(marker) end
               if request then os.remove(request) end
               local reopen = release()

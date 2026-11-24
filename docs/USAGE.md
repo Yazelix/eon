@@ -1069,6 +1069,9 @@ and the pane opt-out open a pane per selected file. Neovim also works in the
 package without Helix. Other files keep Yazi's default openers. A new tab must have its directory first: until then, Enter on
 a text file refuses with `choose-directory-first`.
 
+To find the file you're editing in Helix, add the normal-mode Alt+R binding
+to your Helix configuration. [Reveal the current file in Files](CONFIGURATION.md#reveal-the-current-file-in-files).
+
 A new tab has no terminal until you choose its directory: it starts on quick
 search. Using a folder starts the tab's first terminal there and hides the
 popup; closing the popup starts it at the tab's starting directory. Either
@@ -1268,6 +1271,7 @@ line points agents to `eon --skill`.
 | `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any session of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
 | `eon popup show ENTRY [--tab TAB] [--json]` | Start an enabled catalog entry only when its tab has no instance; --tab may name a background tab, and omission uses the addressed session's active tab; active tab and shown session stay as they are |
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
+| `eon files reveal PATH [--tab TAB] [--json]` | Select Files in the caller's tab, or the addressed session's active tab without a caller. `--tab` targets any tab in that session |
 | `eon sidebar show\|hide\|toggle [--json]` | Show, hide or toggle the window's agent sidebar, as Alt+Shift+H and the sidebar's Hide button do, and print the session, whose `sidebar` reads `open`, `closed` or `off`. `show` and `hide` set the state directly in Runtime, so repeating either changes nothing; the command or keypress that ran last determines visibility. With `[sidebar] enabled = false`, `hide` succeeds and `show` and `toggle` fail `unavailable` (exit 1) |
 | `eon focus PANE\|POPUP\|left\|right\|up\|down [--json]` | Focus a pane or exact existing popup `uN`, selecting its tab, or traverse the session; switch tabs with `eon tab switch` |
 | `eon lock [--json]` / `eon unlock [--json]` | Enable or disable [input lock](#input-lock) for the addressed window, leaving focus and selection in place. Repeat either command to set the same state. JSON includes `input_locked` |
@@ -1415,6 +1419,20 @@ session give `unknown-tab` (exit 3). Pending tabs accept only Project/Files;
 other entries give `choose-directory-first` (exit 1). Successful show, hide
 and focus return the complete session Snapshot through the normal human or
 JSON output; JSON failures use the existing `error` object.
+
+`eon files reveal PATH` reuses the target tab's Files popup or starts it if
+absent. It switches Project quick search to Files, where it enters a directory
+or opens a file's parent and hovers the file. Yazi's active filter still
+applies. The command can enable hidden entries for a dotfile.
+
+Relative paths resolve from the CLI's working directory. Use `--` before a
+path that starts with a dash, as in `eon files reveal --json -- '-notes.md'`.
+Use one UTF-8 path of at most 4096 bytes after making it absolute. A missing
+path returns `invalid-path` (exit 1) before Files or its tab changes.
+A transient popup in the target tab causes `unavailable` (exit 1).
+`--tab` can target a background tab. The command keeps the shown session,
+active tab and desktop focus. Success with `--json` returns the session
+Snapshot with Files selected in the target tab.
 
 Each tab's `selected_popup` names its shown popup, null when hidden; for an
 inactive tab it is the retained popup selection. `selected_pane` and popup

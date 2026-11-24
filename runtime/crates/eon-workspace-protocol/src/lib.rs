@@ -5,7 +5,7 @@
 pub mod shortcuts;
 pub mod stop;
 pub mod update;
-pub mod v49;
+pub mod v50;
 
 use std::time::Duration;
 

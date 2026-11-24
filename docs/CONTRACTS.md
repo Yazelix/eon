@@ -2152,6 +2152,34 @@ names its socket. CLI JSON names a session `session` and a terminal
     addressed session does not list fails with
     `unknown-popup`; one that leaves between the read and the dismissal fails
     with `stale-popup`. Both exit 3 and change nothing.
+  - `eon files reveal PATH [--tab TAB] [--json]` selects Files in the
+    target tab of the addressed session. An explicit TAB may be inactive.
+    With no TAB, the validated caller's tab is used, or the addressed
+    session's active tab when there is no caller. The shown session,
+    active tab, selected pane and column, and desktop focus stay as they
+    were. A different transient popup covering the target tab refuses
+    the request with `unavailable` (exit 1) before any effect.
+  - PATH is one UTF-8 filesystem argument. Relative paths resolve against
+    the CLI working directory and `--` permits an option-looking path.
+    Invalid arguments, including a non-`tN` or repeated `--tab` and an
+    empty, non-UTF-8, NUL-containing or over-limit path, exit 2. A valid
+    TAB outside the addressed session or no longer live fails with
+    `unknown-tab` (exit 3). These failures change nothing.
+  - Runtime validates that PATH names an existing regular file or
+    directory before changing the pair or its tab. If this validation
+    fails, including for a missing path, `invalid-path` (exit 1) leaves
+    tab and popup topology, selection, and the pair's screen and
+    location as they were. Files enters a directory or opens the parent
+    of a file and hovers it, subject to Yazi's active file filter.
+    Revealing a dotfile may enable hidden entries in the active Yazi tab.
+  - Reveal navigates the existing keep-alive Files pair in place, leaving
+    Project when it is on quick search. It starts a Files pair when
+    absent. Reveal does not commit a pending tab, change its tab
+    directory, record a Zoxide visit, or stop a pre-existing popup.
+    Success returns the ordinary post-action session Snapshot. With
+    `--json` the same session JSON and error envelope apply. A failed
+    start, navigation or Project exit is a command failure. If a new
+    pair started and navigation failed, that pair stays live and hidden.
   - `eon sidebar show|hide|toggle [--json]` acts on the agent sidebar of the
     window showing the resolved session (EON-C31), as Alt+Shift+H and the
     sidebar's Hide button do. `toggle` sends one `ToggleSidebar`. `show` and
@@ -2345,7 +2373,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v49 and accepted Orbit management operations.
+- **Consumes:** Current EONW v50 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -2357,7 +2385,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v49 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v50 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   EONW v48 appends one byte to the v47 Snapshot payload. Bits 0, 1, 2, and 3
   mean that the window has released physical Alt+M, Alt+W, Alt+Q, and Alt+G,
@@ -2374,6 +2402,14 @@ names its socket. CLI JSON names a session `session` and a terminal
   invalid. An accepted request returns the ordinary Snapshot result with
   the resulting bit. The six-byte prefix and Reserved Stop are unchanged
   (EON-C11). Workspace requests and snapshots keep exact-version admission.
+  EONW v50 adds request discriminator 48, `RevealFiles`. It carries an
+  optional tab ID in the existing optional-ID encoding, followed by an
+  absolute UTF-8 path in the length-prefixed string encoding, with no
+  NUL and with the existing 4096-byte path limit. Runtime requires a
+  canonical `tN` when a tab ID is present. An accepted request returns
+  the ordinary Snapshot. Other payload layouts, the six-byte prefix and
+  Reserved Stop remain unchanged. Workspace requests and snapshots keep
+  exact-version admission.
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
   failure records to Snapshot: fresh/stale state, observation and windows,
   with at most six scoped windows, only 300/10080-minute periods and unique

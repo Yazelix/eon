@@ -361,7 +361,7 @@ ERROR`. eonbase and standalone Venus report no focus.
 | Phase | Bytes | Meaning |
 | --- | --- | --- |
 | Admission only, first | `ready-v1` | Startup readiness |
-| After admission, or at once without it | Canonical EONW v49 focus-report frame | Native focus and optional terminal identity |
+| After admission, or at once without it | Canonical EONW v50 focus-report frame | Native focus and optional terminal identity |
 
 The canonical frame is bounded by `MAX_FOCUS_REPORT_BYTES`. Chrome, dialogs
 and unavailable attachments report no terminal. Runtime validates topology

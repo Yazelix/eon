@@ -24,7 +24,7 @@ use super::{
         terminal_text_json,
     },
 };
-use eon_workspace_protocol::v49::{
+use eon_workspace_protocol::v50::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, Failure, InputLock,
     InvokeIntent, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response, Side,
     Snapshot, Tab, TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction,
@@ -1134,8 +1134,8 @@ fn renamed_command(arguments: &[OsString]) -> Option<Error> {
 /// The first words `execute` hands to `parse_control_arguments`.
 fn control_command(command: &OsStr) -> bool {
     [
-        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "focus", "keys", "lock",
-        "unlock", "--window",
+        "session", "tab", "pane", "column", "popup", "sidebar", "edit", "files", "focus", "keys",
+        "lock", "unlock", "--window",
     ]
     .iter()
     .any(|word| command == *word)
@@ -1299,6 +1299,13 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "Add the pane to tab TAB instead",
             ),
             ("edit [--json] -- FILE", "Open FILE in Editor or a pane"),
+            (
+                "files reveal PATH [--tab TAB] [--json]",
+                "Show PATH in the tab's Files",
+            ),
+            ("", "Uses the caller's tab, or the"),
+            ("", "active tab outside Eon."),
+            ("", "Use -- before an option-like path."),
             (
                 "pane close PANE [--yes] [--json]",
                 "Close any pane of this session",
@@ -2176,9 +2183,9 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     let json = send.json;
     let action = |input, expected_terminal| Action::SendTerminal {
         target: if send.target == "focused" {
-            eon_workspace_protocol::v49::SendTarget::Focused { expected_terminal }
+            eon_workspace_protocol::v50::SendTarget::Focused { expected_terminal }
         } else {
-            eon_workspace_protocol::v49::SendTarget::Id(send.target.clone())
+            eon_workspace_protocol::v50::SendTarget::Id(send.target.clone())
         },
         input,
         force: send.force,
@@ -2389,7 +2396,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v49::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v50::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -3171,6 +3178,12 @@ fn parse_control_arguments(arguments: &[OsString]) -> Result<(Action, bool), Err
     if let Some(action) = parse_edit_arguments(arguments)? {
         return Ok(action);
     }
+    if let [command, operation, rest @ ..] = arguments
+        && command == "files"
+        && operation == "reveal"
+    {
+        return parse_files_reveal_arguments(rest);
+    }
     if let Some(action) = parse_pane_create_arguments(arguments)? {
         return Ok(action);
     }
@@ -3273,7 +3286,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    eon_workspace_protocol::v49::validate_pane_rename(name, tag)
+    eon_workspace_protocol::v50::validate_pane_rename(name, tag)
         .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
@@ -3536,6 +3549,45 @@ fn parse_edit_arguments(arguments: &[OsString]) -> Result<Option<(Action, bool)>
         },
         json,
     )))
+}
+
+fn parse_files_reveal_arguments(arguments: &[OsString]) -> Result<(Action, bool), Error> {
+    let (mut path, mut tab, mut json) = (None, None, false);
+    let mut words = arguments.iter();
+    while let Some(word) = words.next() {
+        match word.to_str() {
+            Some("--json") if !json => json = true,
+            Some("--tab") if tab.is_none() => {
+                let value = words
+                    .next()
+                    .and_then(|word| word.to_str())
+                    .filter(|value| tab_number(value).is_some())
+                    .ok_or_else(|| Error::usage(EON_USAGE))?;
+                tab = Some(value.into());
+            }
+            Some("--") if path.is_none() => {
+                let [operand] = words.as_slice() else {
+                    return Err(Error::usage(EON_USAGE));
+                };
+                path = Some(operand);
+                break;
+            }
+            Some(value) if path.is_none() && !value.starts_with('-') => path = Some(word),
+            None => return Err(Error::usage("eon files reveal requires a UTF-8 path")),
+            _ => return Err(Error::usage(EON_USAGE)),
+        }
+    }
+    let path = path
+        .filter(|path| !path.is_empty())
+        .ok_or_else(|| Error::usage("eon files reveal needs a path"))?;
+    let path = std::path::absolute(path)
+        .map_err(|error| Error::from(format!("cannot resolve {path:?}: {error}")))?
+        .into_os_string()
+        .into_string()
+        .map_err(|_| Error::usage("eon files reveal requires a UTF-8 path"))?;
+    let action = Action::RevealFiles { tab, path };
+    validate_action(None, action.clone()).map_err(|error| Error::usage(error.detail))?;
+    Ok((action, json))
 }
 
 /// `pane create [--json] [--no-focus] [--tab TAB] [-- COMMAND [ARGS...]]`,
@@ -4053,7 +4105,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v49::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v50::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -5264,6 +5316,79 @@ mod tests {
     }
 
     #[test]
+    fn reveal_parser_keeps_one_path_and_resolves_it_against_the_working_directory() {
+        let path = "-雪 'quotes' \"double\"\nnext line";
+        let parse = |words: &[&str]| {
+            let arguments: Vec<OsString> = words.iter().map(Into::into).collect();
+            let (arguments, _) = parse_workspace_target_arguments(&arguments).unwrap();
+            parse_control_arguments(&arguments)
+        };
+        assert_eq!(
+            parse(&["files", "reveal", "--tab", "t7", "--json", "--", path]).unwrap(),
+            (
+                Action::RevealFiles {
+                    tab: Some("t7".into()),
+                    path: env::current_dir()
+                        .unwrap()
+                        .join(path)
+                        .into_os_string()
+                        .into_string()
+                        .unwrap(),
+                },
+                true,
+            )
+        );
+        assert_eq!(
+            parse(&["files", "reveal", "/a path", "--json"]).unwrap(),
+            (
+                Action::RevealFiles {
+                    tab: None,
+                    path: "/a path".into(),
+                },
+                true,
+            )
+        );
+        let help = command_help_text(&["files".into(), "reveal".into()], false).unwrap();
+        assert!(
+            help.contains("files reveal PATH [--tab TAB] [--json]"),
+            "{help}"
+        );
+    }
+
+    #[test]
+    fn reveal_parser_refuses_ambiguous_or_unrepresentable_requests() {
+        let long_path = format!(
+            "/{}",
+            "x".repeat(eon_workspace_protocol::v50::MAX_DIRECTORY_BYTES)
+        );
+        for words in [
+            &["files", "reveal"][..],
+            &["files", "reveal", "--"],
+            &["files", "reveal", "--", ""],
+            &["files", "reveal", "-name"],
+            &["files", "reveal", "one", "--", "two"],
+            &["files", "reveal", "one", "two"],
+            &["files", "reveal", "--json", "--json", "name"],
+            &["files", "reveal", "--tab", "t1", "--tab", "t7", "name"],
+            &["files", "reveal", "--tab", "t01", "name"],
+            &["files", "reveal", "name", "--tab"],
+            &["files", "reveal", "/nul\0name"],
+            &["files", "reveal", &long_path],
+        ] {
+            let arguments: Vec<OsString> = words.iter().map(Into::into).collect();
+            let error = parse_control_arguments(&arguments).unwrap_err();
+            assert_eq!(error.status, 2, "{words:?}");
+        }
+        let arguments = [
+            "files".into(),
+            "reveal".into(),
+            "--".into(),
+            OsString::from_vec(b"/non-utf-8-\xff".to_vec()),
+        ];
+        assert_eq!(parse_control_arguments(&arguments).unwrap_err().status, 2);
+    }
+
+    #[test]
     fn reorder_parser_accepts_only_each_workspace_axis() {
         for (scope, name, direction) in [
             ("tab", "left", Direction::Left),
@@ -5421,7 +5546,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v49::{
+        use eon_workspace_protocol::v50::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -5681,7 +5806,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v49::{
+        use eon_workspace_protocol::v50::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };

@@ -1910,6 +1910,36 @@ Auto-save is disabled unless your configuration enables it. Eon's Helix is built
 without Steel, so it never runs `helix.scm` or `init.scm`, whether they are in
 your config directory or in a repository's `.helix` directory.
 
+#### Reveal the current file in Files
+
+To bind Alt+R in normal mode, add these settings to your Eon Helix
+`config.toml`. If `[editor]` or `[keys.normal]` already exists, add the key
+under its existing table. Run `:config-reload` in Helix to load the settings.
+
+```toml
+[editor]
+shell = ["/bin/sh", "-c", '''
+case "$1" in
+  "eon-files-reveal: "*)
+    file=${1#eon-files-reveal: }
+    if [ -d "$file" ]; then
+      printf '%s\n' 'Reveal in Files needs a file buffer.' >&2
+      exit 1
+    fi
+    exec eon files reveal -- "$file" >/dev/null
+    ;;
+  *) exec /bin/sh -c "$1" ;;
+esac
+''', "helix"]
+
+[keys.normal]
+A-r = ':sh eon-files-reveal: %{file_path_absolute}'
+```
+
+The recipe passes the absolute filename as one argument to `eon files reveal`.
+If you use a different shell for other Helix commands, keep it in the fallback
+line. Choose another key in `[keys.normal]` if you bind Alt+R in Eon.
+
 ## Installation updates
 
 `updates.nix_profile` and `updates.nix_entry` are unset by default. Set both to

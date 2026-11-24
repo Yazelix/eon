@@ -31,6 +31,7 @@ local fzf_wait -- how the next fzf ends
 local zoxide_fails = false
 local during_close
 local before_sync
+local before_report
 
 ya = {
   sync = function(f) return function(...)
@@ -56,10 +57,14 @@ ui = {
 }
 package.loaded["tab-folder"] = {
   set = function(dir)
+    if before_report then before_report() end
     if report_fails then error("eon vanished") end
     reports[#reports + 1] = { "set", dir, hidden }
   end,
-  close = function() reports[#reports + 1] = { "close", nil, hidden } end,
+  close = function()
+    if before_report then before_report() end
+    reports[#reports + 1] = { "close", nil, hidden }
+  end,
 }
 cx = { active = { current = { cwd = "/" } } }
 
@@ -195,9 +200,16 @@ local function ends(code, stdout)
     return { status = { code = code, success = code == 0 }, stdout = stdout, stderr = "" }
   end
   reports = {}
-  local run = invocation()
+  local token = "12-345-987"
+  local pending = request(token)
+  before_report = function()
+    check(not exists(pending) and not exists(marker),
+      "a callback into Runtime cannot hold its own startup or ready marker")
+  end
+  local run = invocation(token)
   coroutine.resume(run)
   coroutine.resume(run)
+  before_report = nil
   check(coroutine.status(run) == "dead", "quick search ends after status " .. code)
   check(not hidden, "Yazi shows again after status " .. code)
   return reports[1], #reports

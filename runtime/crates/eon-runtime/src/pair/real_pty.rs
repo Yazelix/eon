@@ -43,6 +43,10 @@ struct Start {
     quick: bool,
     /// Seconds fzf waits before it starts.
     slow_fzf: Option<f32>,
+    /// Hold Yazi's first DDS registration until one real ya command has exited.
+    wait_for_first_ya: bool,
+    /// Use another pair's bus while this one's Yazi has yet to start.
+    shared_bus: Option<PathBuf>,
 }
 
 impl Pair {
@@ -101,15 +105,30 @@ impl Pair {
         );
         fs::write(root.join("fzf-args"), FZF_ARGUMENTS.join("\n")).unwrap();
         let yazi = tool("EON_TEST_QUICK_YAZI");
-        // Each pair's Yazi and `ya` share a bus of their own, which no other
-        // test's Yazi hosts or ends.
-        fs::create_dir_all(root.join("r")).unwrap();
+        // Only the two clients within a shared-bus test use the same socket.
+        let bus = start.shared_bus.unwrap_or_else(|| root.join("r"));
+        fs::create_dir_all(&bus).unwrap();
+        let gate = root.join("hold-yazi");
+        if start.wait_for_first_ya {
+            fs::write(&gate, "").unwrap();
+        }
         script(
             &bin.join("ya"),
             &format!(
-                "#!/bin/sh\nXDG_RUNTIME_DIR='{}' exec '{}' \"$@\"\n",
-                root.join("r").display(),
-                yazi.with_file_name("ya").display()
+                "#!/bin/sh\n\
+                 export XDG_RUNTIME_DIR='{bus}'\n\
+                 if [ -e '{gate}' ]; then\n\
+                   '{ya}' \"$@\"\n\
+                   code=$?\n\
+                   printf '%s\\n' \"$code\" > '{status}'\n\
+                   rm -f '{gate}'\n\
+                   exit \"$code\"\n\
+                 fi\n\
+                 exec '{ya}' \"$@\"\n",
+                bus = bus.display(),
+                gate = gate.display(),
+                status = root.join("first-ya-status").display(),
+                ya = yazi.with_file_name("ya").display()
             ),
         );
         let launch = root.join("launch");
@@ -117,13 +136,16 @@ impl Pair {
             &launch,
             &format!(
                 "#!/bin/sh\n\
-                 export XDG_RUNTIME_DIR='{root}/r' YAZI_CONFIG_HOME='{config}' _ZO_DATA_DIR='{root}/zoxide'\n\
+                 export XDG_RUNTIME_DIR='{bus}' YAZI_CONFIG_HOME='{config}' _ZO_DATA_DIR='{root}/zoxide'\n\
                  export PATH='{root}/bin':\"$PATH\"\n\
                  export EON_QUICK_MARKER='{marker}' EON_QUICK_FZF_ARGS=\"$(cat '{root}/fzf-args')\"\n\
                  export EON_FILES_CLI='{root}/bin/eon' EON_TAB=t1 EON_TERMINAL=terminal-1.g1\n\
                  {quick}\
+                 while [ -e '{gate}' ]; do sleep 0.05; done\n\
                  cd '{files}' && exec '{yazi}' --client-id {id} '{files}'\n",
                 root = root.display(),
+                bus = bus.display(),
+                gate = gate.display(),
                 config = tool("EON_TEST_QUICK_FILES_CONFIG").display(),
                 marker = marker.display(),
                 files = files.display(),
@@ -671,6 +693,116 @@ fn a_forged_marker_draws_inert_copies_for_the_bound() {
     assert!(pair.diagnostics().contains("did not leave within 2 s"));
     assert_eq!(pair.screen(), files);
     pair.stop();
+}
+
+#[test]
+fn reveal_navigates_the_live_pair_from_project_to_a_cold_file() {
+    let mut pair = Pair::start(
+        "reveal",
+        Start {
+            quick: true,
+            ..Start::default()
+        },
+    );
+    pair.quick_search_shown();
+    leave_requested(&pair.marker);
+    let cold = pair.root.join("w/unvisited/cold");
+    fs::create_dir_all(&cold).unwrap();
+    fs::write(cold.join("0-first.txt"), "WRONG").unwrap();
+    let file = cold.join("z-hé ' \" $HOME\n.txt");
+    fs::write(&file, "REVEALED").unwrap();
+    let mut pump = StartPump::default();
+    reveal(
+        &mut pair.session,
+        &RevealPath::validate(file.to_str().unwrap()).unwrap(),
+        false,
+        &pair.ya,
+        &mut pump,
+        &pair.log,
+    )
+    .unwrap_or_else(|error| panic!("{error}\n{}", pair.diagnostics()));
+    assert!(!pairs().leaving.contains_key(&pair.marker));
+    pair.until("the exact file preview in Files", |text| {
+        text.contains("REVEALED") && !text.contains("Quick search >")
+    });
+    assert!(!pair.marker.exists());
+    assert!(pair.eon_calls().is_empty());
+
+    let directory = pair.root.join("w/unvisited/$HOME");
+    fs::create_dir(&directory).unwrap();
+    fs::write(directory.join("directory.txt"), "DIRECTORY").unwrap();
+    reveal(
+        &mut pair.session,
+        &RevealPath::validate(directory.to_str().unwrap()).unwrap(),
+        true,
+        &pair.ya,
+        &mut pump,
+        &pair.log,
+    )
+    .unwrap();
+    pair.until("the literal directory and its listing", |text| {
+        text.contains("directory.txt") && text.contains("$HOME")
+    });
+    let dotfile = directory.join(".hidden.txt");
+    fs::write(&dotfile, "DOTFILE").unwrap();
+    reveal(
+        &mut pair.session,
+        &RevealPath::validate(dotfile.to_str().unwrap()).unwrap(),
+        false,
+        &pair.ya,
+        &mut pump,
+        &pair.log,
+    )
+    .unwrap();
+    pair.until("the hidden target preview", |text| text.contains("DOTFILE"));
+    pair.stop();
+}
+
+#[test]
+fn reveal_waits_for_the_exact_pair_on_an_empty_and_a_shared_dds_bus() {
+    let mut first = Pair::start(
+        "first cold Files pair",
+        Start {
+            wait_for_first_ya: true,
+            ..Start::default()
+        },
+    );
+    reveal_before_yazi_starts(&mut first, false, "FIRST REVEAL");
+
+    let mut second = Pair::start(
+        "second cold Files pair",
+        Start {
+            wait_for_first_ya: true,
+            shared_bus: Some(first.root.join("r")),
+            ..Start::default()
+        },
+    );
+    assert_ne!(second.id, first.id);
+    reveal_before_yazi_starts(&mut second, true, "SECOND REVEAL");
+    assert!(first.screen().contains("FIRST REVEAL"));
+    second.stop();
+    first.stop();
+}
+
+fn reveal_before_yazi_starts(pair: &mut Pair, fresh: bool, preview: &str) {
+    assert!(pair.root.join("hold-yazi").exists());
+    let file = pair.root.join("w/files/alpha/z-target.txt");
+    fs::write(&file, preview).unwrap();
+    let result = reveal(
+        &mut pair.session,
+        &RevealPath::validate(file.to_str().unwrap()).unwrap(),
+        fresh,
+        &pair.ya,
+        &mut StartPump::default(),
+        &pair.log,
+    );
+    assert_eq!(
+        fs::read_to_string(pair.root.join("first-ya-status")).unwrap(),
+        "1\n",
+        "an unrelated DDS peer must not acknowledge the requested instance"
+    );
+    result.unwrap_or_else(|error| panic!("{error}\n{}", pair.diagnostics()));
+    pair.until("the requested preview", |text| text.contains(preview));
 }
 
 /// Quick search's own keys behave as before (EON-C18): Enter picks the

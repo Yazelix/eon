@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Consume canonical EONW v50 for workspaces that support
+  `eon files reveal` (`eon-b3i7g`).
+
 - Consume EONW v49 input-lock state and the resolved toggle. While locked,
   send other keys through ordinary focused terminal input, suppress their
   Eon shortcut hints, and show a **LOCKED** status in the Eon Bar

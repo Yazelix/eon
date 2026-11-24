@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::tests::busy_window_snapshot;
 use crate::rune_candidate::fixture_messages;
-use eon_workspace_protocol::v49::Response;
+use eon_workspace_protocol::v50::Response;
 use std::{
     ffi::OsString,
     io::Read,

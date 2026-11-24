@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v49::{
+use eon_workspace_protocol::v50::{
     Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
     MAX_TERMINAL_TEXT_BYTES,
 };
@@ -1964,8 +1964,8 @@ pub(super) fn validate_carried_lease(
 }
 
 impl RunningSession {
-    pub(super) fn inventory(&self) -> eon_workspace_protocol::v49::TerminalInventory {
-        eon_workspace_protocol::v49::TerminalInventory {
+    pub(super) fn inventory(&self) -> eon_workspace_protocol::v50::TerminalInventory {
+        eon_workspace_protocol::v50::TerminalInventory {
             terminal: self.id.clone(),
             run: self.identity.run_id.clone(),
             origin_build: self.origin_build.clone(),
@@ -5054,7 +5054,7 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v49::Failure>| result.unwrap_err().code;
+            |result: Result<bool, eon_workspace_protocol::v50::Failure>| result.unwrap_err().code;
         let paste = || LeaseInput::Paste("hi".into());
 
         let orbit = answer(

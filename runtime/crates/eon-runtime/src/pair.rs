@@ -9,8 +9,10 @@
 use super::{
     diagnostics::DiagnosticLog,
     sessions::{self, RunningSession},
+    start_pump::StartPump,
 };
-use eon_workspace_protocol::v49::{InvokeIntent, PROJECT_ENTRY};
+use eon_workspace_protocol::TERMINAL_START_TIMEOUT;
+use eon_workspace_protocol::v50::{InvokeIntent, PROJECT_ENTRY};
 use orbit_protocol::{
     management::LeaseInput,
     session::{Modifiers, PhysicalKey},
@@ -25,7 +27,7 @@ use std::{
         fs::{MetadataExt, OpenOptionsExt},
     },
     path::{Path, PathBuf},
-    process::{Child, Command, Stdio},
+    process::{Child, Command, ExitStatus, Stdio},
     sync::{Arc, LazyLock, Mutex, MutexGuard, mpsc},
     thread,
     time::{Duration, Instant},
@@ -473,14 +475,14 @@ pub(crate) fn drive_leave(
     let marker = marker(&session.endpoint);
     let step = advance_leave(&marker, shown, now, log)?;
     match &step {
-        LeaveStep::Send => match sessions::send_input(session, leave_input(), 0, log) {
-            Ok(_) => leave_written(&marker),
-            Err(failure) if sessions::input_refused_for_now(&failure) => {}
-            Err(failure) => {
+        LeaveStep::Send => match write_leave(session, log) {
+            Ok(true) => leave_written(&marker),
+            Ok(false) => {}
+            Err(detail) => {
                 forget_leave(&marker);
                 log.record(&format!(
                     "pair {} did not take its quick search leave key: {}",
-                    session.id, failure.detail
+                    session.id, detail
                 ));
             }
         },
@@ -488,6 +490,166 @@ pub(crate) fn drive_leave(
         LeaveStep::Wait | LeaveStep::Done => {}
     }
     Some(step)
+}
+
+fn write_leave(session: &mut RunningSession, log: &DiagnosticLog) -> Result<bool, String> {
+    match sessions::send_input(session, leave_input(), 0, log) {
+        Ok(_) => Ok(true),
+        Err(failure) if sessions::input_refused_for_now(&failure) => Ok(false),
+        Err(failure) => Err(failure.detail),
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(super) struct RevealPath {
+    path: PathBuf,
+    directory: bool,
+}
+
+impl RevealPath {
+    pub(super) fn validate(path: &str) -> Result<Self, String> {
+        let path = PathBuf::from(path);
+        let directory = Self::kind(&path)?;
+        // Yazi cleans ".." lexically. Resolve it through the filesystem first
+        // while retaining a file's own name, including a symlink's name.
+        let path = if path
+            .components()
+            .any(|part| part == std::path::Component::ParentDir)
+        {
+            let resolved = if directory {
+                path.canonicalize()
+            } else {
+                path.parent()
+                    .expect("absolute file path has a parent")
+                    .canonicalize()
+                    .map(|parent| parent.join(path.file_name().expect("file has a name")))
+            };
+            resolved.map_err(|error| format!("cannot resolve {path:?}: {error}"))?
+        } else {
+            path
+        };
+        if path.to_str().is_none() {
+            return Err(format!("cannot reveal {path:?} as a UTF-8 path"));
+        }
+        let target = Self { path, directory };
+        fs::read_dir(target.directory())
+            .map_err(|error| format!("cannot list {:?}: {error}", target.directory()))?;
+        Ok(target)
+    }
+
+    fn kind(path: &Path) -> Result<bool, String> {
+        let metadata =
+            fs::metadata(path).map_err(|error| format!("cannot reveal {path:?}: {error}"))?;
+        if metadata.is_dir() || metadata.is_file() {
+            Ok(metadata.is_dir())
+        } else {
+            Err(format!(
+                "cannot reveal {path:?}: expected a regular file or directory"
+            ))
+        }
+    }
+
+    pub(super) fn directory(&self) -> &Path {
+        if self.directory {
+            &self.path
+        } else {
+            self.path.parent().expect("absolute file path has a parent")
+        }
+    }
+}
+
+/// Navigates the exact Files terminal before the workspace selects it.
+pub(super) fn reveal(
+    session: &mut RunningSession,
+    target: &RevealPath,
+    fresh: bool,
+    ya: &Path,
+    pump: &mut StartPump,
+    log: &DiagnosticLog,
+) -> Result<(), String> {
+    let deadline = Instant::now() + TERMINAL_START_TIMEOUT;
+    let id = client_id(&session.endpoint).to_string();
+    let command = || {
+        let mut command = Command::new(ya);
+        command.env("YAZI_ID", &id).arg("exec");
+        command
+    };
+    if !target.directory
+        && target
+            .path
+            .file_name()
+            .is_some_and(|name| name.as_bytes().starts_with(b"."))
+    {
+        let mut hidden = command();
+        hidden.args(["hidden", "show"]);
+        run_reveal_ya(hidden, target, deadline, "ya exec hidden", pump)?;
+    }
+    let mut reveal = command();
+    let actor = if target.directory { "cd" } else { "reveal" };
+    reveal.args([actor, "--raw"]).arg(&target.path);
+    run_reveal_ya(reveal, target, deadline, "ya exec navigation", pump)?;
+    if fresh {
+        // A pair opened for reveal starts in Files.
+        return Ok(());
+    }
+
+    let marker = marker(&session.endpoint);
+    let mut leave = Leave::Waiting;
+    loop {
+        let now = Instant::now();
+        let screen = pairs().screen(&marker, now, log);
+        if screen == Screen::Files {
+            forget_leave(&marker);
+            return Ok(());
+        }
+        if now >= deadline {
+            return Err("Project did not return to Files before the reveal expired".into());
+        }
+        match leave.step(screen, now) {
+            LeaveStep::Wait => {}
+            LeaveStep::Send => {
+                if write_leave(session, log)? {
+                    leave.wrote();
+                }
+            }
+            LeaveStep::Done => return Err("Project changed during reveal".into()),
+            LeaveStep::Expired(detail) => return Err(detail),
+        }
+        pump.wait((now + Duration::from_millis(25)).min(deadline));
+    }
+}
+
+fn run_reveal_ya(
+    mut command: Command,
+    target: &RevealPath,
+    deadline: Instant,
+    action: &str,
+    pump: &mut StartPump,
+) -> Result<(), String> {
+    command
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
+    // A registered Orbit terminal can precede Yazi's DDS registration.
+    // Let the exact target's reply confirm readiness and navigation together.
+    while Instant::now() < deadline {
+        if target.directory != RevealPath::kind(&target.path)? {
+            return Err(format!(
+                "the path changed while revealing {:?}",
+                target.path
+            ));
+        }
+        let mut child = dispatch_child(&mut command)?;
+        let status = wait_for_ya(&mut child, deadline, action, |until| {
+            pump.wait(until);
+            true
+        })?;
+        if status.success() {
+            return Ok(());
+        }
+        pump.wait((Instant::now() + RESEND).min(deadline));
+    }
+    Err(format!("{action} timed out waiting for the Files pair"))
 }
 
 /// Forgets the leave of the pair at `marker`: writing its key failed for good.
@@ -658,9 +820,13 @@ fn dispatch(
     deadline: Instant,
     cancelled: &mpsc::Receiver<()>,
 ) -> Result<(), String> {
-    super::platform::require_waitable_children().map_err(|error| error.to_string())?;
-    let mut child = command.spawn().map_err(|error| error.to_string())?;
+    let mut child = dispatch_child(&mut command)?;
     wait_for_dispatch(&mut child, deadline, cancelled)
+}
+
+fn dispatch_child(command: &mut Command) -> Result<Child, String> {
+    super::platform::require_waitable_children().map_err(|error| error.to_string())?;
+    command.spawn().map_err(|error| error.to_string())
 }
 
 fn wait_for_dispatch(
@@ -668,20 +834,36 @@ fn wait_for_dispatch(
     deadline: Instant,
     cancelled: &mpsc::Receiver<()>,
 ) -> Result<(), String> {
+    let status = wait_for_ya(child, deadline, "ya emit-to", |until| {
+        matches!(
+            cancelled.recv_timeout(until.saturating_duration_since(Instant::now())),
+            Err(mpsc::RecvTimeoutError::Timeout)
+        )
+    })?;
+    if !status.success() {
+        return Err(format!("ya emit-to {status}"));
+    }
+    Ok(())
+}
+
+fn wait_for_ya(
+    child: &mut Child,
+    deadline: Instant,
+    action: &str,
+    mut wait: impl FnMut(Instant) -> bool,
+) -> Result<ExitStatus, String> {
     let failure = loop {
         match child.try_wait() {
-            Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(status)) => return Err(format!("ya emit-to {status}")),
+            Ok(Some(status)) => return Ok(status),
             Ok(None) => {}
-            Err(error) => return Err(format!("cannot wait for ya emit-to: {error}")),
+            Err(error) => return Err(format!("cannot wait for {action}: {error}")),
         }
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            break "ya emit-to timed out";
+        let now = Instant::now();
+        if now >= deadline {
+            break format!("{action} timed out");
         }
-        match cancelled.recv_timeout(remaining.min(Duration::from_millis(25))) {
-            Err(mpsc::RecvTimeoutError::Timeout) => continue,
-            _ => break "ya emit-to cancelled",
+        if !wait((now + Duration::from_millis(25)).min(deadline)) {
+            break format!("{action} cancelled");
         }
     };
     // Automatic reaping was excluded before spawn. No other code waits for
@@ -694,7 +876,7 @@ fn wait_for_dispatch(
     child
         .wait()
         .map_err(|error| format!("{failure}, cannot reap ya: {error}"))?;
-    Err(failure.to_owned())
+    Err(failure)
 }
 
 #[cfg(test)]

@@ -5,7 +5,7 @@ use crate::{
     PopupDefinition, ShellConfig, SlotClass, SlotPolicy, StartupAnimation, TerminalAccess,
     TerminalConfig,
 };
-use eon_workspace_protocol::v49::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
+use eon_workspace_protocol::v50::{ALT, PopupGeometry, PopupKey, SHIFT, Shortcut};
 
 pub(crate) fn input_lock() -> Shortcut {
     Shortcut {
@@ -91,7 +91,7 @@ pub(crate) fn inputs() -> Inputs {
         skill: "fixture-skill",
         component_report: Ok("fixture-components".into()),
         presentation_protocols: Ok([
-            eon_workspace_protocol::v49::VERSION,
+            eon_workspace_protocol::v50::VERSION,
             orbit_protocol::session::VERSION,
             orbit_protocol::VERSION,
         ]),

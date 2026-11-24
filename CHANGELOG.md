@@ -12,6 +12,10 @@ installation, and proven contract changes.
   captures the window, and refuses when one stays unsettled (EON-C11,
   `eon-t3fyd.9.2`).
 
+- Use `eon files reveal PATH` to enter a directory or reveal a file in
+  the tab's Files popup. The Helix recipe binds Alt+R to reveal the current
+  buffer (`eon-b3i7g`, EONW v50).
+
 - The private in-place Update test path waits for helper and observer work to
   settle and refuses unexpected inheritable descriptors. After Update, local
   quota collection waits one normal interval. Usable shared Claude and Google
