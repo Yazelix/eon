@@ -693,6 +693,7 @@ struct ContentKey {
     generation: u64,
     /// Other columns' frame revisions, which repaint without touching the selected terminal.
     column_revisions: Vec<Option<u64>>,
+    column_backgrounds: Vec<Option<SceneColor>>,
     scroll_offset: f32,
     workspace_focus: WorkspaceFocus,
     text_blink_visible: bool,
@@ -935,41 +936,35 @@ fn card_backdrops(
     metrics: CellMetrics,
     stroke_width: f32,
 ) -> Vec<(Option<CardFill>, SceneColor)> {
-    let mut cards = std::iter::once((
-        workspace.card_fill(workspace.chrome, metrics, stroke_width),
-        !workspace.panes.is_empty() || workspace.popup_label().is_some(),
-        scene,
-    ))
-    .chain(
-        workspace
-            .other_columns
-            .iter()
-            .zip(columns)
-            .map(|(column, scene)| {
-                (
-                    workspace.card_fill(column.chrome, metrics, stroke_width),
-                    !column.panes.is_empty(),
-                    *scene,
-                )
-            }),
-    )
-    .map(|(card, shown, scene)| {
-        (
-            shown.then_some(card),
-            scene.map_or(palette::DARK.terminal_fallback, |scene| scene.background),
-        )
-    })
-    .collect::<Vec<_>>();
+    let popup = workspace.popup_label().is_some();
+    let fallback = palette::DARK.terminal_fallback;
+    let column = |index: usize| workspace.column_backgrounds.get(index).copied().flatten();
+    let scenes = std::iter::once(scene).chain(columns.iter().copied());
+    let mut cards: Vec<_> = workspace
+        .column_cards()
+        .zip(scenes)
+        .map(|((chrome, _, panes, index), scene)| {
+            let card = (!panes.is_empty() || popup)
+                .then(|| workspace.card_fill(chrome, metrics, stroke_width));
+            let color = scene
+                .map(|scene| scene.background)
+                .or_else(|| (!popup).then(|| column(index)).flatten());
+            (card, color.unwrap_or(fallback))
+        })
+        .collect();
     // The agent sidebar's card takes the background of the card beside it (VEN-C30),
     // so it reads like the panes and blur shows through it as through them.
     if workspace.sidebar().is_some() {
-        let beside = cards
-            .iter()
-            .filter_map(|(card, background)| card.map(|card| (card, background)))
-            .min_by(|left, right| left.0.bounds.left.total_cmp(&right.0.bounds.left))
-            .map_or(palette::DARK.terminal_fallback, |(_, background)| {
-                *background
-            });
+        let beside = if popup {
+            column(0)
+        } else {
+            cards
+                .iter()
+                .filter_map(|(card, background)| card.map(|card| (card, background)))
+                .min_by(|left, right| left.0.bounds.left.total_cmp(&right.0.bounds.left))
+                .map(|(_, background)| *background)
+        }
+        .unwrap_or(fallback);
         cards.push((
             Some(CardFill {
                 bounds: workspace.card_rect(
@@ -1097,6 +1092,63 @@ fn push_title_tab_backdrop(
     }
     for (rect, color, alpha) in bands {
         rectangles.push(rect.left, rect.top, rect.width, rect.height, color, alpha);
+    }
+}
+
+fn push_frameless_backdrop(
+    rectangles: &mut RectangleBatch,
+    workspace: &WorkspaceScene,
+    cards: &[(Option<CardFill>, SceneColor)],
+    title: Option<&FrameTitleTab>,
+    metrics: CellMetrics,
+    opacity: f32,
+) {
+    let width = rectangles.width as f32;
+    let top = workspace.tab_viewport.bottom();
+    let height = rectangles.height as f32 - top;
+    let mut strips;
+    let (popup, popup_color) = cards[0];
+    let bands = if let Some(fill) = popup.filter(|_| workspace.popup_label().is_some()) {
+        let count = workspace.column_backgrounds.len().max(1);
+        let content_width = width - workspace.sidebar().map_or(0.0, SceneRect::right);
+        let colors = workspace.column_backgrounds.iter().copied().chain([None]);
+        strips = crate::scene::column_rects(workspace.pane_viewport, content_width, count, metrics)
+            .zip(colors.map(|color| color.unwrap_or(palette::DARK.terminal_fallback)))
+            .collect::<Vec<_>>();
+        title.map_or_else(
+            || fill.bands().collect(),
+            |title| title_tab_bands(fill, title, 0.0),
+        )
+    } else {
+        strips = std::iter::once(workspace.terminal)
+            .chain(workspace.other_columns.iter().map(|column| column.terminal))
+            .zip(cards.iter().map(|(_, background)| *background))
+            .collect();
+        Vec::new()
+    };
+    strips.sort_by(|left, right| left.0.left.total_cmp(&right.0.left));
+    let bounds: Vec<_> = strips.iter().map(|(bounds, _)| *bounds).collect();
+    let mut draw = |rect: SceneRect, color| {
+        rectangles.push(rect.left, rect.top, rect.width, rect.height, color, opacity);
+    };
+    for ((left, right), (_, color)) in background_spans(&bounds, width).into_iter().zip(strips) {
+        let strip = SceneRect {
+            left,
+            top,
+            width: right - left,
+            height,
+        };
+        if bands.is_empty() {
+            draw(strip, color);
+        } else {
+            // Partition the translucent fills so the popup never blends with a column strip.
+            for rect in uncovered(strip, &bands) {
+                draw(rect, color);
+            }
+        }
+    }
+    for rect in bands {
+        draw(rect, popup_color);
     }
 }
 
@@ -2352,6 +2404,8 @@ impl Renderer {
                 .iter()
                 .map(|scene| scene.map(|scene| scene.revision))
                 .collect(),
+            column_backgrounds: workspace
+                .map_or_else(Vec::new, |workspace| workspace.column_backgrounds.clone()),
             scroll_offset,
             workspace_focus,
             text_blink_visible,
@@ -2428,17 +2482,17 @@ impl Renderer {
             let title_tabs = self.workspace_title_tabs(workspace);
             let pane_tabs = self.workspace_pane_tabs(workspace);
             self.clear = wgpu::Color::TRANSPARENT;
+            let cards = card_backdrops(
+                workspace,
+                scene,
+                columns,
+                self.metrics,
+                self.card_stroke_width(),
+            );
             if self.pane_frames {
                 // Below the tab bar, everything no card covers is opaque bar color, so the bar,
                 // the gaps and the hints read as one frame; each card takes its own terminal's
                 // background.
-                let cards = card_backdrops(
-                    workspace,
-                    scene,
-                    columns,
-                    self.metrics,
-                    self.card_stroke_width(),
-                );
                 let frame = SceneRect {
                     left: 0.0,
                     top: workspace.tab_viewport.bottom(),
@@ -2457,36 +2511,14 @@ impl Renderer {
                     push_card_backdrop(&mut rectangles, frame, &cards, self.background_opacity);
                 }
             } else {
-                // Each column's strip takes its own terminal's background; strips meet in the
-                // middle of the gaps between columns and reach the window's sides, so the first
-                // also lies under a visible agent sidebar (VEN-C30).
-                let mut strips = std::iter::once((workspace.terminal, scene))
-                    .chain(
-                        workspace
-                            .other_columns
-                            .iter()
-                            .zip(columns)
-                            .map(|(column, scene)| (column.terminal, *scene)),
-                    )
-                    .collect::<Vec<_>>();
-                strips.sort_by(|left, right| left.0.left.total_cmp(&right.0.left));
-                let spans = background_spans(
-                    &strips
-                        .iter()
-                        .map(|(terminal, _)| *terminal)
-                        .collect::<Vec<_>>(),
-                    self.config.width as f32,
+                push_frameless_backdrop(
+                    &mut rectangles,
+                    workspace,
+                    &cards,
+                    title_tabs[0].as_ref(),
+                    self.metrics,
+                    self.background_opacity,
                 );
-                for ((left, right), (_, scene)) in spans.into_iter().zip(&strips) {
-                    rectangles.push(
-                        left,
-                        workspace.tab_viewport.bottom(),
-                        right - left,
-                        self.config.height as f32 - workspace.tab_viewport.bottom(),
-                        scene.map_or(palette::DARK.terminal_fallback, |scene| scene.background),
-                        self.background_opacity,
-                    );
-                }
             }
             build_workspace_padding(
                 &mut rectangles,
@@ -2499,16 +2531,7 @@ impl Renderer {
                 self.card_stroke_width(),
                 (scroll_preview, scroll_offset),
             );
-            let backgrounds = card_backdrops(
-                workspace,
-                scene,
-                columns,
-                self.metrics,
-                self.card_stroke_width(),
-            )
-            .into_iter()
-            .map(|(_, color)| color)
-            .collect::<Vec<_>>();
+            let backgrounds: Vec<_> = cards.into_iter().map(|(_, color)| color).collect();
             self.build_workspace(
                 workspace,
                 workspace_focus,

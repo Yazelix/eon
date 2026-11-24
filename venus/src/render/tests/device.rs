@@ -591,6 +591,7 @@ fn content_cache_separates_generations_and_viewer_state() {
     let key = |generation, dialog| ContentKey {
         generation,
         column_revisions: vec![Some(4), None],
+        column_backgrounds: Vec::new(),
         scroll_offset: 0.0,
         workspace_focus: WorkspaceFocus::Terminal,
         text_blink_visible: true,

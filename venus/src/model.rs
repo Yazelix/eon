@@ -1,5 +1,5 @@
 use crate::scene::{
-    DrawRow, QuotaPaceHistory, Scene, ScenePreview, bar_workspace, hidden_needs_input,
+    Color, DrawRow, QuotaPaceHistory, Scene, ScenePreview, bar_workspace, hidden_needs_input,
 };
 use eon_workspace_protocol::v50::{
     AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
@@ -10,7 +10,7 @@ use orbit_protocol::session::{
     ResourceAnnounce, ResourceChunk, ScrollOutcome, ServerMessage, WheelOutcome,
 };
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     error::Error,
     fmt,
     sync::atomic::{AtomicU64, Ordering},
@@ -258,6 +258,8 @@ impl Resources {
 #[derive(Debug, Default)]
 pub struct WorkspaceModel {
     snapshot: Option<Snapshot>,
+    // Keep the last frame color when a popup covers its column.
+    pane_backgrounds: HashMap<Vec<u8>, Option<Color>>,
     notice: Option<WorkspaceNotice>,
     /// The serial the shown notice was given, so a newer notice can outrank older client
     /// notices and a client notice can outrank older ones.
@@ -501,6 +503,23 @@ impl WorkspaceModel {
                 {
                     self.notice = None;
                 }
+                if workspace_changed {
+                    let panes: HashSet<_> = snapshot
+                        .tabs
+                        .iter()
+                        .flat_map(|tab| {
+                            tab.panes().filter(move |pane| {
+                                pane.live || tab.selected_pane.as_ref() == Some(&pane.id)
+                            })
+                        })
+                        .map(|pane| pane.endpoint.as_slice())
+                        .collect();
+                    self.pane_backgrounds
+                        .retain(|endpoint, _| panes.contains(endpoint.as_slice()));
+                    for endpoint in panes {
+                        self.pane_backgrounds.entry(endpoint.to_vec()).or_default();
+                    }
+                }
                 self.quota_pace.observe(&snapshot);
                 self.snapshot = Some(snapshot);
                 self.unavailable = false;
@@ -609,20 +628,54 @@ impl WorkspaceModel {
         self.set_notice(WorkspaceNotice::Slow { under, serial }, true)
     }
 
+    fn active_tab(&self) -> Option<&Tab> {
+        let snapshot = self.snapshot()?;
+        let id = &snapshot.active_tab;
+        snapshot.tabs.iter().find(|tab| &tab.id == id)
+    }
+
     #[must_use]
     pub fn active_attachment(&self) -> Option<(&[u8], bool)> {
         let snapshot = self.snapshot.as_ref()?;
         if let Some(popup) = active_popup(snapshot) {
             return Some((&popup.endpoint, true));
         }
-        let tab = snapshot
-            .tabs
-            .iter()
-            .find(|tab| tab.id == snapshot.active_tab)?;
+        let tab = self.active_tab()?;
         let selected = tab.selected_pane.as_ref()?;
         tab.panes()
             .find(|pane| pane.id == *selected)
             .map(|pane| (pane.endpoint.as_slice(), pane.live))
+    }
+
+    pub(crate) fn record_pane_background(
+        &mut self,
+        endpoint: Option<&[u8]>,
+        scene: Option<&Scene>,
+    ) {
+        if let Some(scene) = scene
+            && let Some(color) =
+                endpoint.and_then(|endpoint| self.pane_backgrounds.get_mut(endpoint))
+        {
+            *color = Some(scene.background);
+        }
+    }
+
+    /// Colors in active-tab column order, including while a popup covers the columns.
+    pub(crate) fn column_backgrounds(&self, covered_zoom: bool) -> Vec<Option<Color>> {
+        let Some(tab) = self.active_tab() else {
+            return Vec::new();
+        };
+        tab.columns
+            .iter()
+            .filter(|column| !covered_zoom || tab.selected_pane.as_ref() == Some(&column.expanded))
+            .map(|column| {
+                let pane = column
+                    .panes
+                    .iter()
+                    .find(|pane| pane.id == column.expanded)?;
+                self.pane_backgrounds.get(&pane.endpoint).copied().flatten()
+            })
+            .collect()
     }
 
     /// The expanded pane of each visible column other than the selected one, as
@@ -635,11 +688,7 @@ impl WorkspaceModel {
         if active_popup(snapshot).is_some() {
             return Vec::new();
         }
-        let Some(tab) = snapshot
-            .tabs
-            .iter()
-            .find(|tab| tab.id == snapshot.active_tab)
-        else {
+        let Some(tab) = self.active_tab() else {
             return Vec::new();
         };
         tab.columns

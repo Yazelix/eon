@@ -5983,6 +5983,147 @@ mod tests {
     }
 
     #[test]
+    fn popup_keeps_workspace_backdrop_colors() {
+        use super::super::{
+            card_backdrops, push_frameless_backdrop,
+            tests::{padding_scene, painted_rects},
+        };
+        use eon_workspace_protocol::v50::{Column, Response, Snapshot};
+
+        let mut snapshot = popup_sidebar_snapshot();
+        let columns = &mut snapshot.tabs[0].columns;
+        let selected = columns[0].panes.pop().unwrap();
+        columns[0].expanded = columns[0].panes[0].id.clone();
+        columns.push(Column {
+            expanded: selected.id.clone(),
+            panes: vec![selected],
+        });
+        let [left, right, popup] = [240, 60, 9].map(|r| SceneColor { r, g: r, b: r });
+        let [left_scene, right_scene, popup_scene] =
+            [left, right, popup].map(|background| crate::Scene {
+                background,
+                ..padding_scene()
+            });
+        let mut model = crate::WorkspaceModel::default();
+        model.apply(Response::Snapshot(snapshot.clone()));
+        model.record_pane_background(Some(b"/tmp/p1.sock"), Some(&right_scene));
+        model.record_pane_background(Some(b"/tmp/p1.sock"), Some(&left_scene));
+        model.record_pane_background(Some(b"/tmp/p2.sock"), Some(&right_scene));
+        let size = PhysicalSize::new(1280, 800);
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let mut renderer = Renderer::hosted(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            (1280, 800),
+            1.0,
+            FontSetup::new(&FontSettings::default()).unwrap(),
+        )
+        .unwrap();
+        renderer.background_opacity = 0.8;
+        renderer.panel_heading = crate::PanelHeading::Notch;
+        let metrics = renderer.metrics();
+        let peers = [Some(&left_scene)];
+        let mut render = |snapshot: &Snapshot, generation, zoom| {
+            let showing = crate::active_popup(snapshot).is_some();
+            let (scene, peers) = if showing {
+                (&popup_scene, &[][..])
+            } else {
+                (&right_scene, &peers[..])
+            };
+            let mut ws =
+                WorkspaceScene::from_snapshot(snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                    (text.into(), text.len() as f32 * metrics.width)
+                });
+            model.apply(Response::Snapshot(snapshot.clone()));
+            model.record_pane_background(Some(b"/tmp/u1.sock"), Some(&popup_scene));
+            ws.column_backgrounds = model.column_backgrounds(zoom);
+            renderer.rebuild_if_needed(
+                Some(scene),
+                None,
+                0.0,
+                Some(&ws),
+                peers,
+                None,
+                WorkspaceFocus::Terminal,
+                "",
+                true,
+                "",
+                generation,
+            );
+            assert_eq!(renderer.clear, wgpu::Color::TRANSPARENT);
+            let stroke = renderer.card_stroke_width();
+            let cards = card_backdrops(&ws, Some(scene), peers, metrics, stroke);
+            if showing {
+                let mut batch = RectangleBatch::new(1280, 800);
+                let title = renderer.workspace_title_tabs(&ws).remove(0).unwrap();
+                push_frameless_backdrop(&mut batch, &ws, &cards, Some(&title), metrics, 0.8);
+                let quads = super::super::quad_chunks(&batch.bytes);
+                assert!(quads.iter().all(|q| q[20..24] == 0.8_f32.to_ne_bytes()));
+                let fills: Vec<_> = painted_rects(&batch).collect();
+                for (i, a) in fills.iter().enumerate() {
+                    assert!(!fills[..i].iter().any(|b| {
+                        a.intersection(*b)
+                            .is_some_and(|r| r.width > 0.01 && r.height > 0.01)
+                    }));
+                }
+                let outside = match ws.column_backgrounds.len() {
+                    0 => [palette::DARK.terminal_fallback; 2],
+                    1 => [right; 2],
+                    _ => [left, right],
+                };
+                let notch = ((title.row.left + title.start) / 2.0, title.top + 0.5);
+                for (point, expected) in [
+                    ((0.5, 799.5), outside[0]),
+                    ((1279.5, 799.5), outside[1]),
+                    ((600.5, 400.5), popup),
+                    (notch, popup),
+                ] {
+                    assert_eq!(paint_at(&batch, point), Some(expected));
+                }
+            }
+            let ink = ws.sidebar_headings.first().map(|heading| {
+                renderer
+                    .text
+                    .iter()
+                    .find(|text| text.left == heading.rect.left && text.top == heading.rect.top)
+                    .unwrap()
+                    .color
+            });
+            let fills: Vec<_> = cards.into_iter().map(|(_, color)| color).collect();
+            (fills, ink)
+        };
+        let before = render(&snapshot, 1, false);
+        assert_eq!(before.0, [right, left, left]);
+        assert!(before.1.is_some());
+        snapshot.tabs[0].selected_popup = Some("u1".into());
+        let during = render(&snapshot, 2, false);
+        assert_eq!(render(&snapshot, 3, true).0, [popup, right]);
+        assert_eq!(during, (vec![popup, left], before.1));
+        snapshot.tabs[0].selected_popup = None;
+        assert_eq!(render(&snapshot, 4, false), before);
+        // The selected pane's last frame continues to supply its color after loss.
+        snapshot.tabs[0].selected_pane = Some("p1".into());
+        snapshot.tabs[0].columns[0].panes[0].live = false;
+        snapshot.tabs[0].selected_popup = Some("u1".into());
+        assert_eq!(render(&snapshot, 5, false), during);
+
+        let mut other = snapshot.tabs[0].clone();
+        other.id = "t2".into();
+        other.columns.clear();
+        other.selected_pane = None;
+        snapshot.tabs[0].selected_popup = None;
+        snapshot.tabs[0].popups.clear();
+        snapshot.tabs.push(other);
+        snapshot.active_tab = "t2".into();
+        let fallback = palette::DARK.terminal_fallback;
+        assert_eq!(render(&snapshot, 6, false).0, [popup, fallback]);
+        snapshot.active_tab = "t1".into();
+        model.apply(Response::Snapshot(snapshot));
+        assert_eq!(model.column_backgrounds(false), [Some(left), Some(right)]);
+    }
+
+    #[test]
     fn popup_and_pane_rows_share_surfaces_in_every_state() {
         let snapshot = popup_sidebar_snapshot();
         let metrics = CellMetrics::for_scale(1.0);

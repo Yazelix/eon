@@ -223,7 +223,7 @@ fn frame_timings_footer_exposes_a_dropped_final_presentation() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
-fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {
+pub(super) fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_ {
     quad_chunks(&batch.bytes).iter().map(|quad| {
         let value = |vertex: usize, component: usize| {
             let offset = vertex * VERTEX_SIZE as usize + component * 4;
@@ -238,7 +238,7 @@ fn painted_rects(batch: &RectangleBatch) -> impl Iterator<Item = SceneRect> + '_
     })
 }
 
-fn padding_scene() -> Scene {
+pub(super) fn padding_scene() -> Scene {
     Scene {
         revision: 1,
         columns: 3,

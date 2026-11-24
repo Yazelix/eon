@@ -3770,7 +3770,14 @@ impl Application {
                 if server_failure_suppresses_retry(&message) {
                     view.retry_suppressed = true;
                 }
-                match view.model.apply(message) {
+                let result = view.model.apply(message);
+                if result.is_ok() {
+                    self.workspace_model.record_pane_background(
+                        view.active_endpoint.as_deref(),
+                        view.model.scene(),
+                    );
+                }
+                match result {
                     Ok(Some(ModelEffect::Clipboard(effect))) => {
                         write_clipboard_effect(&mut view.model, effect);
                     }
@@ -5093,6 +5100,10 @@ impl Application {
                     self.terminal.selection_gate = SelectionGate::Ready;
                 }
                 if accepted_frame {
+                    self.workspace_model.record_pane_background(
+                        self.terminal.active_endpoint.as_deref(),
+                        self.terminal.model.scene(),
+                    );
                     if awaiting_frame {
                         self.next_animation = None;
                         if let Some(state) = &mut self.window {
@@ -5937,7 +5948,12 @@ impl Application {
         };
         let preedit = self.input.preedit();
         let scene_started = crate::frame_time();
-        let workspace = self.workspace_scene();
+        let mut workspace = self.workspace_scene();
+        if let Some(workspace) = &mut workspace {
+            workspace.column_backgrounds = self
+                .workspace_model
+                .column_backgrounds(workspace.popup_label().is_some() && self.zoomed());
+        }
         let dialog = self.dialog_scene();
         let scene_ns = crate::frame_elapsed(scene_started);
         let workspace_focus = self.workspace_focus;

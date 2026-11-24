@@ -10,6 +10,9 @@ installation, and proven contract changes.
 - The first startup directory picker points to `eon tutor` once per Eon user
   state directory (`eon-orp67.4`).
 
+- Opening Editor or another popup keeps the color of the Agents sidebar and
+  the workspace around the popup (`eon-cn6v3`).
+
 - An `eon.sock` client now has 250 ms from its accept to send its whole
   request; one that sends it too slowly gets a `malformed-action` failure and
   its action does not run. The private in-place Update test path finishes

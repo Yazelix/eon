@@ -2361,6 +2361,8 @@ pub struct WorkspaceScene {
     /// hold their own.
     stack_close: Option<SceneRect>,
     pub other_columns: Vec<WorkspaceColumn>,
+    /// Paint input for live pane colors when their terminal scenes are absent.
+    pub(crate) column_backgrounds: Vec<Option<Color>>,
     pub tab_viewport: SceneRect,
     /// The area every card shares: the columns', the popup's and the agent sidebar's.
     pub pane_viewport: SceneRect,
@@ -2399,6 +2401,30 @@ pub struct WorkspaceScene {
 /// beside and between them; the last column also takes the remainder, so this is the narrowest.
 pub fn workspace_column_width(width: f32, count: usize, metrics: CellMetrics) -> f32 {
     ((width - side_gap(width, count, metrics) * (count + 1) as f32).max(0.0) / count as f32).floor()
+}
+
+/// The horizontal allocation is shared by visible cards and the strips behind a popup.
+pub(crate) fn column_rects(
+    area: SceneRect,
+    width: f32,
+    count: usize,
+    metrics: CellMetrics,
+) -> impl Iterator<Item = SceneRect> {
+    let gap = side_gap(width, count, metrics);
+    let column_width = workspace_column_width(width, count, metrics);
+    (0..count).map(move |slot| {
+        let left = area.left + slot as f32 * (column_width + gap);
+        let width = if slot + 1 == count {
+            (area.right() - left).max(0.0)
+        } else {
+            column_width
+        };
+        SceneRect {
+            left,
+            width,
+            ..area
+        }
+    })
 }
 
 /// The label of a column's Stack tab: numbered from 1, left to right, unless it is the only one.
@@ -4315,6 +4341,7 @@ impl WorkspaceScene {
                 panes: Vec::new(),
                 selected_column: 0,
                 other_columns: Vec::new(),
+                column_backgrounds: Vec::new(),
                 terminal: SceneRect {
                     left: pane_viewport.left + horizontal_inset,
                     top: pane_viewport.top + vertical_inset + title_gutter,
@@ -4390,8 +4417,6 @@ impl WorkspaceScene {
             .expect("EONW validates the selected pane");
         let count = active.columns.len();
         let content_width = width - sidebar.map_or(0.0, SceneRect::right);
-        let column_gap = side_gap(content_width, count, metrics);
-        let column_width = workspace_column_width(content_width, count, metrics);
         let maximum_terminal_height = (header_viewport.height - pane_height).max(0.0);
         let minimum_terminal_height =
             minimum_terminal(metrics, metrics.height).min(maximum_terminal_height);
@@ -4399,20 +4424,15 @@ impl WorkspaceScene {
         let mut other_columns = Vec::with_capacity(count - 1);
         // Zoom gives the selected pane every card's width and only one title band.
         let slots = if zoomed { 1 } else { count };
-        for (slot, (index, column)) in active
+        for ((index, column), chrome) in active
             .columns
             .iter()
             .enumerate()
             .skip(if zoomed { selected_column } else { 0 })
-            .take(slots)
-            .enumerate()
+            .zip(column_rects(pane_viewport, content_width, slots, metrics))
         {
-            let left = pane_viewport.left + slot as f32 * (column_width + column_gap);
-            let column_width = if slot + 1 == slots {
-                (pane_viewport.right() - left).max(0.0)
-            } else {
-                column_width
-            };
+            let left = chrome.left;
+            let column_width = chrome.width;
             let expanded = if zoomed {
                 0
             } else {
@@ -4505,11 +4525,6 @@ impl WorkspaceScene {
                 width: column_width,
                 height: terminal_height,
             };
-            let chrome = SceneRect {
-                left,
-                width: column_width,
-                ..pane_viewport
-            };
             if index == selected_column {
                 selected_layout = Some((
                     panes,
@@ -4559,6 +4574,7 @@ impl WorkspaceScene {
             stack_label,
             stack_close: None,
             other_columns,
+            column_backgrounds: Vec::new(),
             tab_viewport,
             pane_viewport,
             header_viewport,
