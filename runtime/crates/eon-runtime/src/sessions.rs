@@ -1076,9 +1076,10 @@ struct LeaseRequest {
 /// A thread that writes a read or send and reads its reply on a clone of the
 /// lease, so a reply given up on never waits unread while the supervisor
 /// blocks on other work (ORB-C13's slow-peer rule). It returns the request's
-/// unsent and reply bytes, and stops early once the request is dropped.
+/// unsent and reply bytes and whether the lease closed under it, and stops
+/// early once the request is dropped.
 struct Drainer {
-    thread: thread::JoinHandle<(Vec<u8>, Vec<u8>)>,
+    thread: thread::JoinHandle<(Vec<u8>, Vec<u8>, bool)>,
     _request: Arc<()>,
 }
 
@@ -1156,11 +1157,15 @@ fn advance_request(lease: &mut UnixStream, request: &mut LeaseRequest) -> ReplyP
             request.drainer = Some(drainer);
             return ReplyProgress::WouldBlock;
         }
-        let Ok((unsent, reply)) = drainer.thread.join() else {
+        let Ok((unsent, reply, closed)) = drainer.thread.join() else {
             return ReplyProgress::Closed;
         };
         request.unsent = unsent;
         request.reply = reply;
+        // The drainer's outcome stands: the lease is not read again for it.
+        if closed {
+            return ReplyProgress::Closed;
+        }
     }
     while !request.unsent.is_empty() {
         match lease.write(&request.unsent) {
@@ -1244,12 +1249,15 @@ fn send_drained_request(
     let thread = thread::Builder::new()
         .name("eon-lease-drainer".into())
         .spawn(move || {
-            while owner.strong_count() > 0
-                && matches!(
-                    advance_request(&mut lease, &mut detached),
-                    ReplyProgress::WouldBlock
-                )
-            {
+            let closed = loop {
+                if owner.strong_count() == 0 {
+                    break false;
+                }
+                match advance_request(&mut lease, &mut detached) {
+                    ReplyProgress::WouldBlock => {}
+                    ReplyProgress::Complete => break false,
+                    ReplyProgress::Closed => break true,
+                }
                 // Wakes when the lease is ready, or every 50 ms to see
                 // whether the request was dropped.
                 let events = if detached.unsent.is_empty() {
@@ -1263,8 +1271,8 @@ fn send_drained_request(
                     tv_nsec: 50_000_000,
                 };
                 let _ = rustix::event::poll(&mut ready, Some(&timeout));
-            }
-            (detached.unsent, detached.reply)
+            };
+            (detached.unsent, detached.reply, closed)
         })
         .map_err(|error| format!("cannot start a lease reader: {error}"))?;
     session.request = Some(LeaseRequest {
@@ -1734,6 +1742,91 @@ pub(super) fn drain_given_up_requests(sessions: &mut [RunningSession]) {
             let _ = drain_request(session);
         }
     }
+}
+
+/// Advances the request in flight on `session` for an Update Commit, without
+/// blocking and without sending (EON-C11 Commit quiescence): a
+/// `ProgramStatus` reply is kept for the attention poller with its original
+/// deadline, an `AttachAllow` reply is taken as naming takes it, and a read
+/// or send given up on is discarded once whole. Returns whether the lease is
+/// idle: nothing in flight and nothing unread on it. A closed lease, a reply
+/// of another class or bytes no request owns refuse, leaving the request and
+/// the lease to the supervisor's next turn.
+pub(super) fn drain_for_update(
+    session: &mut RunningSession,
+    log: &DiagnosticLog,
+) -> Result<bool, &'static str> {
+    if session.is_finished() {
+        return Err("a terminal has ended");
+    }
+    if session.stop_sent {
+        return Err("a terminal is stopping");
+    }
+    if let Some(request) = &mut session.request {
+        match advance_request(&mut session.lease, request) {
+            ReplyProgress::Complete => {}
+            ReplyProgress::WouldBlock => return Ok(false),
+            ReplyProgress::Closed => return Err("a terminal ended before answering its request"),
+        }
+        use ManagementServerMessage::{Allowed, Busy, History, Input, Refused, Visible};
+        let answers = match (
+            request.kind,
+            management::decode_server_message(&request.reply),
+        ) {
+            (_, Err(_)) => false,
+            (RequestKind::ProgramStatus, Ok(reply)) => {
+                matches!(reply, ManagementServerMessage::ProgramStatus(_) | Busy)
+            }
+            (RequestKind::AttachAllow(_), Ok(reply)) => {
+                matches!(reply, Allowed | Busy | Refused(_))
+            }
+            // A read's or send's answers; a closed refusal means the terminal ended.
+            (RequestKind::Terminal, Ok(reply)) => {
+                matches!(
+                    reply,
+                    Visible(_) | History(_) | Input { .. } | Busy | Refused(_)
+                ) && !matches!(reply, Refused(Refusal::Closed))
+            }
+        };
+        if !answers {
+            return Err("a terminal answered its request with another result");
+        }
+        match request.kind {
+            RequestKind::ProgramStatus => {
+                session.answered_status =
+                    Some((std::mem::take(&mut request.reply), request.deadline));
+                session.request = None;
+            }
+            RequestKind::AttachAllow(_) => {
+                name_lease(session, None, false, Instant::now(), log);
+            }
+            RequestKind::Terminal => session.request = None,
+        }
+    }
+    if unread(&session.lease) {
+        return Err("a terminal ended or sent a result no request asked for");
+    }
+    Ok(true)
+}
+
+/// Whether bytes, an end of file or an error wait on `lease`.
+fn unread(lease: &UnixStream) -> bool {
+    let mut ready = [rustix::event::PollFd::new(
+        lease,
+        rustix::event::PollFlags::IN,
+    )];
+    loop {
+        match rustix::event::poll(&mut ready, Some(&rustix::event::Timespec::default())) {
+            Ok(ready) => return ready > 0,
+            Err(rustix::io::Errno::INTR) => {}
+            Err(_) => return true,
+        }
+    }
+}
+
+/// Whether a `ProgramStatus` answer waits for the attention poller.
+pub(super) fn status_answered(session: &RunningSession) -> bool {
+    session.answered_status.is_some()
 }
 
 fn naming_failed(
@@ -4083,6 +4176,267 @@ pub(crate) mod tests {
             finished: None,
         };
         (session, peer, tombstone)
+    }
+
+    /// Drains `session` for an Update until it settles or refuses, as
+    /// Commit's barrier does, within a generous bound that only catches a
+    /// hang.
+    fn drain_until(session: &mut RunningSession, log: &DiagnosticLog) -> Result<(), &'static str> {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !super::drain_for_update(session, log)? {
+            assert!(Instant::now() < deadline, "the lease drain never settled");
+            thread::sleep(Duration::from_millis(1));
+        }
+        Ok(())
+    }
+
+    /// Whether the scripted Orbit has nothing more to read: no second request
+    /// and no Stop.
+    fn quiet(peer: &mut UnixStream) -> bool {
+        peer.set_nonblocking(true).unwrap();
+        let quiet = matches!(peer.read(&mut [0; 64]), Err(error) if error.kind() == io::ErrorKind::WouldBlock);
+        peer.set_nonblocking(false).unwrap();
+        quiet
+    }
+
+    /// C02: an Update's drain finishes the frames already issued on a lease,
+    /// across a partly written request and a reply split between its header
+    /// and body, in both the supervisor's and a drainer's reader. It never
+    /// writes a request again, reads past a reply or sends a Stop, and keeps
+    /// a `ProgramStatus` answer with its original deadline for attention.
+    #[test]
+    fn an_update_drain_finishes_issued_frames_once_without_resending() {
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let paste = ManagementClientMessage::Input {
+            input: LeaseInput::Paste("a".repeat(management::MAX_INPUT_PASTE_BYTES)),
+            quiet_ms: 0,
+        };
+        let input = ManagementServerMessage::Input { bracketed: true };
+        let status =
+            ManagementServerMessage::ProgramStatus(orbit_protocol::management::ProgramStatus {
+                count: 0,
+                background: 0,
+                processes: Default::default(),
+                foreground: orbit_protocol::management::Foreground::Child,
+                update: 7,
+                terminal_title: "title".into(),
+                omitted: Vec::new(),
+                records: Vec::new(),
+            });
+        for (number, kind, message, reply, drained) in [
+            (1, RequestKind::Terminal, &paste, &input, false),
+            (2, RequestKind::Terminal, &paste, &input, true),
+            (
+                3,
+                RequestKind::ProgramStatus,
+                &ManagementClientMessage::ProgramStatus,
+                &status,
+                false,
+            ),
+        ] {
+            let (mut session, mut peer, _) =
+                tombstoned_session(&root, number, TerminationReason::NaturalExit);
+            peer.set_read_timeout(Some(Duration::from_secs(10)))
+                .unwrap();
+            // A send buffer smaller than the paste leaves the request partly
+            // unwritten until the peer reads.
+            socket2::SockRef::from(&session.lease)
+                .set_send_buffer_size(4096)
+                .unwrap();
+            let deadline = Instant::now() + Duration::from_millis(250);
+            if drained {
+                super::send_drained_request(&mut session, message, deadline).unwrap();
+            } else {
+                super::send_request(&mut session, kind, message, deadline).unwrap();
+                assert!(
+                    number == 3 || !session.request.as_ref().unwrap().unsent.is_empty(),
+                    "the paste was written whole"
+                );
+            }
+            assert_eq!(super::drain_for_update(&mut session, &log), Ok(false));
+            let reply = management::encode_server_message(reply).unwrap();
+            let orbit = thread::spawn(move || {
+                let request = read_request(&mut peer);
+                peer.write_all(&reply[..management::HEADER_BYTES]).unwrap();
+                thread::sleep(Duration::from_millis(50));
+                peer.write_all(&reply[management::HEADER_BYTES..]).unwrap();
+                (request, peer)
+            });
+            drain_until(&mut session, &log).unwrap();
+            let (request, mut peer) = orbit.join().unwrap();
+            assert_eq!(&request, message, "terminal-{number} got another request");
+            assert!(quiet(&mut peer), "terminal-{number} was sent more");
+            assert!(session.request.is_none());
+            let kept = session.answered_status.take();
+            if number == 3 {
+                let reply = management::encode_server_message(&status).unwrap();
+                assert_eq!(kept, Some((reply, deadline)));
+            } else {
+                assert_eq!(kept, None);
+            }
+            // Nothing more is read or sent once idle.
+            assert_eq!(super::drain_for_update(&mut session, &log), Ok(true));
+            assert!(quiet(&mut peer));
+        }
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// C02: a reply that is not its request's answer, a lease that ends and
+    /// bytes no request asked for refuse an Update's drain and leave the
+    /// request, its bytes and the lease for the supervisor's next turn, which
+    /// then reads them as it always does. A reply still partial when the drain
+    /// gives up keeps its offset.
+    #[test]
+    fn an_update_drain_refuses_unsettled_leases_and_keeps_their_state() {
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let (mut session, mut peer, tombstone) =
+            tombstoned_session(&root, 1, TerminationReason::NaturalExit);
+        let stopped =
+            management::encode_server_message(&ManagementServerMessage::Stopped(tombstone))
+                .unwrap();
+        let mut malformed = stopped.clone();
+        malformed[..4].copy_from_slice(b"XXXX");
+        let deadline = Instant::now() + Duration::from_millis(250);
+        for reply in [&stopped, &malformed] {
+            super::send_request(
+                &mut session,
+                RequestKind::ProgramStatus,
+                &ManagementClientMessage::ProgramStatus,
+                deadline,
+            )
+            .unwrap();
+            read_request(&mut peer);
+            // Half a reply at the drain's end keeps its offset.
+            peer.write_all(&reply[..management::HEADER_BYTES / 2])
+                .unwrap();
+            let start = Instant::now();
+            while session.request.as_ref().unwrap().reply.len() < management::HEADER_BYTES / 2 {
+                assert_eq!(super::drain_for_update(&mut session, &log), Ok(false));
+                assert!(start.elapsed() < Duration::from_secs(10));
+            }
+            peer.write_all(&reply[management::HEADER_BYTES / 2..])
+                .unwrap();
+            assert_eq!(
+                drain_until(&mut session, &log),
+                Err("a terminal answered its request with another result")
+            );
+            assert!(session.answered_status.is_none());
+            let request = session.request.as_ref().unwrap();
+            assert!(reply.starts_with(&request.reply));
+            // The poller then finishes the request as before.
+            assert!(super::read_program_status(&mut session).is_err());
+            assert!(session.request.is_none());
+            if reply == &malformed {
+                // The bad header ended the reply; what follows is unsolicited.
+                assert_eq!(
+                    super::drain_for_update(&mut session, &log),
+                    Err("a terminal ended or sent a result no request asked for")
+                );
+                let mut rest = vec![0; reply.len() - management::HEADER_BYTES];
+                session.lease.read_exact(&mut rest).unwrap();
+            }
+            assert!(quiet(&mut peer));
+        }
+        // A read's or send's reply of another class, here a status answer.
+        super::send_request(
+            &mut session,
+            RequestKind::Terminal,
+            &ManagementClientMessage::ReadVisible,
+            deadline,
+        )
+        .unwrap();
+        read_request(&mut peer);
+        let status = management::encode_server_message(&ManagementServerMessage::Busy).unwrap();
+        let mut wrong =
+            management::encode_server_message(&ManagementServerMessage::Allowed).unwrap();
+        peer.write_all(&wrong).unwrap();
+        assert_eq!(
+            drain_until(&mut session, &log),
+            Err("a terminal answered its request with another result")
+        );
+        assert_eq!(session.request.as_ref().unwrap().reply, wrong);
+        assert!(super::drain_request(&mut session).unwrap());
+        // An AttachAllow answer is taken as naming takes it, and nothing is sent.
+        let name = AttachName {
+            process_id: 1,
+            process_start: 2,
+        };
+        for (reply, named) in [(&wrong, true), (&status, false)] {
+            super::send_request(
+                &mut session,
+                RequestKind::AttachAllow(name),
+                &ManagementClientMessage::AttachAllow {
+                    process_id: name.process_id,
+                    process_start: name.process_start,
+                },
+                deadline,
+            )
+            .unwrap();
+            read_request(&mut peer);
+            peer.write_all(reply).unwrap();
+            drain_until(&mut session, &log).unwrap();
+            assert!(session.request.is_none());
+            assert_eq!(
+                matches!(session.naming, Some(Naming::Named(named)) if named == name),
+                named
+            );
+            assert!(quiet(&mut peer));
+        }
+        // An AttachAllow reply of another class refuses.
+        super::send_request(
+            &mut session,
+            RequestKind::AttachAllow(name),
+            &ManagementClientMessage::AttachAllow {
+                process_id: name.process_id,
+                process_start: name.process_start,
+            },
+            deadline,
+        )
+        .unwrap();
+        read_request(&mut peer);
+        wrong =
+            management::encode_server_message(&ManagementServerMessage::Input { bracketed: false })
+                .unwrap();
+        peer.write_all(&wrong).unwrap();
+        assert_eq!(
+            drain_until(&mut session, &log),
+            Err("a terminal answered its request with another result")
+        );
+        assert!(session.request.is_some());
+        assert!(super::drain_request(&mut session).unwrap());
+        // Bytes with no request stay unread for the EOF probe.
+        peer.write_all(&stopped).unwrap();
+        assert_eq!(
+            drain_until(&mut session, &log),
+            Err("a terminal ended or sent a result no request asked for")
+        );
+        let mut unsolicited = vec![0; stopped.len()];
+        session.lease.read_exact(&mut unsolicited).unwrap();
+        assert_eq!(unsolicited, stopped);
+        // A lease that ends under its request, in either reader.
+        for drained in [false, true] {
+            let (mut session, peer, _) = tombstoned_session(
+                &root,
+                if drained { 3 } else { 2 },
+                TerminationReason::NaturalExit,
+            );
+            let message = ManagementClientMessage::ReadVisible;
+            if drained {
+                super::send_drained_request(&mut session, &message, deadline).unwrap();
+            } else {
+                super::send_request(&mut session, RequestKind::Terminal, &message, deadline)
+                    .unwrap();
+            }
+            drop(peer);
+            assert_eq!(
+                drain_until(&mut session, &log),
+                Err("a terminal ended before answering its request")
+            );
+            assert!(session.request.is_some());
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

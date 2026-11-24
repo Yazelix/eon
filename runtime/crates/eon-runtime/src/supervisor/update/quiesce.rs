@@ -1,15 +1,17 @@
 //! The private Commit's between-turn barrier. Only the supervisor can submit
-//! observer, scan, attention and notice work, and it holds this turn through
-//! validation and exec. Quota workers also reserve their own reads.
+//! observer, scan, attention, notice and lease work, and it holds this turn
+//! through validation and exec, so it accepts no control client and sends
+//! nothing on a lease meanwhile. Quota workers also reserve their own reads.
 
 use super::SupervisorState;
-use crate::notification::NoticePark;
+use crate::{attention::Target, notification::NoticePark, sessions};
 use std::{
     thread,
     time::{Duration, Instant},
 };
 
 const SETTLE_HELPERS: Duration = Duration::from_millis(1_250);
+const DRAIN_LEASES: Duration = Duration::from_millis(1_000);
 const QUIESCE: Duration = Duration::from_millis(1_500);
 
 pub(super) struct Quiesce<'a> {
@@ -34,10 +36,34 @@ impl<'a> Quiesce<'a> {
             quotas.set_park(true);
         }
         guard.state.pane_labels.park();
+        #[cfg(test)]
+        if crate::update::fault("held-status")
+            && let Some(root) = std::env::var_os("EON_TEST_HANDOFF_ROOT")
+        {
+            let _ = std::fs::write(std::path::Path::new(&root).join("quiescing"), b"");
+        }
+        // The barrier changes no topology, so attention's targets hold for it.
+        let targets = guard
+            .state
+            .workspaces
+            .as_ref()
+            .map(|workspaces| crate::attention::targets(&workspaces.snapshots()).0)
+            .unwrap_or_default();
         let helper_deadline = started + SETTLE_HELPERS;
+        let lease_deadline = started + DRAIN_LEASES;
         loop {
-            let unsettled = guard.unsettled()?;
-            let left = helper_deadline.saturating_duration_since(Instant::now());
+            let leases = guard.drain_leases(&targets)?;
+            let unsettled = match leases {
+                Some(what) => Some(what),
+                None => guard.unsettled(&targets)?,
+            };
+            let now = Instant::now();
+            let deadline = if leases.is_some() {
+                lease_deadline
+            } else {
+                helper_deadline
+            };
+            let left = deadline.saturating_duration_since(now);
             if left.is_zero() {
                 return Err(unsettled.unwrap_or("helper settlement exceeded its deadline"));
             }
@@ -48,7 +74,28 @@ impl<'a> Quiesce<'a> {
         }
     }
 
-    fn unsettled(&mut self) -> Result<Option<&'static str>, &'static str> {
+    /// Advances every lease's issued request at once and lets attention take
+    /// the answers, sending nothing (C02). The first reason a lease is not yet
+    /// idle, or a refusal that leaves its request for the next turn.
+    fn drain_leases(&mut self, targets: &[Target]) -> Result<Option<&'static str>, &'static str> {
+        let state = &mut *self.state;
+        let mut pending = None;
+        for session in &mut state.sessions {
+            if !sessions::drain_for_update(session, &state.log)? {
+                pending = Some("a terminal request is in flight");
+            }
+        }
+        if let Some(attention) = &mut state.attention {
+            attention.drain(targets, &mut state.sessions);
+        }
+        if pending.is_none() && state.sessions.iter().any(sessions::status_answered) {
+            pending = Some("a terminal status answer is not consumed");
+        }
+        Ok(pending)
+    }
+
+    /// The first helper still at work, once every lease is idle.
+    fn unsettled(&mut self, targets: &[Target]) -> Result<Option<&'static str>, &'static str> {
         let notices = self
             .notices
             .as_mut()
@@ -57,6 +104,13 @@ impl<'a> Quiesce<'a> {
             return Err("a detach notice action is pending");
         }
         self.state.reap_visits();
+        // Parked only now, so a sample a drained answer needs could still start.
+        let attention = match &mut self.state.attention {
+            Some(attention) => {
+                attention.park() && attention.drain(targets, &mut self.state.sessions)
+            }
+            None => true,
+        };
         let checks = [
             (
                 self.state.visits.is_empty(),
@@ -80,13 +134,7 @@ impl<'a> Quiesce<'a> {
                     .is_none_or(crate::running::Running::is_idle),
                 "a running window scan is still running",
             ),
-            (
-                self.state
-                    .attention
-                    .as_mut()
-                    .is_none_or(crate::attention::Attention::park),
-                "an attention helper is still running",
-            ),
+            (attention, "an attention helper is still running"),
             (notices, "the notification worker is still running"),
         ];
         Ok(checks

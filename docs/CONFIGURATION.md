@@ -1960,13 +1960,28 @@ running Eon processes receive no signal.
 
 The test-gated in-place Update Commit gives helper children, quota workers,
 window scans, pane observers, attention and the notification worker up to
-1,250 ms to settle within a 1,500 ms monotonic quiesce budget. Target
-validation has its own deadline. A live detach notice or a pending detach
-action requires settlement in the current Runtime before Commit can
-proceed. Refusal leaves the current Runtime serving the window. Only
-standard I/O and the explicitly carried resources may survive exec.
-Runtime checks other open descriptors for close-on-exec on Linux and macOS
-and refuses if it finds an unexpected inheritable descriptor.
+1,250 ms to settle within a 1,500 ms monotonic quiesce budget. In the same
+budget, and at the same time, management requests already sent to Orbit get
+up to 1,000 ms to finish. Commit sends no new request and no Stop, and it
+reads each reply only as the request that asked for it. Commit refuses when a
+reply is late, malformed or not the request's answer, or when a terminal sent
+something no request asked for. The current Runtime then finishes that
+request as usual. Target validation has its own deadline. A live detach
+notice or a pending detach action requires settlement in the current Runtime
+before Commit can proceed. Refusal leaves the current Runtime serving the
+window. Only standard I/O and the explicitly carried resources may survive
+exec. Runtime checks other open descriptors for close-on-exec on Linux and
+macOS and refuses if it finds an unexpected inheritable descriptor.
+
+Every ordinary accepted `eon.sock` client, including one accepted while a
+terminal starts, has 250 ms from its accept to send its whole request and
+2,000 ms to take its whole reply. A request still incomplete at 250 ms gets a
+`malformed-action` failure and is not run, however slowly its bytes kept
+arriving. The action's own work has its own limits. These budgets apply
+before an Update Commit's quiesce budget starts, and Commit admits no new
+client: clients still waiting in the listener's backlog stay there for the
+Runtime that serves the window next. These fixed bounds keep one slow client
+from holding the window's other clients and its Update.
 
 After in-place Update import, quota reads using a local schedule wait at
 least one ordinary interval from import, 60 seconds for Codex and 300

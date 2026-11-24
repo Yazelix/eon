@@ -3142,11 +3142,27 @@ popup or automatic tutorial launch.
     replacement as one checkpoint of validated logical state, taken only when
     no work is in flight: an accepted request, a terminal start, a registry
     change, a pending management reply or helper sample, or a Stop. Otherwise
-    the checkpoint is refused and nothing changes. It is not an EONW snapshot
+    the checkpoint is refused and the current Runtime keeps its work. Planned
+    Update Commit serializes workspace mutation before capture. Its 1,500 ms
+    quiesce budget includes concurrent limits of 1,250 ms to settle helper work
+    and reap children and 1,000 ms to drain management exchanges. Commit
+    refuses before exec when work remains unsettled, including a deferred
+    registry operation, held ordinary exchange, startup, Stop or failed-start
+    cleanup. A live detach notice or an accepted action from it also refuses
+    Commit. A detached Linux window with a resident notice can be updated after
+    the notice is dismissed or otherwise settled and its actions are handled.
+    The current Runtime retains outstanding work on refusal. Connections still
+    in the listener's backlog stay queued for its owner, which checks their
+    EONW before dispatch. Existing Orbit hosts and their programs continue
+    running. The checkpoint is not an EONW snapshot
     and holds no in-memory layout, process handle, descriptor or terminal
     contents. Changes to its schema version it; EONW-only changes do not. It is
     transient, read once by the replacing Runtime, and adds no durable recovery
     database or retained old-schema reader.
+  - Ordinary accepted `eon.sock` exchanges, including while a terminal starts,
+    have a 250 ms whole-request read budget and a 2,000 ms whole-reply write
+    budget. Action execution keeps its own limits. These exchanges use their
+    own I/O budgets before the Update Commit quiesce clock starts.
   - Planned Update keeps the same supervisor PID, window lifetime, directory,
     listeners, locks, Orbit host, run, process, start, endpoint and record
     identities, management leases, PTYs, running programs and Orbit terminal

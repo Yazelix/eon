@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- An `eon.sock` client now has 250 ms from its accept to send its whole
+  request; one that sends it too slowly gets a `malformed-action` failure and
+  its action does not run. The private in-place Update test path finishes
+  management requests already sent to Orbit within 1,000 ms before it
+  captures the window, and refuses when one stays unsettled (EON-C11,
+  `eon-t3fyd.9.2`).
+
 - The private in-place Update test path waits for helper and observer work to
   settle and refuses unexpected inheritable descriptors. After Update, local
   quota collection waits one normal interval. Usable shared Claude and Google

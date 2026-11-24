@@ -472,8 +472,6 @@ impl Attention {
         self.recovered.push((run.into(), None));
     }
 
-    /// Sends due requests and reads replies without blocking. A miss, a Busy
-    /// refusal or a bad reply keeps the last good result.
     /// Holds a helper sample of `status`, as `run` of `session` replied at
     /// `replied`, whose result only the returned sender delivers. Its
     /// deadline is `replied`: a `poll` applies a delivered result first, and
@@ -500,11 +498,32 @@ impl Attention {
         (self.helper_sample, results)
     }
 
+    /// Sends due requests and reads replies without blocking. A miss, a Busy
+    /// refusal or a bad reply keeps the last good result.
     pub(super) fn poll(
         &mut self,
         targets: &[Target],
         sessions: &mut [RunningSession],
         now: Instant,
+    ) {
+        self.advance(targets, sessions, now, false);
+    }
+
+    /// An Update Commit's poll (EON-C11 Commit quiescence): it applies helper
+    /// results and the answers the lease drain kept, under their original
+    /// deadlines, and sends nothing. Returns whether no helper sample is in
+    /// flight.
+    pub(super) fn drain(&mut self, targets: &[Target], sessions: &mut [RunningSession]) -> bool {
+        self.advance(targets, sessions, Instant::now(), true);
+        self.helper_pending.is_empty()
+    }
+
+    fn advance(
+        &mut self,
+        targets: &[Target],
+        sessions: &mut [RunningSession],
+        now: Instant,
+        drain: bool,
     ) {
         let results: Vec<_> = self
             .helper_worker
@@ -524,12 +543,14 @@ impl Attention {
                 self.helper_pending.push(pending);
             }
         }
-        let due = now >= self.next_poll;
+        let due = !drain && now >= self.next_poll;
         if due {
             self.next_poll = now + POLL_INTERVAL;
         }
         for session in sessions {
-            if !targets.iter().any(|target| target.session == session.id) {
+            if !targets.iter().any(|target| target.session == session.id)
+                || drain && !sessions::status_answered(session)
+            {
                 continue;
             }
             if self
@@ -1548,6 +1569,44 @@ mod tests {
             }
             assert!(notifications(&mut attention, &targets).is_empty());
         }
+    }
+
+    /// An Update Commit's drain applies the answer a lease drain kept, under
+    /// its original deadline, and sends nothing although a poll is due (C02).
+    #[test]
+    fn an_update_drain_applies_a_kept_answer_and_sends_nothing() {
+        use std::io::Read;
+        let root = crate::supervisor::temporary_directory();
+        let (mut session, mut peer, _) = crate::sessions::tests::tombstoned_session(
+            &root,
+            1,
+            orbit_protocol::management::TerminationReason::ExplicitStop,
+        );
+        let snapshots = [snapshot("t", vec![tab("t", &["terminal-1"], &[], None)])];
+        let (targets, _) = targets(&snapshots);
+        let mut attention = Attention::new(true);
+        let now = Instant::now();
+        crate::sessions::tests::keep_status(
+            &mut session,
+            &status(1, vec![record("a", Working, None, 1)]),
+            now + POLL_DEADLINE,
+        );
+        let mut sessions = vec![session];
+        peer.set_nonblocking(true).unwrap();
+        let sent = |peer: &mut std::os::unix::net::UnixStream| !matches!(peer.read(&mut [0; 64]), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock);
+        for _ in 0..2 {
+            assert!(attention.drain(&targets, &mut sessions));
+            assert!(!crate::sessions::status_answered(&sessions[0]));
+            assert_eq!(
+                state(&attention, &targets, "terminal-1", now),
+                Some(State::Working)
+            );
+            assert!(!sent(&mut peer), "the drain sent a lease request");
+        }
+        // The next ordinary poll sends again.
+        attention.poll(&targets, &mut sessions, Instant::now());
+        assert!(sent(&mut peer));
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

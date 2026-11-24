@@ -3,6 +3,7 @@ use crate::supervisor::temporary_directory;
 use std::{
     cell::Cell,
     fs,
+    io::Read,
     os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt},
     path::PathBuf,
     rc::Rc,

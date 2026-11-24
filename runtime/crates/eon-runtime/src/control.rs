@@ -798,16 +798,16 @@ pub(super) struct Client {
     pub(super) peer: Option<(libc::pid_t, libc::uid_t)>,
 }
 
-/// Reads one accepted client's request under the client I/O bounds; `None`
-/// when the connection cannot be configured, which leaves it unserved.
+/// Reads one accepted client's whole request within `CLIENT_IO_TIMEOUT` of
+/// its accept, however its bytes arrive (EON-C11); `None` when the
+/// connection cannot be configured, which leaves it unserved.
 pub(super) fn read_client(mut stream: UnixStream) -> Option<Client> {
+    let deadline = Instant::now() + CLIENT_IO_TIMEOUT;
     let peer = super::platform::peer_identity(&stream).ok();
     // Accepted sockets inherit the listener's nonblocking mode on macOS.
     stream.set_nonblocking(false).ok()?;
-    let timeout = Some(CLIENT_IO_TIMEOUT);
-    bound_io(&stream, stream.set_read_timeout(timeout)).ok()?;
-    bound_io(&stream, stream.set_write_timeout(timeout)).ok()?;
-    let incoming = read_incoming(&mut stream);
+    bound_io(&stream, stream.set_write_timeout(Some(CLIENT_IO_TIMEOUT))).ok()?;
+    let incoming = read_incoming(&mut stream, deadline);
     Some(Client {
         stream,
         incoming,
@@ -936,7 +936,7 @@ pub(super) fn write_reply(stream: &mut UnixStream, mut reply: &[u8], deadline: I
 /// (EON-C11).
 // The error is the one reply the connection gets, so it is not boxed.
 #[allow(clippy::result_large_err)]
-fn read_incoming(stream: &mut impl Read) -> Result<Incoming, Dispatched> {
+fn read_incoming(stream: &mut impl Source, deadline: Instant) -> Result<Incoming, Dispatched> {
     let incomplete = |error| {
         failure(
             "malformed-action",
@@ -950,18 +950,15 @@ fn read_incoming(stream: &mut impl Read) -> Result<Incoming, Dispatched> {
         )
     };
     let reserved = |failure| Dispatched::Stop(stop_failure(failure), false);
+    let mut read = |bytes: &mut [u8]| read_exact_before(stream, bytes, deadline, Instant::now);
     let mut message = vec![0; HEADER_BYTES];
-    stream
-        .read_exact(&mut message)
-        .map_err(|error| workspace(incomplete(error)))?;
+    read(&mut message).map_err(|error| workspace(incomplete(error)))?;
     if stop::is_reserved(&message) {
         let malformed =
             |error: stop::Error| reserved(failure("malformed-action", error.to_string()));
         let length = stop::request_len(&message).map_err(malformed)?;
         message.resize(length, 0);
-        stream
-            .read_exact(&mut message[HEADER_BYTES..])
-            .map_err(|error| reserved(incomplete(error)))?;
+        read(&mut message[HEADER_BYTES..]).map_err(|error| reserved(incomplete(error)))?;
         return stop::decode_request(&message)
             .map(Incoming::Stop)
             .map_err(malformed);
@@ -969,9 +966,7 @@ fn read_incoming(stream: &mut impl Read) -> Result<Incoming, Dispatched> {
     let length =
         declared_message_len(&message).map_err(|error| workspace(protocol_failure(error)))?;
     message.resize(length, 0);
-    stream
-        .read_exact(&mut message[HEADER_BYTES..])
-        .map_err(|error| workspace(incomplete(error)))?;
+    read(&mut message[HEADER_BYTES..]).map_err(|error| workspace(incomplete(error)))?;
     decode_request(&message)
         .map(Incoming::Request)
         .map_err(|error| workspace(protocol_failure(error)))
@@ -1104,6 +1099,52 @@ pub(super) fn socket_identity(socket: &Path) -> Result<Option<SocketIdentity>, S
 fn remove_socket_if_identity(path: &Path, identity: SocketIdentity) -> Result<(), String> {
     crate::private_file::revalidate(path, Some(identity))?;
     fs::remove_file(path).map_err(|error| error.to_string())
+}
+
+/// A stream whose next read waits at most a given time.
+pub(crate) trait Source {
+    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> std::io::Result<usize>;
+}
+
+impl Source for UnixStream {
+    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> std::io::Result<usize> {
+        // A peer that wrote and closed may refuse the option on Darwin; its
+        // bytes are still there to read.
+        let read_timeout = super::update::option(
+            self.set_read_timeout(Some(timeout)),
+            "einval-on-read-timeout",
+        );
+        bound_io(self, read_timeout)?;
+        self.read(buffer)
+    }
+}
+
+/// Fills `buffer` before `deadline`, whatever the reads' pace: each read
+/// waits only the time left, so a peer that trickles bytes cannot extend the
+/// deadline. Times out with `TimedOut`, ends early with `UnexpectedEof`.
+pub(crate) fn read_exact_before(
+    source: &mut impl Source,
+    buffer: &mut [u8],
+    deadline: Instant,
+    now: impl Fn() -> Instant,
+) -> std::io::Result<()> {
+    let mut filled = 0;
+    while filled < buffer.len() {
+        let left = deadline.saturating_duration_since(now());
+        if left.is_zero() {
+            return Err(ErrorKind::TimedOut.into());
+        }
+        match source.read_within(&mut buffer[filled..], left) {
+            Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+            Ok(read) => filled += read,
+            Err(error) if error.kind() == ErrorKind::Interrupted => {}
+            Err(error) if matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut) => {
+                return Err(ErrorKind::TimedOut.into());
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -1370,6 +1411,60 @@ mod tests {
         peer_result.unwrap();
     }
 
+    /// C18: a client that dribbles its request, each byte well inside
+    /// `CLIENT_IO_TIMEOUT` of the last, still has one whole-request budget
+    /// from its accept. It gets the one failure reply and its request never
+    /// dispatches, however it later completes; the Reserved Stop is bounded
+    /// alike.
+    #[test]
+    fn a_dribbling_request_is_bounded_by_one_whole_request_deadline() {
+        use eon_workspace_protocol::stop;
+        let action = super::encode_request(&super::Request {
+            id: "d".repeat(100),
+            caller: None,
+            action: super::Action::Workspace(super::WorkspaceAction::Inspect),
+        })
+        .unwrap();
+        let reserved = stop::encode_request("g1-0123456789abcdef0123456789abcdef").unwrap();
+        for request in [action, reserved] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            let pace = super::CLIENT_IO_TIMEOUT / 3;
+            let dribble = pace * (request.len() - super::HEADER_BYTES) as u32;
+            let client = thread::spawn(move || {
+                peer.write_all(&request[..super::HEADER_BYTES]).unwrap();
+                for byte in &request[super::HEADER_BYTES..] {
+                    thread::sleep(pace);
+                    if peer.write_all(&[*byte]).is_err() {
+                        break;
+                    }
+                }
+                // Bytes the window never read may reset the connection
+                // before its reply is read; what arrives is that reply.
+                let mut reply = Vec::new();
+                let _ = peer.read_to_end(&mut reply);
+                reply
+            });
+            let start = Instant::now();
+            let accepted = super::handle_client(stream, |_, _peer| -> super::Dispatched {
+                panic!("a request read past its deadline was dispatched")
+            });
+            let held = start.elapsed();
+            assert!(!accepted.shutdown());
+            assert!(held < dribble, "{held:?} of {dribble:?}");
+            let reply = client.join().unwrap();
+            if !reply.is_empty() {
+                let code = match super::decode_response(&reply) {
+                    Ok(super::Response::Failure(failure)) => failure.code,
+                    _ => match stop::decode_reply(&reply) {
+                        Ok(stop::Reply::Failure { code, .. }) => code,
+                        other => panic!("{other:?}"),
+                    },
+                };
+                assert_eq!(code, "malformed-action");
+            }
+        }
+    }
+
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
@@ -1475,7 +1570,8 @@ mod tests {
         fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
         let server = thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
-            assert!(super::read_incoming(&mut stream).is_ok());
+            let deadline = Instant::now() + super::CLIENT_IO_TIMEOUT;
+            assert!(super::read_incoming(&mut stream, deadline).is_ok());
             let response = super::encode_response(&super::Response::Failure(super::failure(
                 "unknown-caller",
                 "not owned",

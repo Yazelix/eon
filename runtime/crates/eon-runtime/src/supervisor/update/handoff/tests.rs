@@ -351,9 +351,12 @@ fn source(root: &Path, inputs: &Inputs) {
                 .all(|row| row.checkpoint_extra().is_ok())
         });
     }
-    // Keep the checkpoint's required attention state, with its first poll after the fixture.
+    // Keep the checkpoint's required attention state, with its first poll
+    // after the fixture unless a test holds a lease's status request.
     let mut attention = Attention::new(false);
-    attention.defer_poll_until(Instant::now() + START * 4);
+    if !update::fault("held-status") {
+        attention.defer_poll_until(Instant::now() + START * 4);
+    }
     state.attention = Some(attention);
     let control = ControlListener::bind(&runtime.join("eon.sock")).unwrap();
     state.start_pump =
@@ -1080,5 +1083,130 @@ fn update_cannot_audit_while_an_observer_is_between_socket_and_cloexec() {
     assert_eq!(last.request, request.request);
     assert_eq!(last.refusal, None);
     assert!(fixture.root.join("verified-child").exists());
+    fixture.stop();
+}
+
+/// C02 and C18 against real Orbit leases and the window's own listener. A
+/// status request that Orbit leaves unanswered past the 1,000 ms lease drain
+/// refuses Commit before exec; a control client that connected while the old
+/// supervisor held that barrier stays queued and the old supervisor serves it
+/// afterwards. In the next Commit Orbit answers that same request inside the
+/// drain, and the window adopts. Clients queued during that barrier pass to
+/// the replacement, which serves a compatible request once and refuses one of
+/// another EONW before dispatch. The Stop after it is the window's one Stop.
+#[test]
+fn update_drains_a_held_lease_and_leaves_queued_clients_to_their_owner() {
+    use eon_workspace_protocol::v49::{
+        Action, Request, Response, VERSION, WorkspaceAction, decode_response, encode_request,
+    };
+    use rustix::process::{Pid, Signal, kill_process};
+    // Resumes the stopped Orbit however the test ends.
+    struct Stopped(Pid);
+    impl Drop for Stopped {
+        fn drop(&mut self) {
+            let _ = kill_process(self.0, Signal::CONT);
+        }
+    }
+    let mut fixture = Fixture::start(Some("held-status"), false, false);
+    let a = fixture.inspect();
+    let host = fixture.live_host(1);
+    let action = |id: &str, action| {
+        encode_request(&Request {
+            id: id.into(),
+            caller: None,
+            action: Action::Workspace(action),
+        })
+        .unwrap()
+    };
+    let rename = |id: &str| {
+        action(
+            id,
+            WorkspaceAction::RenameWorkspace {
+                workspace: None,
+                name: id.into(),
+            },
+        )
+    };
+    let send = |bytes: &[u8]| {
+        let mut stream = UnixStream::connect(fixture.path("eon.sock")).unwrap();
+        stream.set_read_timeout(Some(START)).unwrap();
+        stream.write_all(bytes).unwrap();
+        stream
+    };
+    let snapshot = |stream| match decode_response(&fixture.read(stream)).unwrap() {
+        Response::Snapshot(snapshot) => snapshot,
+        other => panic!("{other:?}\n{}", fixture.transcript()),
+    };
+    let names = |snapshot: &eon_workspace_protocol::v49::Snapshot| {
+        snapshot
+            .workspaces
+            .iter()
+            .filter_map(|workspace| workspace.name.clone())
+            .collect::<Vec<_>>()
+    };
+    let quiescing = fixture.root.join("quiescing");
+    let in_barrier = || {
+        until("Commit's barrier", || quiescing.exists());
+        fs::remove_file(&quiescing).unwrap();
+    };
+    let orbit = Pid::from_raw(host.process_id as i32).unwrap();
+    kill_process(orbit, Signal::STOP).unwrap();
+    let stopped = Stopped(orbit);
+    // The window polls every 500 ms, so its next status request waits.
+    thread::sleep(Duration::from_secs(2));
+    let started = Instant::now();
+    let refused = fixture.commit(&fixture.request(13));
+    in_barrier();
+    let held = send(&rename("held"));
+    let bytes = fixture.read(refused);
+    let elapsed = started.elapsed();
+    let refusal = Refused::decode(&bytes, eonu::Direction::Reply)
+        .unwrap_or_else(|error| panic!("{error}: {}", fixture.transcript()));
+    assert_eq!(refusal.code, Code::Unsettled, "{refusal:?}");
+    assert!(
+        refusal.detail.contains("a terminal request is in flight"),
+        "{refusal:?}"
+    );
+    assert!(
+        (Duration::from_secs(1)..Duration::from_secs(8)).contains(&elapsed),
+        "{elapsed:?}"
+    );
+    let served = snapshot(held);
+    assert_eq!(served.active_build, a.active_build);
+    assert_eq!(names(&served), ["held"]);
+    let still_a = fixture.inspect();
+    assert_eq!(still_a.active_build, a.active_build);
+    assert_eq!(still_a.last.unwrap().refusal, Some(Code::Unsettled));
+    assert_eq!(fixture.live_host(1), host);
+
+    // The same request is still in flight.
+    let request = fixture.request(14);
+    let pending = fixture.commit(&request);
+    in_barrier();
+    let mut other = rename("other");
+    other[4..6].copy_from_slice(&(VERSION + 1).to_le_bytes());
+    let queued = [send(&rename("queued")), send(&other)];
+    drop(stopped);
+    let commit = fixture.read(pending);
+    assert!(
+        Updated::decode(&commit).is_ok(),
+        "{:?}\n{}",
+        Refused::decode(&commit, eonu::Direction::Reply),
+        fixture.transcript()
+    );
+    let [compatible, incompatible] = queued;
+    let renamed = snapshot(compatible);
+    assert_eq!(renamed.active_build, request.target_build);
+    assert_eq!(names(&renamed), ["queued"]);
+    let Response::Failure(other) = decode_response(&fixture.read(incompatible)).unwrap() else {
+        panic!("another EONW's request was served");
+    };
+    assert_eq!(other.code, "unsupported-version", "{other:?}");
+    let after = snapshot(send(&action("after", WorkspaceAction::Inspect)));
+    assert_eq!(names(&after), ["queued"]);
+    let b = fixture.inspect();
+    assert_eq!(b.pid, a.pid);
+    assert_eq!(b.active_build, request.target_build);
+    assert_eq!(fixture.live_host(1), host);
     fixture.stop();
 }

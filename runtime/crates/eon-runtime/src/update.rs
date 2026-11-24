@@ -9,8 +9,8 @@
 
 use crate::{
     control::{
-        CLIENT_IO_TIMEOUT, PrivateListener, REPLY_DEADLINE, SocketIdentity, socket_identity,
-        socket_identity_from, write_reply,
+        CLIENT_IO_TIMEOUT, PrivateListener, REPLY_DEADLINE, SocketIdentity, Source,
+        read_exact_before, socket_identity, socket_identity_from, write_reply,
     },
     diagnostics::DiagnosticLog,
     platform,
@@ -22,7 +22,7 @@ use eon_workspace_protocol::update::{
 };
 use std::{
     fmt, fs,
-    io::{self, Read, Write},
+    io::{self, Write},
     net::Shutdown,
     os::unix::{
         ffi::OsStrExt,
@@ -88,7 +88,7 @@ pub(crate) fn release_before_hangup(release: Option<std::sync::mpsc::Sender<()>>
 /// `set`, a socket option's result, or under the fault `point` the EINVAL
 /// Darwin returns once the peer has closed: Linux tests reach the Darwin
 /// path through it.
-fn option(set: io::Result<()>, point: &str) -> io::Result<()> {
+pub(crate) fn option(set: io::Result<()>, point: &str) -> io::Result<()> {
     if fault(point) {
         return Err(io::Error::from_raw_os_error(libc::EINVAL));
     }
@@ -729,57 +729,6 @@ pub(crate) fn same_directory(a: &Path, b: &Path) -> bool {
         (Ok(a), Ok(b)) => a.is_dir() && b.is_dir() && (a.dev(), a.ino()) == (b.dev(), b.ino()),
         _ => false,
     }
-}
-
-/// A stream whose next read waits at most a given time.
-pub(crate) trait Source {
-    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize>;
-}
-
-impl Source for UnixStream {
-    fn read_within(&mut self, buffer: &mut [u8], timeout: Duration) -> io::Result<usize> {
-        // A peer that wrote and closed may refuse the option on Darwin; its
-        // bytes are still there to read.
-        let read_timeout = option(
-            self.set_read_timeout(Some(timeout)),
-            "einval-on-read-timeout",
-        );
-        crate::sessions::bound_io(self, read_timeout)?;
-        self.read(buffer)
-    }
-}
-
-/// Fills `buffer` before `deadline`, whatever the reads' pace: each read
-/// waits only the time left, so a peer that trickles bytes cannot extend the
-/// deadline. Times out with `TimedOut`, ends early with `UnexpectedEof`.
-pub(crate) fn read_exact_before(
-    source: &mut impl Source,
-    buffer: &mut [u8],
-    deadline: Instant,
-    now: impl Fn() -> Instant,
-) -> io::Result<()> {
-    let mut filled = 0;
-    while filled < buffer.len() {
-        let left = deadline.saturating_duration_since(now());
-        if left.is_zero() {
-            return Err(io::ErrorKind::TimedOut.into());
-        }
-        match source.read_within(&mut buffer[filled..], left) {
-            Ok(0) => return Err(io::ErrorKind::UnexpectedEof.into()),
-            Ok(read) => filled += read,
-            Err(error) if error.kind() == io::ErrorKind::Interrupted => {}
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut
-                ) =>
-            {
-                return Err(io::ErrorKind::TimedOut.into());
-            }
-            Err(error) => return Err(error),
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]
