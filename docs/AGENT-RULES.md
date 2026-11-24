@@ -137,6 +137,13 @@ crate.
   candidate tree or a higher tier sends the slice back. A change to the
   rules that lowers any tier needs Lucca's approval, as a contract change
   does.
+- **Darwin.** The `darwin:` line from `classify` at landing sets the macOS
+  check. Both `ci` and `proof` need green candidate runs for the listed
+  jobs on the reviewed tree before landing, with mac-proof also required
+  for `proof`. A run carries over when the delta from its tested tree to
+  the reviewed tree classifies `darwin: none`. The author and lead run
+  Darwin cross clippy on the candidate and merged trees respectively for
+  every Rust change.
 - **High** (the default: contracts, wire and protocol code, Bend, lifecycle
   and trust-boundary code, Rust lines with `unsafe`, signal, exec,
   permission or socket-bind calls, mode and type changes, dependencies, Nix,

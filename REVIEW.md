@@ -90,6 +90,11 @@ of the eon-uxgal evidence inventory).
   canonicalizing (`/var` is `/private/var`); goldens that include a
   platform-specific label such as a key name; accepted sockets that inherit
   `O_NONBLOCK`. (R06, R14, R16, R18)
+- **Linux-only paths.** Block additions or extensions of Linux-only paths,
+  dependencies or tools unless they ship with an `aarch64-darwin` alternative
+  or have Lucca's recorded approval under [Platform Discipline](docs/AGENT-RULES.md#platform-discipline).
+  Look for `cfg(target_os = "linux")`, Linux-only dependencies and tools,
+  and Linux assumptions in shared code, scripts and tests.
 - **Racy or load-bound tests.** Asserting a non-zero duration for trivial
   work; writing an executable and running it while parallel tests fork
   (`ETXTBSY`); fixed time bounds that fail under load; reading a file before
@@ -121,9 +126,15 @@ result.
 | `Cargo.lock`, `nix/notices`, or new assets | `.#archive-notice-check` and `.#archive-source-check` (R08, R09) | lead at landing |
 | anything in the package | `nix build` of `.#default` and the Linux checks, including the eon-tests check (R05, F14) | lead at landing |
 | a new sandbox need (flock, bwrap, user namespaces) | the Nix check sandbox at landing, and a note on hosted runners (R07, F14) | lead at landing |
-| macOS-sensitive code (sockets, paths, temp dirs, platform labels) | the Darwin route (`darwin-build.yml` or mac-proof) or a named macOS bead (R14-R18) | lead |
+| any Rust code or test | `nix develop -c eon-darwin-clippy` (workspace, all targets, `aarch64-apple-darwin`, warnings denied) on the exact candidate and merged landing trees | author and lead at landing |
+| a change `review-tier classify` marks `darwin: ci` or `darwin: proof`, including changes adding Linux-only paths, dependencies or tools | green candidate-branch runs for the listed `darwin-build.yml` jobs, plus `mac-proof.yml` for `proof`, before landing | lead at landing |
 | a visible surface | a 1280×800 capture | author |
 | an output or render path | the eon-bench gate from the Verification table | author |
+
+The Darwin runs must cover the reviewed tree. The lead may reuse a run if
+the delta from its tested tree to the reviewed tree classifies `darwin: none`.
+Check the recorded tree, run IDs and results at landing, or during review
+if the runs are already recorded.
 
 ## Skip or skim
 
