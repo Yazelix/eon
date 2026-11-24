@@ -2,7 +2,10 @@
 
 use orbit_protocol::management::{ProgramState, ProgramStatus};
 use std::{
-    sync::mpsc::{self, Receiver, SyncSender},
+    sync::{
+        Arc,
+        mpsc::{self, Receiver, SyncSender},
+    },
     thread,
     time::Instant,
 };
@@ -22,26 +25,34 @@ pub(super) fn needs_inspection(status: &ProgramStatus) -> bool {
 
 /// One bounded reader, detached on drop so a target mmap lock cannot hold shutdown.
 pub(super) struct Worker {
-    sender: SyncSender<(u64, ProgramStatus, Instant)>,
+    sender: SyncSender<(u64, ProgramStatus, Instant, Arc<()>)>,
     pub receiver: Receiver<(u64, bool)>,
+    samples: Arc<()>,
+    parked: bool,
 }
 
 impl Worker {
     pub fn start() -> Option<Self> {
-        let (sender, jobs) = mpsc::sync_channel::<(u64, ProgramStatus, Instant)>(16);
+        let (sender, jobs) = mpsc::sync_channel::<(u64, ProgramStatus, Instant, Arc<()>)>(16);
         let (results, receiver) = mpsc::sync_channel(16);
         thread::Builder::new()
             .name("eon-agent-helpers".into())
             .spawn(move || {
-                while let Ok((sample, status, deadline)) = jobs.recv() {
+                while let Ok((sample, status, deadline, active)) = jobs.recv() {
                     let helpers = only_helpers(&status, deadline);
                     if results.send((sample, helpers)).is_err() {
                         break;
                     }
+                    drop(active);
                 }
             })
             .ok()?;
-        Some(Self { sender, receiver })
+        Some(Self {
+            sender,
+            receiver,
+            samples: Arc::default(),
+            parked: false,
+        })
     }
 
     /// A worker that samples nothing: its results are what the returned
@@ -50,11 +61,32 @@ impl Worker {
     pub(super) fn manual() -> (Self, SyncSender<(u64, bool)>) {
         let (sender, _) = mpsc::sync_channel(16);
         let (results, receiver) = mpsc::sync_channel(16);
-        (Self { sender, receiver }, results)
+        (
+            Self {
+                sender,
+                receiver,
+                samples: Arc::default(),
+                parked: false,
+            },
+            results,
+        )
     }
 
     pub fn submit(&self, sample: u64, status: ProgramStatus, deadline: Instant) -> bool {
-        self.sender.try_send((sample, status, deadline)).is_ok()
+        !self.parked
+            && self
+                .sender
+                .try_send((sample, status, deadline, Arc::clone(&self.samples)))
+                .is_ok()
+    }
+
+    pub(super) fn park(&mut self) -> bool {
+        self.parked = true;
+        Arc::get_mut(&mut self.samples).is_some()
+    }
+
+    pub(super) fn unpark(&mut self) {
+        self.parked = false;
     }
 }
 

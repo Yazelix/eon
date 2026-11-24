@@ -127,6 +127,89 @@ pub(crate) fn take_inherited(number: RawFd) -> io::Result<OwnedFd> {
     Ok(unsafe { OwnedFd::from_raw_fd(number) })
 }
 
+// An incomplete inventory is a refusal. The bound also limits allocation when
+// the descriptor table is unusually large.
+const MAX_LISTED_FDS: usize = 1 << 20;
+
+#[cfg(target_os = "linux")]
+fn open_descriptors() -> io::Result<Vec<RawFd>> {
+    let mut numbers = Vec::new();
+    for entry in std::fs::read_dir("/proc/self/fd")? {
+        if numbers.len() == MAX_LISTED_FDS {
+            return Err(io::Error::other("descriptor inventory exceeds its bound"));
+        }
+        let name = entry?.file_name();
+        let number = name
+            .to_str()
+            .and_then(|name| name.parse().ok())
+            .filter(|&number| number >= 0)
+            .ok_or_else(|| io::Error::other("invalid descriptor inventory entry"))?;
+        numbers.push(number);
+    }
+    Ok(numbers)
+}
+
+#[cfg(target_os = "macos")]
+fn open_descriptors() -> io::Result<Vec<RawFd>> {
+    use libc::{PROC_PIDLISTFDS, proc_fdinfo, proc_pidinfo};
+    let size = std::mem::size_of::<proc_fdinfo>();
+    let mut capacity = 256;
+    loop {
+        let mut entries = Vec::<proc_fdinfo>::with_capacity(capacity);
+        let bytes = capacity * size;
+        // SAFETY: the buffer has space for bytes and the returned byte count
+        // names the fully initialized proc_fdinfo records.
+        let read = unsafe {
+            proc_pidinfo(
+                std::process::id() as libc::pid_t,
+                PROC_PIDLISTFDS,
+                0,
+                entries.as_mut_ptr().cast(),
+                bytes as libc::c_int,
+            )
+        };
+        if read <= 0 {
+            return Err(io::Error::last_os_error());
+        }
+        let read = read as usize;
+        if read > bytes || !read.is_multiple_of(size) {
+            return Err(io::Error::other("invalid descriptor inventory size"));
+        }
+        if read < bytes {
+            // SAFETY: proc_pidinfo initialized read / size complete entries.
+            unsafe { entries.set_len(read / size) };
+            return Ok(entries.into_iter().map(|entry| entry.proc_fd).collect());
+        }
+        if capacity == MAX_LISTED_FDS {
+            return Err(io::Error::other("descriptor inventory exceeds its bound"));
+        }
+        capacity *= 2;
+    }
+}
+
+/// Call only once every producer of potentially inheritable fds is settled.
+/// F_GETFD uses the number without borrowing an fd another thread may close.
+fn inheritable_descriptors() -> io::Result<impl Iterator<Item = io::Result<RawFd>>> {
+    Ok(open_descriptors()?.into_iter().filter_map(|number| {
+        if number < 3 {
+            return None;
+        }
+        // SAFETY: F_GETFD only takes the integer fd number.
+        let flags = unsafe { libc::fcntl(number, libc::F_GETFD) };
+        if flags < 0 {
+            let error = io::Error::last_os_error();
+            // Includes the already closed /proc/self/fd directory handle.
+            return (error.raw_os_error() != Some(libc::EBADF)).then_some(Err(error));
+        }
+        (flags & libc::FD_CLOEXEC == 0).then_some(Ok(number))
+    }))
+}
+
+#[cfg(test)]
+pub(crate) fn inherited_numbers() -> io::Result<Vec<RawFd>> {
+    inheritable_descriptors()?.collect()
+}
+
 /// Replace this process using only the command's explicit environment.
 /// A returned error keeps the current environment, signals and stdio intact.
 pub(crate) fn exec_inheriting(
@@ -171,6 +254,13 @@ pub(crate) fn exec_inheriting(
         .collect::<rustix::io::Result<Vec<_>>>()?;
     if flags.iter().any(|flag| !flag.contains(FdFlags::CLOEXEC)) {
         return Err(io::Error::other("update resource lacks close-on-exec"));
+    }
+    // The allowlist still has CLOEXEC here. Only stdio may already lack it.
+    if let Some(number) = inheritable_descriptors()?.next() {
+        return Err(io::Error::other(format!(
+            "unexpected inheritable descriptor {}",
+            number?
+        )));
     }
     let mut changed = 0;
     let result = (|| {

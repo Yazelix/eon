@@ -215,7 +215,8 @@ pub(super) struct Running {
     next: Instant,
     last_tick: Instant,
     published: Option<(String, u16)>,
-    sender: mpsc::SyncSender<()>,
+    sender: mpsc::SyncSender<Arc<()>>,
+    scans: Arc<()>,
     cache: Arc<Mutex<Cache>>,
     log: Arc<DiagnosticLog>,
 }
@@ -247,12 +248,13 @@ impl Running {
         thread::Builder::new()
             .name("eon-running-windows".into())
             .spawn(move || {
-                while receiver.recv().is_ok() {
+                while let Ok(scan) = receiver.recv() {
                     complete_scan(
                         &result,
                         &scan_log,
                         live_supervisors(&scan_base, &scan_root, &scan_generation, &scan_log),
                     );
+                    drop(scan);
                 }
             })
             .map_err(|error| format!("cannot start running Eon window worker: {error}"))?;
@@ -263,10 +265,11 @@ impl Running {
             last_tick: Instant::now(),
             published: None,
             sender,
+            scans: Arc::default(),
             cache,
             log,
         };
-        let _ = running.sender.try_send(());
+        let _ = running.sender.try_send(Arc::clone(&running.scans));
         Ok(running)
     }
 
@@ -304,7 +307,7 @@ impl Running {
                     );
                 }
                 if resumed || cache.fingerprint.as_ref() != Some(&fingerprint) {
-                    let _ = self.sender.try_send(());
+                    let _ = self.sender.try_send(Arc::clone(&self.scans));
                     cache.fingerprint = Some(fingerprint);
                 }
             }
@@ -314,6 +317,12 @@ impl Running {
                     .note_once(&format!("cannot fingerprint running Eon windows: {error}"));
             }
         }
+    }
+
+    /// Only the supervisor schedules scans. Between turns this accounts for
+    /// both the queued scan and the active scan, including its scoped probes.
+    pub(super) fn is_idle(&mut self) -> bool {
+        Arc::get_mut(&mut self.scans).is_some()
     }
 
     pub(super) fn apply(&self, snapshot: &mut Snapshot, this: WindowEntry) {
@@ -513,6 +522,7 @@ pub(super) mod tests {
             last_tick: now,
             published: Some(("test".into(), 1)),
             sender,
+            scans: Arc::default(),
             cache: Arc::new(Mutex::new(Cache {
                 inventory: Some(SupervisorInventory { entries, observed }),
                 fingerprint: Some(fingerprint),

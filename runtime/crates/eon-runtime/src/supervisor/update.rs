@@ -35,6 +35,7 @@ use std::{
 
 mod handoff;
 mod preflight;
+mod quiesce;
 pub(super) use handoff::{InheritedPresentation, Owner};
 pub(crate) use handoff::{RESUME_UPDATE, resume_update};
 pub(super) use preflight::PreflightState;
@@ -276,6 +277,7 @@ pub(super) fn import(
         target.settings,
         LaunchMode::Workspace,
         target.inputs,
+        true,
     ))
 }
 
@@ -362,6 +364,9 @@ impl SupervisorState {
     pub(super) fn export(&mut self, root: &Path, now: Instant, boot: Duration) -> Result<Export> {
         if let Some(what) = self.unsettled() {
             return Err(Error::Unsettled(what));
+        }
+        if self.visits.iter().any(|visit| !visit.is_finished()) {
+            return Err(Error::Unsettled("a Zoxide visit is still running"));
         }
         let (Some(workspaces), Some(attention)) = (&self.workspaces, &self.attention) else {
             unreachable!("unsettled refuses a window without workspaces or attention");

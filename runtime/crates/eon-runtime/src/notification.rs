@@ -13,6 +13,31 @@ use super::{
     windows::durable_window_id,
 };
 use eon_workspace_protocol::v49::WindowEntry;
+use std::sync::mpsc;
+
+/// Dropping the supervisor's request wakes the command worker even if it
+/// acknowledged the park just as the supervisor's deadline expired.
+pub(super) struct NoticePark {
+    ready: Option<mpsc::Receiver<bool>>,
+    _release: mpsc::Sender<()>,
+}
+
+impl NoticePark {
+    pub(super) fn settled(&mut self) -> Result<bool, &'static str> {
+        let Some(ready) = &self.ready else {
+            return Ok(true);
+        };
+        match ready.try_recv() {
+            Ok(true) => {
+                self.ready = None;
+                Ok(true)
+            }
+            Ok(false) => Err("a detach notice is still live"),
+            Err(mpsc::TryRecvError::Empty) => Ok(false),
+            Err(mpsc::TryRecvError::Disconnected) => Err("notification state cannot be settled"),
+        }
+    }
+}
 
 /// The notification service's well-known bus name.
 const SERVICE: &str = "org.freedesktop.Notifications";
@@ -355,17 +380,21 @@ pub(super) use linux::Notices;
 #[cfg(target_os = "linux")]
 mod linux {
     use super::{
-        BUS, Call, Command, Effect, Event, Notice, NoticeDispatch, NoticeKind, NoticeWindow,
-        Notification, SERVICE, Signal, Sound,
+        BUS, Call, Command, Effect, Event, Notice, NoticeDispatch, NoticeKind, NoticePark,
+        NoticeWindow, Notification, SERVICE, Signal, Sound,
     };
     use crate::{AttentionNotifications, diagnostics::DiagnosticLog};
     use std::{
+        cell::Cell,
         collections::HashMap,
+        future::Future,
+        pin::pin,
         sync::{
-            Arc,
+            Arc, Mutex, MutexGuard,
             atomic::{AtomicUsize, Ordering::Relaxed},
             mpsc,
         },
+        task::{Context, Wake, Waker},
         thread,
         time::Duration,
     };
@@ -388,6 +417,10 @@ mod linux {
         Disconnected,
         /// The supervisor is ending; the worker drops the sender as it exits.
         Finish(mpsc::Sender<()>),
+        Park {
+            ready: mpsc::Sender<bool>,
+            released: mpsc::Receiver<()>,
+        },
         #[cfg(test)]
         Barrier(mpsc::Sender<()>),
     }
@@ -448,6 +481,9 @@ mod linux {
         fn capabilities(&self) -> Result<(Vec<String>, String), Failure>;
         fn notify(&self, notification: &Notification) -> Result<(u32, String), Failure>;
         fn close(&self, id: u32, owner: &str) -> Result<(), Failure>;
+        fn pause_reader(&self) -> Option<MutexGuard<'_, bool>> {
+            None
+        }
     }
 
     /// Opens a server for the desktop entry `application_id`, passing its
@@ -461,6 +497,7 @@ mod linux {
         attempted: bool,
         detach_requested: bool,
         events: (mpsc::Sender<Event>, mpsc::Receiver<Event>),
+        pending_event: Cell<Option<Event>>,
         connect: Connect,
         settings: AttentionNotifications,
     }
@@ -484,6 +521,7 @@ mod linux {
                 attempted: false,
                 detach_requested: false,
                 events: mpsc::channel(),
+                pending_event: Cell::default(),
                 connect: Arc::new(|application_id, inputs| {
                     if cfg!(test) {
                         return Err(zbus::Error::Failure(
@@ -627,7 +665,28 @@ mod linux {
         }
 
         pub(crate) fn next_event(&self) -> Option<Event> {
-            self.events.1.try_recv().ok()
+            self.pending_event
+                .take()
+                .or_else(|| self.events.1.try_recv().ok())
+        }
+
+        /// Inspect the head after the worker acknowledges, leaving it for the
+        /// normal supervisor turn if Commit refuses.
+        pub(crate) fn has_pending_event(&self) -> bool {
+            let event = self.next_event();
+            self.pending_event.set(event);
+            event.is_some()
+        }
+
+        pub(crate) fn park(&self) -> Option<NoticePark> {
+            let worker = self.worker.as_ref()?;
+            let (ready, ack) = mpsc::channel();
+            let (release, released) = mpsc::channel();
+            let _ = worker.inputs.send(Input::Park { ready, released });
+            Some(NoticePark {
+                ready: Some(ack),
+                _release: release,
+            })
         }
 
         #[cfg(test)]
@@ -762,6 +821,29 @@ mod linux {
                         drop(done);
                         return;
                     }
+                    Input::Park { ready, released } => {
+                        // Earlier controls have run. The selected alert and
+                        // the separate pending lane still own actual D-Bus calls.
+                        while released.try_recv() == Err(mpsc::TryRecvError::Empty) {
+                            let Some(attention) =
+                                selected.take().or_else(|| pending.try_recv().ok())
+                            else {
+                                if self.notice.shown.is_some() {
+                                    let _ = ready.send(false);
+                                } else {
+                                    let _reader =
+                                        server.as_ref().and_then(|server| server.pause_reader());
+                                    if ready.send(true).is_ok() {
+                                        let _ = released.recv();
+                                    }
+                                }
+                                break;
+                            };
+                            if let Some(server) = &server {
+                                self.notify_attention(&**server, attention);
+                            }
+                        }
+                    }
                     #[cfg(test)]
                     Input::Barrier(done) => {
                         let _ = done.send(());
@@ -882,6 +964,60 @@ mod linux {
     struct DBus {
         connection: Connection,
         application_id: String,
+        reader: BusReader,
+    }
+
+    /// zbus 5.19 receives ancillary descriptors without MSG_CMSG_CLOEXEC.
+    /// Drive its executor here so Commit can exclude all socket reads
+    /// during audit and exec and keep the connection for rollback.
+    struct BusReader {
+        stopped: Arc<Mutex<bool>>,
+        worker: thread::JoinHandle<()>,
+    }
+
+    struct ReaderWake(thread::Thread);
+
+    impl Wake for ReaderWake {
+        fn wake(self: Arc<Self>) {
+            self.0.unpark();
+        }
+    }
+
+    impl BusReader {
+        fn start(connection: zbus::Connection) -> std::io::Result<Self> {
+            let stopped = Arc::new(Mutex::new(false));
+            let stop = Arc::clone(&stopped);
+            let worker = thread::Builder::new()
+                .name("eon-notification-bus".into())
+                .spawn(move || {
+                    let waker = Waker::from(Arc::new(ReaderWake(thread::current())));
+                    let mut context = Context::from_waker(&waker);
+                    loop {
+                        let mut tick = pin!(connection.executor().tick());
+                        loop {
+                            let result = {
+                                let stopped = stop.lock().expect("notification reader");
+                                if *stopped {
+                                    return;
+                                }
+                                tick.as_mut().poll(&mut context)
+                            };
+                            if result.is_ready() {
+                                break;
+                            }
+                            thread::park();
+                        }
+                    }
+                })?;
+            Ok(Self { stopped, worker })
+        }
+    }
+
+    impl Drop for BusReader {
+        fn drop(&mut self) {
+            *self.stopped.lock().expect("notification reader") = true;
+            self.worker.thread().unpark();
+        }
     }
 
     impl DBus {
@@ -890,9 +1026,21 @@ mod linux {
         /// returns. A server that never answers fails a call after D-Bus's
         /// usual 25-second timeout and holds only the worker.
         fn connect(application_id: &str, inputs: InputSender) -> zbus::Result<Box<dyn Server>> {
-            let connection = zbus::blocking::connection::Builder::session()?
-                .method_timeout(Duration::from_secs(25))
-                .build()?;
+            let builder =
+                zbus::connection::Builder::session()?.method_timeout(Duration::from_secs(25));
+            Ok(Box::new(Self::connect_on(builder, application_id, inputs)?))
+        }
+
+        fn connect_on(
+            builder: zbus::connection::Builder<'_>,
+            application_id: &str,
+            inputs: InputSender,
+        ) -> zbus::Result<Self> {
+            let connection = builder.internal_executor(false).build();
+            let connection = zbus::block_on(connection)?;
+            let reader = BusReader::start(connection.clone())
+                .map_err(|error| zbus::Error::Failure(error.to_string()))?;
+            let connection = Connection::from(connection);
             // Subscribed before the match rules, so nothing they admit is
             // missed.
             let messages = MessageIterator::from(&connection);
@@ -908,10 +1056,11 @@ mod linux {
                 .name("eon-detach-notice-signals".into())
                 .spawn(move || listen(messages, &inputs))
                 .map_err(|error| zbus::Error::Failure(error.to_string()))?;
-            Ok(Box::new(Self {
+            Ok(Self {
                 connection,
                 application_id: application_id.to_owned(),
-            }))
+                reader,
+            })
         }
 
         fn call<B>(&self, destination: &str, method: &str, body: &B) -> Result<Message, Failure>
@@ -998,6 +1147,10 @@ mod linux {
         fn close(&self, id: u32, owner: &str) -> Result<(), Failure> {
             self.call(owner, "CloseNotification", &id).map(drop)
         }
+
+        fn pause_reader(&self) -> Option<MutexGuard<'_, bool>> {
+            Some(self.reader.stopped.lock().expect("notification reader"))
+        }
     }
 
     impl Drop for DBus {
@@ -1059,6 +1212,7 @@ mod linux {
     mod tests {
         use super::*;
         use crate::notification::QUIT;
+        use crate::notification::QUIT_CONFIRM;
         use std::{
             cell::Cell,
             sync::{Mutex, atomic::AtomicBool},
@@ -1207,6 +1361,287 @@ mod linux {
             let (done, finished) = mpsc::channel();
             assert!(inputs.send(Input::Barrier(done)).is_ok());
             finished.recv_timeout(WAIT).unwrap();
+        }
+
+        #[test]
+        fn update_park_drains_attention_calls_and_preserves_detach_actions() {
+            let (mut notices, observed, replies) = gated(true);
+            let log = log();
+            let offer = |notices: &mut Notices, name: &str| {
+                assert!(
+                    notices.attention(NoticeKind::Error, "eon", &log, Arc::default(), |_| name
+                        .into())
+                );
+            };
+            offer(&mut notices, "in flight");
+            assert!(
+                observed
+                    .recv_timeout(WAIT)
+                    .unwrap()
+                    .body
+                    .contains("in flight")
+            );
+            offer(&mut notices, "queued");
+            let mut parked = notices.park().unwrap();
+            assert_eq!(parked.settled(), Ok(false));
+            replies.send(Ok(())).unwrap();
+            assert!(observed.recv_timeout(WAIT).unwrap().body.contains("queued"));
+            assert_eq!(
+                parked.settled(),
+                Ok(false),
+                "dispatch is earlier than call completion"
+            );
+            replies.send(Ok(())).unwrap();
+            assert!(parked.ready.as_ref().unwrap().recv_timeout(WAIT).unwrap());
+            drop(parked);
+
+            notices.show(window(), "eon", &log);
+            assert_eq!(
+                observed.recv_timeout(WAIT).unwrap().actions,
+                &[QUIT, "Quit"]
+            );
+            replies.send(Ok(())).unwrap();
+            let parked = notices.park().unwrap();
+            assert!(!parked.ready.as_ref().unwrap().recv_timeout(WAIT).unwrap());
+            drop(parked);
+            let inject = |signal| notices.send(Input::Signal(signal));
+            let worker = &notices.worker.as_ref().unwrap().inputs;
+            let action = |key: &str| Signal::Action {
+                sender: ":1.8".into(),
+                id: 1,
+                key: key.into(),
+            };
+            inject(action(QUIT));
+            barrier(worker);
+            assert!(notices.has_pending_event());
+            assert_eq!(notices.next_event(), Some(Event::Confirm));
+            notices.confirm(window());
+            assert_eq!(
+                observed.recv_timeout(WAIT).unwrap().actions[0],
+                QUIT_CONFIRM
+            );
+            replies.send(Ok(())).unwrap();
+            inject(action(QUIT_CONFIRM));
+            inject(Signal::Closed {
+                sender: ":1.8".into(),
+                id: 1,
+            });
+            let parked = notices.park().unwrap();
+            assert!(parked.ready.as_ref().unwrap().recv_timeout(WAIT).unwrap());
+            assert!(notices.has_pending_event());
+            assert!(notices.has_pending_event());
+            drop(parked);
+            assert_eq!(notices.next_event(), Some(Event::Quit));
+            assert_eq!(notices.next_event(), None);
+            notices.close_and_wait(WAIT);
+        }
+
+        #[derive(Debug, PartialEq, Eq)]
+        enum BusCall {
+            Capabilities,
+            Notify(u32, Vec<String>),
+            Close(u32),
+        }
+
+        struct BusService(mpsc::Sender<BusCall>);
+
+        #[zbus::interface(name = "org.freedesktop.Notifications")]
+        impl BusService {
+            fn get_capabilities(&self) -> Vec<String> {
+                self.0.send(BusCall::Capabilities).unwrap();
+                vec!["actions".into()]
+            }
+
+            #[expect(clippy::too_many_arguments, reason = "the D-Bus Notify signature")]
+            fn notify(
+                &self,
+                _app_name: &str,
+                replaces: u32,
+                _app_icon: &str,
+                _summary: &str,
+                _body: &str,
+                actions: Vec<String>,
+                _hints: HashMap<String, zbus::zvariant::OwnedValue>,
+                _expire_timeout: i32,
+            ) -> u32 {
+                let id = if actions.is_empty() { 2 } else { 1 };
+                self.0.send(BusCall::Notify(replaces, actions)).unwrap();
+                id
+            }
+
+            fn close_notification(&self, id: u32) {
+                self.0.send(BusCall::Close(id)).unwrap();
+            }
+        }
+
+        struct PrivateBus {
+            child: std::process::Child,
+            root: std::path::PathBuf,
+        }
+
+        impl Drop for PrivateBus {
+            fn drop(&mut self) {
+                let _ = self.child.kill();
+                let _ = self.child.wait();
+                let _ = std::fs::remove_dir_all(&self.root);
+            }
+        }
+
+        #[test]
+        fn update_park_stops_and_resumes_the_real_notification_bus_reader() {
+            use std::{fs, os::unix::net::UnixStream, process::Stdio};
+
+            const BUS_ADDRESS: &str = "EON_TEST_PRIVATE_NOTIFICATION_BUS";
+            if let Ok(address) = std::env::var(BUS_ADDRESS) {
+                notification_bus_roundtrip(address);
+                return;
+            }
+            let root = crate::supervisor::temporary_directory();
+            let socket = root.join("bus");
+            let address = format!("unix:path={}", socket.display());
+            let config = root.join("dbus.conf");
+            // Use an isolated bus with no activation directories or host services.
+            fs::write(
+                &config,
+                "<busconfig><type>session</type><listen>unix:tmpdir=/tmp</listen>
+                 <auth>EXTERNAL</auth><policy context='default'>
+                 <allow send_destination='*'/><allow receive_sender='*'/><allow own='*'/>
+                 </policy></busconfig>",
+            )
+            .unwrap();
+            let mut daemon = PrivateBus {
+                child: std::process::Command::new("dbus-daemon")
+                    .arg("--nofork")
+                    .arg(format!("--config-file={}", config.display()))
+                    .arg(format!("--address={address}"))
+                    .stdin(Stdio::null())
+                    .spawn()
+                    .unwrap(),
+                root,
+            };
+            let deadline = Instant::now() + WAIT;
+            while UnixStream::connect(&socket).is_err() {
+                assert!(
+                    daemon.child.try_wait().unwrap().is_none(),
+                    "private bus exited"
+                );
+                assert!(Instant::now() < deadline, "private bus did not start");
+                thread::sleep(Duration::from_millis(5));
+            }
+
+            // zbus's method timeout does not cover its initial bus handshake.
+            // Bound the whole round trip in a child so even a failed connection
+            // cannot hold the test runner or leave the private bus running.
+            let mut test = std::process::Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "notification::linux::tests::update_park_stops_and_resumes_the_real_notification_bus_reader",
+                    "--nocapture",
+                ])
+                .env(BUS_ADDRESS, address)
+                .stdin(Stdio::null())
+                .spawn()
+                .unwrap();
+            let deadline = Instant::now() + WAIT * 3;
+            loop {
+                if let Ok(Some(status)) = test.try_wait() {
+                    assert!(status.success(), "notification bus round trip: {status}");
+                    break;
+                }
+                if Instant::now() >= deadline {
+                    let _ = test.kill();
+                    let _ = test.wait();
+                    panic!("notification bus round trip exceeded its deadline");
+                }
+                thread::sleep(Duration::from_millis(5));
+            }
+        }
+
+        fn notification_bus_roundtrip(address: String) {
+            use zbus::blocking::connection::Builder;
+
+            let (calls, called) = mpsc::channel();
+            let server = Builder::address(address.as_str())
+                .unwrap()
+                .name(SERVICE)
+                .unwrap()
+                .serve_at(SERVICE_PATH, BusService(calls))
+                .unwrap()
+                .build()
+                .unwrap();
+            let expect_call = |call| assert_eq!(called.recv_timeout(WAIT).unwrap(), call);
+            let (client_tx, client_rx) = mpsc::channel();
+            let mut notices = Notices::new(AttentionNotifications {
+                notify: true,
+                notify_names: true,
+            });
+            notices.connect = Arc::new(move |application_id, inputs| {
+                let builder =
+                    zbus::connection::Builder::address(address.as_str())?.method_timeout(WAIT);
+                let bus = DBus::connect_on(builder, application_id, inputs)?;
+                client_tx.send(bus.connection.clone()).unwrap();
+                Ok(Box::new(bus))
+            });
+            let log = log();
+            let action = |notices: &Notices, key: &str, event| {
+                server
+                    .emit_signal(
+                        None::<&str>,
+                        SERVICE_PATH,
+                        SERVICE,
+                        "ActionInvoked",
+                        &(1u32, key),
+                    )
+                    .unwrap();
+                assert_eq!(notices.events.1.recv_timeout(WAIT).unwrap(), event);
+            };
+            let buttons = |keys: &[&str]| keys.iter().map(|key| (*key).to_owned()).collect();
+
+            notices.show(window(), "eon", &log);
+            let client = client_rx.recv_timeout(WAIT).unwrap();
+            expect_call(BusCall::Capabilities);
+            expect_call(BusCall::Notify(0, buttons(&[QUIT, "Quit"])));
+            action(&notices, QUIT, Event::Confirm);
+            notices.confirm(window());
+            expect_call(BusCall::Notify(
+                1,
+                buttons(&[QUIT_CONFIRM, "Quit", super::super::KEEP, "Keep running"]),
+            ));
+            action(&notices, QUIT_CONFIRM, Event::Quit);
+            notices.close();
+            expect_call(BusCall::Close(1));
+
+            let park = notices.park().unwrap();
+            assert!(park.ready.as_ref().unwrap().recv_timeout(WAIT).unwrap());
+            let (reply, received) = mpsc::channel();
+            let worker = thread::spawn(move || {
+                let capabilities = client.call_method(
+                    Some(SERVICE),
+                    SERVICE_PATH,
+                    Some(SERVICE),
+                    "GetCapabilities",
+                    &(),
+                );
+                reply.send(capabilities).unwrap();
+            });
+            expect_call(BusCall::Capabilities);
+            // The actual peer has handled the call. The same client cannot read
+            // the reply until the supervisor releases the executor.
+            assert!(matches!(
+                received.recv_timeout(Duration::from_millis(100)),
+                Err(mpsc::RecvTimeoutError::Timeout)
+            ));
+            drop(park);
+            assert!(received.recv_timeout(WAIT).unwrap().is_ok());
+            worker.join().unwrap();
+
+            assert!(
+                notices.attention(NoticeKind::Finished, "eon", &log, Arc::default(), |_| {
+                    "private bus test".into()
+                })
+            );
+            expect_call(BusCall::Notify(0, Vec::new()));
+            notices.close_and_wait(WAIT);
         }
 
         #[test]
@@ -1532,7 +1967,7 @@ pub(super) use other::Notices;
 
 #[cfg(not(target_os = "linux"))]
 mod other {
-    use super::{Event, NoticeDispatch, NoticeKind, NoticeWindow};
+    use super::{Event, NoticeDispatch, NoticeKind, NoticePark, NoticeWindow};
     use crate::{AttentionNotifications, diagnostics::DiagnosticLog};
     use std::{sync::Arc, time::Duration};
 
@@ -1565,6 +2000,12 @@ mod other {
         pub(crate) fn failure(&self, _window: NoticeWindow) {}
         pub(crate) fn close(&self) {}
         pub(crate) fn next_event(&self) -> Option<Event> {
+            None
+        }
+        pub(crate) fn has_pending_event(&self) -> bool {
+            false
+        }
+        pub(crate) fn park(&self) -> Option<NoticePark> {
             None
         }
         pub(crate) fn close_and_wait(&mut self, _timeout: Duration) {}

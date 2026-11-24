@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The private in-place Update test path waits for helper and observer work to
+  settle and refuses unexpected inheritable descriptors. After Update, local
+  quota collection waits one normal interval. Usable shared Claude and Google
+  schedules keep governing collection (EON-C27, `eon-t3fyd.9.1`).
+
 - On Wayland, stopping one touchpad scroll axis no longer starts momentum
   while the other axis is still active.
 

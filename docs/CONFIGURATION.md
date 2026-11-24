@@ -1956,3 +1956,20 @@ the helper's children a fixed five-second termination grace before killing
 and reaping them. This safety budget bounds shutdown and lets Nix release
 resources; it is not a configurable build timeout. The shared Nix daemon and
 running Eon processes receive no signal.
+
+The test-gated in-place Update Commit gives helper children, quota workers,
+window scans, pane observers, attention and the notification worker up to
+1,250 ms to settle within a 1,500 ms monotonic quiesce budget. Target
+validation has its own deadline. A live detach notice or a pending detach
+action requires settlement in the current Runtime before Commit can
+proceed. Refusal leaves the current Runtime serving the window. Only
+standard I/O and the explicitly carried resources may survive exec.
+Runtime checks other open descriptors for close-on-exec on Linux and macOS
+and refuses if it finds an unexpected inheritable descriptor.
+
+After in-place Update import, quota reads using a local schedule wait at
+least one ordinary interval from import, 60 seconds for Codex and 300
+seconds for Claude or Google. Usable shared Claude and Google schedules
+continue to govern reads. The local delay lives in memory and leaves the
+shared schedule untouched. Stored readings remain available during the
+delay. These fixed bounds preserve update safety and provider cadence.

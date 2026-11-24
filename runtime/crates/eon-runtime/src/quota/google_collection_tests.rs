@@ -637,7 +637,8 @@ fn google_supervisors_share_schedule_and_backoff() {
             Some(&path),
             maximum,
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         )
         .0
     };
@@ -647,9 +648,10 @@ fn google_supervisors_share_schedule_and_backoff() {
             Some(&path),
             maximum,
             &Clock::System,
-            |schedule, _| {
+            true,
+            |schedule, _, _| {
                 schedule.next_at = 0;
-                true
+                Some(true)
             },
         );
     };
@@ -740,7 +742,7 @@ fn google_schedule_fallback_preserves_local_spacing() {
         drop(quotas);
     }
     let store = root.join("locked");
-    let file = open_schedule(&store.join("google.schedule")).unwrap();
+    let file = open_schedule(&store.join("google.schedule"), true).unwrap();
     let quotas = start_google(&program, Duration::from_millis(10), Some(store));
     wait(|| snapshot(&quotas).google_quota.is_some());
     drop(file);

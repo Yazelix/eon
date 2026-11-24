@@ -18,6 +18,8 @@ in
     # flock for rota slots, setsid for Orbit lifecycle and rota run tests,
     # and unshare for rota cleanup.
     pkgs.util-linux
+    # The Runtime and eon-bench fixtures each start a private D-Bus daemon.
+    pkgs.dbus
   ];
 
   # The harness and workspace fixtures outside the Linux check's crate
@@ -28,8 +30,6 @@ in
     # ps for mac-proof evidence and kill for Venus selection tests. Keep
     # procps ahead of coreutils and util-linux for its overlapping commands.
     pkgs.procps
-    # dbus-daemon for eon-bench's private bus.
-    pkgs.dbus
     # ssh-keygen for the installer's signing fixtures.
     pkgs.openssh
   ] ++ [

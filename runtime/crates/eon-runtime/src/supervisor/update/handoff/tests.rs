@@ -17,7 +17,7 @@ use std::{
     env,
     ffi::OsStr,
     io::Read,
-    os::unix::{ffi::OsStringExt, fs::PermissionsExt},
+    os::unix::{ffi::OsStringExt, fs::OpenOptionsExt, fs::PermissionsExt},
     path::PathBuf,
     process::{Child, Stdio},
     sync::Arc,
@@ -182,6 +182,14 @@ fn replacement(root: &Path, inputs: &Inputs) {
         number,
         object: platform::inspect_inherited(number, |fd| Ok(object(&fstat(fd)?))).unwrap(),
     });
+    let mut actual = platform::inherited_numbers().unwrap();
+    actual.sort_unstable();
+    let mut expected = descriptors.iter().map(|fd| fd.number).collect::<Vec<_>>();
+    expected.sort_unstable();
+    assert_eq!(
+        actual, expected,
+        "the replacement inherited exactly the carry set above stdio"
+    );
     write_descriptor_table(root, &descriptors).unwrap();
     fs::write(root.join("entered-b"), std::process::id().to_string()).unwrap();
     if root.join("pause").exists() {
@@ -269,6 +277,7 @@ fn source(root: &Path, inputs: &Inputs) {
     })
     .collect();
     let registry = Registry::new().unwrap();
+    let registry_worker = crate::session_registry::Worker::start(registry.clone()).unwrap();
     let registration = registry.create(Some("handoff")).unwrap();
     let workspaces = WorkspaceSet::registered_recovered(
         Some(registry),
@@ -291,11 +300,37 @@ fn source(root: &Path, inputs: &Inputs) {
     )
     .unwrap();
     let mut state = crate::supervisor::tests::admission_state(root, Some(workspaces), rows);
+    state.registry_worker = Some(registry_worker);
     state.log = Arc::clone(&log);
     state.component_generation = LIFE.into();
     state.created_build = build.clone();
     state.active_build = build;
     state.scrollback = Snapshots::new(&runtime);
+    state.running = Some(
+        crate::running::Running::start(root.to_path_buf(), root, LIFE, Arc::clone(&log)).unwrap(),
+    );
+    if update::fault("held-zoxide") {
+        crate::supervisor::record_visit(
+            inputs,
+            root,
+            &log,
+            root.as_os_str().as_bytes(),
+            &mut state.visits,
+        );
+    }
+    let quota_widget = if update::fault("held-codex") {
+        Some("codex_quota_5h")
+    } else if update::fault("held-agy-version") || update::fault("held-agy-usage") {
+        Some("google_quota:Gemini Models:5h")
+    } else {
+        None
+    };
+    if let Some(widget) = quota_widget {
+        state.quotas = Some(crate::quota::Quotas::start(
+            &bin(root, "a").join("codexbar"),
+            &[widget.to_owned()],
+        ));
+    }
     if root.join("venus").exists() {
         state.venus = Some(
             PresentationProcess::start(
@@ -321,12 +356,19 @@ fn source(root: &Path, inputs: &Inputs) {
     attention.defer_poll_until(Instant::now() + START * 4);
     state.attention = Some(attention);
     let control = ControlListener::bind(&runtime.join("eon.sock")).unwrap();
+    state.start_pump =
+        crate::start_pump::StartPump::new(control.try_clone_listener(), Arc::clone(&log));
     let listener = UpdateListener::bind(&runtime, &log).unwrap();
     drop(namespace);
     let _cleanup = GenerationCleanup {
         runtime: &runtime,
         log: &log,
     };
+    let foreign = update::fault("foreign-fd").then(|| {
+        let file = File::create(root.join("foreign")).unwrap();
+        rustix::io::fcntl_setfd(&file, rustix::io::FdFlags::empty()).unwrap();
+        file
+    });
     let result = service(
         inputs,
         root,
@@ -341,6 +383,13 @@ fn source(root: &Path, inputs: &Inputs) {
         None,
         None,
     );
+    if let Some(file) = foreign {
+        assert_eq!(
+            rustix::io::fcntl_getfd(file).unwrap(),
+            rustix::io::FdFlags::empty()
+        );
+        fs::write(root.join("foreign-intact"), b"").unwrap();
+    }
     fs::write(root.join("result"), format!("{result:?}")).unwrap();
 }
 
@@ -458,6 +507,45 @@ done
             .stderr(output);
         if let Some(fault) = fault {
             command.env("EON_UPDATE_TEST_FAULT", fault);
+            if let Some(hold) = fault.strip_prefix("held-") {
+                crate::fixtures::make_fifo(&root.join("helper-gate"));
+                let executable = match hold {
+                    "zoxide" => "zoxide",
+                    "codex" => "codexbar",
+                    _ => "agy",
+                };
+                let helper_bin = bin(&root, "a");
+                sessions::tests::script(
+                    &helper_bin.join(executable),
+                    &format!(
+                        r#"#!/bin/sh
+phase={hold}
+case "$0" in
+  */agy) if [ "$1" = --version ]; then phase=agy-version; else phase=agy-usage; fi ;;
+esac
+root="$EON_TEST_HANDOFF_ROOT"
+echo "$phase" >> "$root/helper-calls"
+if [ "$phase" = {hold} ]; then
+    echo "$$" > "$root/helper-pid"
+    IFS= read -r release < "$root/helper-gate"
+fi
+if [ "$phase" = agy-version ]; then echo 1.5.6; else echo '{{}}'; fi
+"#
+                    ),
+                );
+                command.env(
+                    "PATH",
+                    env::join_paths(
+                        std::iter::once(helper_bin).chain(
+                            env::var_os("PATH")
+                                .as_ref()
+                                .into_iter()
+                                .flat_map(env::split_paths),
+                        ),
+                    )
+                    .unwrap(),
+                );
+            }
         }
         let mut fixture = Self {
             root,
@@ -592,6 +680,16 @@ done
 
 impl Drop for Fixture {
     fn drop(&mut self) {
+        let _helper_gate = OpenOptions::new()
+            .read(true)
+            .write(true)
+            .custom_flags(libc::O_NONBLOCK)
+            .open(self.root.join("helper-gate"))
+            .ok()
+            .map(|mut gate| {
+                let _ = gate.write_all(b"go\n");
+                gate
+            });
         if self.child.try_wait().ok().flatten().is_none() {
             let _ = self.child.kill();
             let _ = self.child.wait();
@@ -859,4 +957,128 @@ fn update_refuses_before_or_after_exec_without_destroying_work() {
             fixture.stop();
         }
     }
+}
+
+#[test]
+fn update_refuses_a_foreign_inheritable_descriptor_without_changing_its_flags() {
+    let mut fixture = Fixture::start(Some("foreign-fd"), false, false);
+    let a = fixture.inspect();
+    let request = fixture.request(9);
+    let response = fixture.read(fixture.commit(&request));
+    let refusal = Refused::decode(&response, eonu::Direction::Reply)
+        .unwrap_or_else(|error| panic!("{error}: {}", fixture.transcript()));
+    assert!(
+        refusal.detail.contains("unexpected inheritable descriptor"),
+        "{refusal:?}"
+    );
+    let after = fixture.inspect();
+    assert_eq!(after.active_build, a.active_build);
+    assert_eq!(after.last.unwrap().refusal, Some(refusal.code));
+    fixture.stop();
+    assert!(fixture.root.join("foreign-intact").exists());
+}
+
+#[test]
+fn update_waits_for_owned_helpers_then_keeps_the_same_child_on_refusal() {
+    for (held, calls) in [
+        ("held-zoxide", "zoxide\n"),
+        ("held-codex", "codex\n"),
+        ("held-agy-version", "agy-version\nagy-usage\n"),
+        ("held-agy-usage", "agy-version\nagy-usage\n"),
+    ] {
+        let mut fixture = Fixture::start(Some(held), false, false);
+        let a = fixture.inspect();
+        let mut helper = None;
+        until("held helper identity", || {
+            helper = fs::read_to_string(fixture.root.join("helper-pid"))
+                .ok()
+                .and_then(|pid| pid.trim().parse::<u32>().ok())
+                .and_then(|pid| platform::process(pid).unwrap().map(|child| (pid, child)));
+            helper.is_some()
+        });
+        let (pid, child) = helper.unwrap();
+        assert_eq!(child.parent, a.pid);
+        let started = Instant::now();
+        let request = fixture.request(7);
+        let bytes = fixture.read(fixture.commit(&request));
+        let elapsed = started.elapsed();
+        let refusal = Refused::decode(&bytes, eonu::Direction::Reply)
+            .unwrap_or_else(|error| panic!("{held}: {error}: {}", fixture.transcript()));
+        assert_eq!(refusal.code, Code::Unsettled, "{held}: {refusal:?}");
+        assert!(
+            refusal.detail.contains(if held == "held-zoxide" {
+                "Zoxide"
+            } else {
+                "quota"
+            }),
+            "{refusal:?}"
+        );
+        assert!(
+            (Duration::from_secs(1)..Duration::from_secs(8)).contains(&elapsed),
+            "{held}: {elapsed:?}"
+        );
+        assert!(
+            platform::process(pid)
+                .unwrap()
+                .is_some_and(|p| p.start == child.start && !p.ended)
+        );
+        let still_a = fixture.inspect();
+        assert_eq!(still_a.active_build, a.active_build);
+        assert_eq!(still_a.last.unwrap().refusal, Some(Code::Unsettled));
+        until("helper waiting on its gate", || {
+            OpenOptions::new()
+                .write(true)
+                .custom_flags(libc::O_NONBLOCK)
+                .open(fixture.root.join("helper-gate"))
+                .and_then(|mut writer| writer.write_all(b"go\n"))
+                .is_ok()
+        });
+        until("exact helper reaped", || {
+            platform::process(pid)
+                .unwrap()
+                .is_none_or(|p| p.start != child.start)
+        });
+        let request = fixture.request(8);
+        let commit = fixture.read(fixture.commit(&request));
+        assert!(
+            Updated::decode(&commit).is_ok(),
+            "{held}: {:?}\n{}",
+            Refused::decode(&commit, eonu::Direction::Reply),
+            fixture.transcript()
+        );
+        assert_eq!(fixture.inspect().pid, a.pid);
+        assert_eq!(
+            fs::read_to_string(fixture.root.join("helper-calls")).unwrap(),
+            calls
+        );
+        fixture.stop();
+    }
+}
+
+#[test]
+fn update_cannot_audit_while_an_observer_is_between_socket_and_cloexec() {
+    let mut fixture = Fixture::start(Some("observer-cloexec"), false, true);
+    let a = fixture.inspect();
+    until("observer in socket creation", || {
+        fixture.root.join("observer-in-connect").exists()
+    });
+    let request = fixture.request(11);
+    let bytes = fixture.read(fixture.commit(&request));
+    let refusal = Refused::decode(&bytes, eonu::Direction::Reply)
+        .unwrap_or_else(|error| panic!("{error}: {}", fixture.transcript()));
+    assert_eq!(refusal.code, Code::Unsettled, "{refusal:?}");
+    assert!(refusal.detail.contains("pane observer"), "{refusal:?}");
+    assert_eq!(fixture.inspect().active_build, a.active_build);
+    fs::write(fixture.root.join("observer-release"), b"").unwrap();
+    let request = fixture.request(12);
+    assert!(fixture.read(fixture.commit(&request)).is_empty());
+    let b = fixture.inspect();
+    assert_eq!(b.pid, a.pid);
+    assert_eq!(b.active_build, request.target_build);
+    assert_eq!(b.presentation, eonu::Presentation::Attached);
+    let last = b.last.unwrap();
+    assert_eq!(last.request, request.request);
+    assert_eq!(last.refusal, None);
+    assert!(fixture.root.join("verified-child").exists());
+    fixture.stop();
 }

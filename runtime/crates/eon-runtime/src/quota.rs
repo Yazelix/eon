@@ -494,15 +494,17 @@ fn longest_wait(interval: Duration) -> Duration {
     provider_error_wait(interval, u32::MAX, 0.0)
 }
 
-fn open_schedule(path: &Path) -> io::Result<fs::File> {
-    fs::DirBuilder::new().recursive(true).mode(0o700).create(
-        path.parent()
-            .ok_or_else(|| io::Error::other("no quota directory"))?,
-    )?;
+fn open_schedule(path: &Path, create: bool) -> io::Result<fs::File> {
+    if create {
+        fs::DirBuilder::new().recursive(true).mode(0o700).create(
+            path.parent()
+                .ok_or_else(|| io::Error::other("no quota directory"))?,
+        )?;
+    }
     let file = fs::OpenOptions::new()
         .read(true)
         .write(true)
-        .create(true)
+        .create(create)
         .truncate(false)
         .mode(0o600)
         .custom_flags(libc::O_NONBLOCK)
@@ -556,22 +558,26 @@ fn update_schedule(
     path: Option<&Path>,
     maximum: Duration,
     clock: &Clock,
-    update: impl FnOnce(&mut Schedule, u64) -> bool,
+    create: bool,
+    // None suppresses all writes, including retries of an old failed write.
+    update: impl FnOnce(&mut Schedule, u64, bool) -> Option<bool>,
 ) -> (Schedule, bool) {
     let mut memory = memory.lock().expect("quota schedule");
-    let mut file = path.and_then(|path| open_schedule(path).ok());
+    let mut file = path.and_then(|path| open_schedule(path, create).ok());
     let now = clock.now_ms();
     // Without a usable file the in-memory schedule stands (EON-C27).
-    if let Some(file) = &mut file
-        && let Some(schedule) = load_schedule(file, now, maximum)
-    {
+    let loaded = file
+        .as_mut()
+        .and_then(|file| load_schedule(file, now, maximum));
+    let shared_usable = loaded.is_some();
+    if let Some(schedule) = loaded {
         *memory = schedule;
     }
     // A clock set back never stops reads, with or without a file.
     if memory.next_at.saturating_sub(now) > milliseconds(maximum) {
         memory.next_at = now;
     }
-    if (update(&mut memory, now) || memory.write_failed)
+    if update(&mut memory, now, shared_usable).is_some_and(|changed| changed || memory.write_failed)
         && let Some(locked) = &mut file
         && write_schedule(locked, &mut memory).is_err()
     {
@@ -589,7 +595,30 @@ enum Clock {
     Manual(Arc<tests::ManualClock>),
 }
 
+#[derive(Clone, Copy)]
+enum Resume {
+    System(Instant),
+    #[cfg(test)]
+    Manual(u64),
+}
+
 impl Clock {
+    fn resume(&self) -> Resume {
+        match self {
+            Self::System => Resume::System(Instant::now()),
+            #[cfg(test)]
+            Self::Manual(clock) => Resume::Manual(clock.now_ms()),
+        }
+    }
+
+    fn elapsed(&self, resume: Resume) -> Duration {
+        match resume {
+            Resume::System(start) => start.elapsed(),
+            #[cfg(test)]
+            Resume::Manual(start) => Duration::from_millis(self.now_ms().saturating_sub(start)),
+        }
+    }
+
     /// Milliseconds since the epoch.
     fn now_ms(&self) -> u64 {
         match self {
@@ -629,16 +658,37 @@ enum Parking {
     Manual(Arc<tests::ManualClock>, u64),
 }
 
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+enum Park {
+    #[default]
+    Running,
+    Requested,
+    Parked,
+}
+
+fn stopped(stop: &mpsc::Receiver<()>) -> bool {
+    stop.try_recv() != Err(mpsc::TryRecvError::Empty)
+}
+
 impl Parking {
-    /// Waits `wait`, or until a stop arrives or its sender is gone (true).
-    fn wait(&self, stopped: &mpsc::Receiver<()>, wait: Duration) -> bool {
+    /// Returns on a scheduled wake or park request, and returns true on stop.
+    fn wait(&self, stop: &mpsc::Receiver<()>, park: &Mutex<Park>, wait: Duration) -> bool {
         match self {
-            Self::System => !matches!(
-                stopped.recv_timeout(wait),
-                Err(mpsc::RecvTimeoutError::Timeout)
-            ),
+            Self::System => {
+                let deadline = Instant::now() + wait;
+                loop {
+                    if stopped(stop) {
+                        return true;
+                    }
+                    let left = deadline.saturating_duration_since(Instant::now());
+                    if left.is_zero() || *park.lock().expect("quota park") != Park::Running {
+                        return false;
+                    }
+                    thread::park_timeout(left);
+                }
+            }
             #[cfg(test)]
-            Self::Manual(clock, id) => clock.wait(*id, stopped, wait),
+            Self::Manual(clock, id) => clock.wait(*id, stop, park, wait),
         }
     }
 }
@@ -658,6 +708,7 @@ struct Provider {
     failure: Arc<Mutex<Option<QuotaFailure>>>,
     stop: mpsc::Sender<()>,
     clock: Clock,
+    park: Arc<Mutex<Park>>,
     worker: Option<thread::JoinHandle<()>>,
 }
 
@@ -675,14 +726,17 @@ impl Provider {
         store: Option<PathBuf>,
         shared_schedule: bool,
         clock: Clock,
+        resume: Option<Resume>,
     ) -> Self {
         let quota = Arc::new(Mutex::new(None));
         let shared = Arc::clone(&quota);
         let failure = Arc::new(Mutex::new(None));
         let failed = Arc::clone(&failure);
-        let (stop, stopped) = mpsc::channel();
+        let (stop, stopping) = mpsc::channel();
         let parking = clock.register();
         let worker_clock = clock.clone();
+        let phase = Arc::new(Mutex::new(Park::Running));
+        let park = Arc::clone(&phase);
         let worker = thread::Builder::new()
             .name(format!("eon-{provider}-quota"))
             .spawn(move || {
@@ -702,22 +756,56 @@ impl Provider {
                     .map(|dir| dir.join(format!("{provider}.schedule")));
                 let maximum = longest_wait(interval);
                 loop {
+                    if stopped(&stopping) {
+                        break;
+                    }
+                    {
+                        let mut phase = park.lock().expect("quota park");
+                        if *phase != Park::Running {
+                            *phase = Park::Parked;
+                            drop(phase);
+                            thread::park();
+                            continue;
+                        }
+                    }
+                    let floor = resume.map_or(Duration::ZERO, |resume| {
+                        interval.saturating_sub(worker_clock.elapsed(resume))
+                    });
                     let mut wait = Duration::ZERO;
+                    let mut reserved = false;
                     let (schedule, schedule_usable) = update_schedule(
                         &schedule_memory,
                         schedule_path.as_deref(),
                         maximum,
                         &worker_clock,
-                        |schedule, now| {
+                        floor.is_zero(),
+                        |schedule, now, loaded| {
+                            // Hold the same lock as the park request until
+                            // either this cycle is reserved or park wins.
+                            let phase = park.lock().expect("quota park");
+                            if *phase != Park::Running {
+                                return None;
+                            }
                             wait = Duration::from_millis(schedule.next_at.saturating_sub(now));
+                            if !loaded && !floor.is_zero() {
+                                wait = wait.max(floor);
+                                if shared_schedule {
+                                    wait = wait.min(interval / 30);
+                                }
+                                return None;
+                            }
                             if !wait.is_zero() {
-                                return false;
+                                return Some(false);
                             }
                             schedule.next_at = now.saturating_add(milliseconds(interval));
-                            true
+                            reserved = true;
+                            Some(true)
                         },
                     );
-                    if !wait.is_zero() {
+                    if !reserved {
+                        if wait.is_zero() {
+                            continue;
+                        }
                         if schedule_usable {
                             if let Ok(mut last) = failed.lock() {
                                 *last = schedule.failure;
@@ -742,12 +830,12 @@ impl Provider {
                             }
                             wait = wait.min(interval / 30);
                         }
-                        if parking.wait(&stopped, wait) {
+                        if parking.wait(&stopping, &park, wait) {
                             break;
                         }
                         continue;
                     }
-                    let fetched = fetch(&program, provider, timeout, &stopped);
+                    let fetched = fetch(&program, provider, timeout, &stopping);
                     let reading = match fetched {
                         // A stopped read is spaced from its end, as a finished one is.
                         Ok(None) => {
@@ -756,9 +844,10 @@ impl Provider {
                                 schedule_path.as_deref(),
                                 maximum,
                                 &worker_clock,
-                                |schedule, now| {
+                                true,
+                                |schedule, now, _| {
                                     schedule.next_at = now.saturating_add(milliseconds(interval));
-                                    true
+                                    Some(true)
                                 },
                             );
                             break;
@@ -809,7 +898,8 @@ impl Provider {
                         schedule_path.as_deref(),
                         maximum,
                         &worker_clock,
-                        |schedule, now| {
+                        true,
+                        |schedule, now, _| {
                             record_read(
                                 schedule,
                                 now,
@@ -821,7 +911,7 @@ impl Provider {
                                 interval,
                                 jitter(),
                             );
-                            true
+                            Some(true)
                         },
                     );
                 }
@@ -832,6 +922,7 @@ impl Provider {
             failure,
             stop,
             clock,
+            park: phase,
             worker,
         }
     }
@@ -843,12 +934,37 @@ impl Provider {
     fn failure(&self) -> Option<QuotaFailure> {
         *self.failure.lock().ok()?
     }
+
+    fn wake(&self) {
+        if let Some(worker) = &self.worker {
+            worker.thread().unpark();
+        }
+        self.clock.wake();
+    }
+
+    fn set_park(&self, parked: bool) {
+        let mut phase = self.park.lock().expect("quota park");
+        match (*phase, parked) {
+            (Park::Running, true) => *phase = Park::Requested,
+            (_, false) => *phase = Park::Running,
+            _ => return,
+        }
+        drop(phase);
+        self.wake();
+    }
+
+    fn parked(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_none_or(thread::JoinHandle::is_finished)
+            || *self.park.lock().expect("quota park") == Park::Parked
+    }
 }
 
 impl Drop for Provider {
     fn drop(&mut self) {
         let _ = self.stop.send(());
-        self.clock.wake();
+        self.wake();
         if let Some(worker) = self.worker.take() {
             let _ = worker.join();
         }
@@ -882,6 +998,7 @@ pub(crate) struct Quotas {
     store: Option<PathBuf>,
     /// The clock every provider worker schedules its reads by.
     clock: Clock,
+    resume: Option<Resume>,
     codex: Slot,
     claude: Slot,
     google: Slot,
@@ -890,6 +1007,18 @@ pub(crate) struct Quotas {
 impl Quotas {
     pub(crate) fn start(program: &Path, widgets: &[String]) -> Self {
         Self::start_every(program, UNIT, store_directory(), widgets)
+    }
+
+    pub(crate) fn resume(program: &Path, widgets: &[String]) -> Self {
+        Self::start_with_clock(
+            program,
+            Path::new("agy"),
+            UNIT,
+            store_directory(),
+            widgets,
+            Clock::System,
+            true,
+        )
     }
 
     /// Reads Codex every 60 units and Claude/Google every 300 (EON-C27).
@@ -909,7 +1038,15 @@ impl Quotas {
         store: Option<PathBuf>,
         widgets: &[String],
     ) -> Self {
-        Self::start_with_clock(program, google_program, unit, store, widgets, Clock::System)
+        Self::start_with_clock(
+            program,
+            google_program,
+            unit,
+            store,
+            widgets,
+            Clock::System,
+            false,
+        )
     }
 
     fn start_with_clock(
@@ -919,6 +1056,7 @@ impl Quotas {
         store: Option<PathBuf>,
         widgets: &[String],
         clock: Clock,
+        resumed: bool,
     ) -> Self {
         let slot = |provider, widgets, units, shared_schedule| Slot {
             provider,
@@ -932,6 +1070,7 @@ impl Quotas {
             program: program.to_path_buf(),
             google_program: google_program.to_path_buf(),
             store,
+            resume: resumed.then(|| clock.resume()),
             clock,
             codex: slot(
                 "codex",
@@ -949,6 +1088,22 @@ impl Quotas {
         };
         quotas.show(widgets);
         quotas
+    }
+
+    fn workers(&self) -> impl Iterator<Item = &Provider> {
+        [&self.codex, &self.claude, &self.google]
+            .into_iter()
+            .filter_map(|slot| slot.worker.as_ref())
+    }
+
+    pub(crate) fn set_park(&self, parked: bool) {
+        for worker in self.workers() {
+            worker.set_park(parked);
+        }
+    }
+
+    pub(crate) fn parked(&self) -> bool {
+        self.workers().all(Provider::parked)
     }
 
     /// The providers polled now.
@@ -986,6 +1141,7 @@ impl Quotas {
                         .map(|store| store.join(format!("{}.json", slot.provider))),
                     slot.shared_schedule,
                     self.clock.clone(),
+                    self.resume,
                 ));
             }
         }
@@ -1168,13 +1324,23 @@ fn run_command(
     remaining: &mut usize,
     stop: &mpsc::Receiver<()>,
 ) -> CommandResult {
-    if !matches!(stop.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+    use rustix::process::{Pid, Signal, WaitId, WaitIdOptions, kill_process_group, waitid};
+    if stopped(stop) {
         return Ok(None);
     }
     if Instant::now() >= deadline {
         return Err(Failure::Deadline);
     }
+    crate::platform::require_waitable_children().map_err(|_| Failure::Start)?;
     let mut child = command.spawn().map_err(|_| Failure::Start)?;
+    let pid = Pid::from_child(&child);
+    let check = || loop {
+        let flags = WaitIdOptions::EXITED | WaitIdOptions::NOHANG | WaitIdOptions::NOWAIT;
+        match waitid(WaitId::Pid(pid), flags) {
+            Err(rustix::io::Errno::INTR) => {}
+            result => break result.map_err(|_| Failure::Start),
+        }
+    };
     let mut output = child.stdout.take().expect("piped quota output");
     let result = (|| {
         let flags = rustix::fs::fcntl_getfl(&output).map_err(|_| Failure::Start)?;
@@ -1183,7 +1349,7 @@ fn run_command(
         let mut bytes = Vec::new();
         let mut eof = false;
         loop {
-            if !matches!(stop.try_recv(), Err(mpsc::TryRecvError::Empty)) {
+            if stopped(stop) {
                 return Ok(None);
             }
             if Instant::now() >= deadline {
@@ -1201,20 +1367,19 @@ fn run_command(
                         || e.kind() == io::ErrorKind::Interrupted => {}
                 Err(_) => return Err(Failure::Start),
             }
-            if let Some(status) = child.try_wait().map_err(|_| Failure::Start)?
-                && eof
-            {
-                return Ok(Some((bytes, status)));
+            if eof && check()?.is_some() {
+                return Ok(Some(bytes));
             }
             thread::sleep(Duration::from_millis(10));
         }
     })();
-    let _ = rustix::process::kill_process_group(
-        rustix::process::Pid::from_child(&child),
-        rustix::process::Signal::KILL,
-    );
-    let _ = child.wait();
-    result
+    // Observe without reaping so no other process can take this group ID
+    // before cleanup. ECHILD (or any failed identity check) forbids a signal.
+    if check().is_ok() {
+        let _ = kill_process_group(pid, Signal::KILL);
+    }
+    let status = child.wait().map_err(|_| Failure::Start)?;
+    result.map(|bytes| bytes.map(|bytes| (bytes, status)))
 }
 
 #[cfg(test)]
@@ -1568,6 +1733,7 @@ mod tests {
             None,
             false,
             Clock::System,
+            None,
         );
         *provider.quota.lock().unwrap() = Some(quota.clone());
         // Several 20 ms intervals of failed reads leave a recent reading fresh, and say why.
@@ -1757,14 +1923,23 @@ mod tests {
 
         /// Parks worker `id` until the clock reaches `wait` from now (false) or a stop arrives
         /// (true). The stop channel is checked under the lock `wake` takes, so none is lost.
-        pub(super) fn wait(&self, id: u64, stopped: &mpsc::Receiver<()>, wait: Duration) -> bool {
+        pub(super) fn wait(
+            &self,
+            id: u64,
+            stop: &mpsc::Receiver<()>,
+            park: &Mutex<Park>,
+            wait: Duration,
+        ) -> bool {
             let mut state = self.lock();
             let deadline = state.now + milliseconds(wait).max(1);
             state.workers.insert(id, Some(deadline));
             self.changed.notify_all();
             loop {
-                let stop = !matches!(stopped.try_recv(), Err(mpsc::TryRecvError::Empty));
-                if stop || state.now >= deadline {
+                let stop = stopped(stop);
+                if stop
+                    || state.now >= deadline
+                    || *park.lock().expect("quota park") != Park::Running
+                {
                     state.workers.insert(id, None);
                     return stop;
                 }
@@ -1838,6 +2013,7 @@ mod tests {
             store,
             widgets,
             Clock::Manual(Arc::clone(&clock)),
+            false,
         );
         let reads = move || {
             let calls = fs::read_to_string(&calls).unwrap_or_default();
@@ -1849,6 +2025,73 @@ mod tests {
 
     /// The manual clock's start, in milliseconds.
     const T0: u64 = NOW * 1000;
+
+    #[test]
+    fn update_resume_floor_uses_local_time_and_leaves_unusable_schedules_untouched() {
+        let root = super::super::supervisor::temporary_directory();
+        let store = root.join("quota");
+        fs::create_dir(&store).unwrap();
+        let claude = store.join("claude.schedule");
+        let google = store.join("google.schedule");
+        fs::write(&claude, b"partial").unwrap();
+        logging_backend(&root, "echo '{}'");
+        script(
+            &root.join("agy"),
+            &format!(
+                "echo google >> '{}'; echo 1.5.6",
+                root.join("calls").display()
+            ),
+        );
+        let clock = ManualClock::starting_at(T0);
+        let mut quotas = Quotas::start_with_clock(
+            &root.join("backend"),
+            &root.join("agy"),
+            UNIT,
+            Some(store),
+            &[
+                "claude_quota_5h".into(),
+                "google_quota:Gemini Models:5h".into(),
+            ],
+            Clock::Manual(Arc::clone(&clock)),
+            true,
+        );
+        let calls = || fs::read_to_string(root.join("calls")).unwrap_or_default();
+        let advance = |seconds| {
+            clock.advance_to(T0 + seconds * 1_000);
+            clock.settle();
+        };
+        advance(20u64);
+        // A widget enabled after import shares the original import anchor.
+        quotas.show(&[
+            "codex_quota_5h".into(),
+            "claude_quota_5h".into(),
+            "google_quota:Gemini Models:5h".into(),
+        ]);
+        advance(59);
+        assert_eq!(calls(), "");
+        assert_eq!(fs::read(&claude).unwrap(), b"partial");
+        assert!(!google.exists());
+        advance(60);
+        assert_eq!(calls(), "codex\n");
+        fs::write(
+            &claude,
+            serde_json::to_vec(&Schedule {
+                next_at: T0 + 70_000,
+                ..Schedule::default()
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        advance(70);
+        assert_eq!(calls(), "codex\nclaude\n");
+        advance(299);
+        assert!(!google.exists());
+        assert!(!calls().contains("google"));
+        advance(300);
+        assert_eq!(calls().lines().filter(|line| *line == "google").count(), 2);
+        drop(quotas);
+        fs::remove_dir_all(root).unwrap();
+    }
 
     /// Advances to each `(seconds after T0, Claude reads, Codex reads)` and checks the counts
     /// once every worker has settled there.
@@ -2163,12 +2406,13 @@ mod tests {
             None,
             Duration::from_secs(1),
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         );
         assert!(bounded.next_at < u64::MAX);
         let root = super::super::supervisor::temporary_directory();
         let path = root.join("schedule");
-        let mut file = open_schedule(&path).unwrap();
+        let mut file = open_schedule(&path, true).unwrap();
         for reason in [
             Failure::Start,
             Failure::Deadline,
@@ -2237,7 +2481,8 @@ mod tests {
             Some(&path.join("unavailable")),
             Duration::from_secs(7200),
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         );
         assert!(!shared);
         assert_eq!(retained.next_at, next_at);
@@ -2253,7 +2498,8 @@ mod tests {
             Some(&path),
             Duration::from_secs(7200),
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         );
         assert!(shared);
         assert_eq!(repaired.next_at, retained.next_at);
@@ -2276,7 +2522,8 @@ mod tests {
             Some(&path),
             Duration::from_secs(7200),
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         );
         assert!(shared);
         assert_eq!(adopted.next_at, peer.next_at);
@@ -2291,19 +2538,21 @@ mod tests {
             Some(&path),
             Duration::from_secs(7200),
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         );
         assert!(shared);
         assert_eq!(kept.failures, 3);
         // A peer that keeps the lock leaves it on the in-memory schedule, not the file's.
         fs::write(&path, serde_json::to_vec(&peer).unwrap()).unwrap();
-        let held = open_schedule(&path).unwrap();
+        let held = open_schedule(&path, true).unwrap();
         let (locked_out, shared) = update_schedule(
             &memory,
             Some(&path),
             Duration::from_secs(7200),
             &Clock::System,
-            |_, _| false,
+            true,
+            |_, _, _| Some(false),
         );
         assert!(!shared);
         assert_eq!(locked_out.failures, 3);
@@ -2328,10 +2577,11 @@ mod tests {
             Some(&schedule_path),
             maximum,
             &Clock::System,
-            |schedule, now| {
+            true,
+            |schedule, now, _| {
                 schedule.next_at = now + 20_000;
                 schedule.failure = Some(failure);
-                true
+                Some(true)
             },
         );
         let (fixture, now) = fresh("claude");
@@ -2388,9 +2638,10 @@ mod tests {
             Some(&schedule_path),
             maximum,
             &Clock::System,
-            |schedule, _| {
+            true,
+            |schedule, _, _| {
                 schedule.failure = None;
-                true
+                Some(true)
             },
         );
         wait(&|| {

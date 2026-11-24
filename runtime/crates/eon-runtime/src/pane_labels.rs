@@ -25,6 +25,7 @@ const RETRY: Duration = Duration::from_millis(500);
 #[derive(Default)]
 pub(super) struct Labels {
     observations: HashMap<(String, PathBuf), Observation>,
+    retiring: Vec<thread::JoinHandle<()>>,
 }
 
 impl Labels {
@@ -33,12 +34,42 @@ impl Labels {
             .iter()
             .map(|pane| (pane.id.clone(), pane.endpoint.clone()))
             .collect::<HashSet<_>>();
-        self.observations.retain(|key, _| targets.contains(key));
+        self.retiring.retain(|worker| !worker.is_finished());
+        self.observations.retain(|key, observer| {
+            if targets.contains(key) {
+                return true;
+            }
+            observer.cancel();
+            if let Some(worker) = observer.worker.take()
+                && !worker.is_finished()
+            {
+                self.retiring.push(worker);
+            }
+            false
+        });
         for (id, endpoint) in targets {
-            self.observations
+            let observer = self
+                .observations
                 .entry((id, endpoint.clone()))
-                .or_insert_with(|| Observation::start(endpoint));
+                .or_insert_with(|| {
+                    Observation::start(endpoint.clone(), Arc::new(Mutex::new(Metadata::Connecting)))
+                });
+            // The next normal turn after a refused Update resumes observation.
+            if observer.control.cancelled.load(Ordering::Acquire) && observer.finished() {
+                *observer = Observation::start(endpoint, Arc::clone(&observer.metadata));
+            }
         }
+    }
+
+    pub(super) fn park(&self) {
+        for observer in self.observations.values() {
+            observer.cancel();
+        }
+    }
+
+    pub(super) fn parked(&self) -> bool {
+        self.observations.values().all(Observation::finished)
+            && self.retiring.iter().all(thread::JoinHandle::is_finished)
     }
 
     pub(super) fn present(
@@ -79,6 +110,7 @@ impl Labels {
 struct Observation {
     metadata: Arc<Mutex<Metadata>>,
     control: Arc<Control>,
+    worker: Option<thread::JoinHandle<()>>,
 }
 
 #[derive(Default)]
@@ -88,8 +120,7 @@ struct Control {
 }
 
 impl Observation {
-    fn start(endpoint: PathBuf) -> Self {
-        let metadata = Arc::new(Mutex::new(Metadata::Connecting));
+    fn start(endpoint: PathBuf, metadata: Arc<Mutex<Metadata>>) -> Self {
         let control = Arc::new(Control::default());
         let result = thread::Builder::new()
             .name("eon-pane-metadata".into())
@@ -121,12 +152,20 @@ impl Observation {
         if result.is_err() {
             *metadata.lock().expect("pane metadata lock poisoned") = Metadata::Unavailable;
         }
-        Self { metadata, control }
+        Self {
+            metadata,
+            control,
+            worker: result.ok(),
+        }
     }
-}
 
-impl Drop for Observation {
-    fn drop(&mut self) {
+    fn finished(&self) -> bool {
+        self.worker
+            .as_ref()
+            .is_none_or(thread::JoinHandle::is_finished)
+    }
+
+    fn cancel(&self) {
         self.control.cancelled.store(true, Ordering::Release);
         if let Some(stream) = self
             .control
@@ -140,7 +179,21 @@ impl Drop for Observation {
     }
 }
 
+impl Drop for Observation {
+    fn drop(&mut self) {
+        self.cancel();
+    }
+}
+
 fn observe(endpoint: &Path, control: &Control, metadata: &Mutex<Metadata>) -> io::Result<()> {
+    #[cfg(test)]
+    if crate::update::fault("observer-cloexec")
+        && endpoint
+            .file_name()
+            .is_some_and(|name| name == "orbit.sock")
+    {
+        pause_before_cloexec()?;
+    }
     let mut stream = super::sessions::unix_connect_with_timeout(endpoint, NEGOTIATION)?;
     bound_io(&stream, stream.set_read_timeout(Some(NEGOTIATION)))?;
     bound_io(&stream, stream.set_write_timeout(Some(NEGOTIATION)))?;
@@ -178,6 +231,27 @@ fn observe(endpoint: &Path, control: &Control, metadata: &Mutex<Metadata>) -> io
         };
         bound_io(&stream, stream.set_read_timeout(None))?;
     }
+}
+
+#[cfg(test)]
+fn pause_before_cloexec() -> io::Result<()> {
+    // Hold the socket2 Darwin creation window open until after a Commit
+    // attempt. Use the same two steps on Linux so its fixture exercises it too.
+    use socket2::{Domain, Socket, Type};
+    let root = PathBuf::from(std::env::var_os("EON_TEST_HANDOFF_ROOT").unwrap());
+    if root.join("observer-release").exists() {
+        return Ok(());
+    }
+    let socket = Socket::new_raw(Domain::UNIX, Type::STREAM, None)?;
+    std::fs::write(root.join("observer-in-connect"), b"")?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    while !root.join("observer-release").exists() {
+        if std::time::Instant::now() >= deadline {
+            return Err(io::Error::other("fixture did not release socket creation"));
+        }
+        thread::sleep(Duration::from_millis(5));
+    }
+    rustix::io::fcntl_setfd(socket, rustix::io::FdFlags::CLOEXEC).map_err(Into::into)
 }
 
 fn read_metadata_message(stream: &mut UnixStream) -> io::Result<ServerMessage> {
@@ -388,7 +462,7 @@ mod tests {
             }
             assert_eq!(stream.read(&mut [0]).unwrap(), 0);
         });
-        let observer = Observation::start(endpoint);
+        let observer = Observation::start(endpoint, Arc::new(Mutex::new(Metadata::Connecting)));
         let expected = Metadata::Available {
             title: "ready".into(),
             directory: "/tmp/two".into(),

@@ -130,7 +130,7 @@ impl PreflightState {
                 reply.commit(result);
                 return;
             }
-            let prepared = (|| {
+            let prepare = |state: &mut SupervisorState, request: &Preflight| {
                 let launch = inputs
                     .launch
                     .as_ref()
@@ -160,28 +160,34 @@ impl PreflightState {
                     checkpoint: exported.bytes,
                 };
                 Ok((command, check))
-            })();
+            };
             let timeout = CHILD_DEADLINE;
             #[cfg(test)]
             let timeout = self.child_timeout.unwrap_or(timeout);
             if let Some(owner) = commit {
-                // The isolated Commit holds this settled turn through validation.
-                let result = prepared.and_then(|(command, check)| {
-                    let (cancelled, _cancel) =
-                        io::pipe().map_err(|error| internal(error.to_string()))?;
-                    validate_exchange(
-                        id,
-                        command,
-                        &check,
-                        &cancelled,
-                        caller_origin.clone(),
-                        log,
-                        timeout,
-                    )?;
+                let result = (|| {
+                    let unsettled = |what: &'static str| refusal(id, Code::Unsettled, what.into());
+                    let parked = super::quiesce::Quiesce::start(state).map_err(unsettled)?;
+                    parked.within_deadline().map_err(unsettled)?;
+                    let (command, check) = prepare(parked.state, &request)?;
+                    parked.within_deadline().map_err(unsettled)?;
+                    {
+                        let (cancelled, _cancel) =
+                            io::pipe().map_err(|error| internal(error.to_string()))?;
+                        validate_exchange(
+                            id,
+                            command,
+                            &check,
+                            &cancelled,
+                            caller_origin.clone(),
+                            log,
+                            timeout,
+                        )?;
+                    }
                     Err(handoff::begin(
                         owner,
                         listener,
-                        state,
+                        parked.state,
                         inputs,
                         root,
                         &facts,
@@ -190,12 +196,12 @@ impl PreflightState {
                         check,
                         &reply,
                     ))
-                });
+                })();
                 self.last = Some(handoff::commit_outcome(id, &result));
                 reply.commit(result);
                 return;
             }
-            let result = prepared.and_then(|(command, check)| {
+            let result = prepare(state, &request).and_then(|(command, check)| {
                 Pending::start(id, command, check, caller_origin, Arc::clone(log), timeout)
                     .map_err(|error| internal(format!("cannot start target validation: {error}")))
             });

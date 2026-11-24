@@ -1651,6 +1651,7 @@ fn supervise(
         &settings,
         mode,
         inputs,
+        false,
     );
     let presentation = if startup_failed {
         drop(admitted);
@@ -1988,6 +1989,7 @@ struct SupervisorState {
     scrollback: Snapshots,
     editor_sockets: Sockets,
     pair_dispatches: pair::Dispatches,
+    visits: Vec<thread::JoinHandle<()>>,
     log: Arc<DiagnosticLog>,
 }
 
@@ -2028,6 +2030,7 @@ impl SupervisorState {
         settings: &WindowSettings,
         mode: LaunchMode,
         inputs: &Inputs,
+        resumed: bool,
     ) -> Self {
         let Carried {
             registry_worker,
@@ -2074,8 +2077,14 @@ impl SupervisorState {
             initial_status,
             stopping,
             reconciliation: None,
-            quotas: (mode == LaunchMode::Workspace)
-                .then(|| quota::Quotas::start(&inputs.codexbar, &settings.display.bar.widgets)),
+            quotas: (mode == LaunchMode::Workspace).then(|| {
+                let widgets = &settings.display.bar.widgets;
+                if resumed {
+                    quota::Quotas::resume(&inputs.codexbar, widgets)
+                } else {
+                    quota::Quotas::start(&inputs.codexbar, widgets)
+                }
+            }),
             attention,
             pane_labels: super::pane_labels::Labels::default(),
             agents: settings.agents,
@@ -2083,6 +2092,7 @@ impl SupervisorState {
             scrollback,
             editor_sockets,
             pair_dispatches: pair::Dispatches::default(),
+            visits: Vec::new(),
             log,
         }
     }
@@ -2362,6 +2372,12 @@ impl SupervisorState {
         self.editor_sockets.retain(sessions, now, &self.log);
     }
 
+    fn reap_visits(&mut self) {
+        for worker in self.visits.extract_if(.., |worker| worker.is_finished()) {
+            let _ = worker.join();
+        }
+    }
+
     /// The loop turn's work before its control request: follows the window's
     /// terminals, focus and attention. The turn publishes it to subscribers
     /// once, with its action's change (EON-C39).
@@ -2369,6 +2385,7 @@ impl SupervisorState {
         self.failed_starts.reap(&self.log);
         managed_environment::note_desktop_locale(&self.log);
         self.pair_dispatches.reap();
+        self.reap_visits();
         // Read first, so attention this turn sees the latest native focus.
         if let Some(venus) = &mut self.venus {
             venus.read_native_focus();
@@ -3209,7 +3226,13 @@ fn pair_command(
 /// unless `[shell] zoxide = false`. Zoxide runs and is reaped on its own worker
 /// beside the supervisor; any failure, the worker's included, is logged and
 /// changes nothing else.
-fn record_visit(inputs: &Inputs, config: &Path, log: &Arc<DiagnosticLog>, directory: &[u8]) {
+fn record_visit(
+    inputs: &Inputs,
+    config: &Path,
+    log: &Arc<DiagnosticLog>,
+    directory: &[u8],
+    visits: &mut Vec<thread::JoinHandle<()>>,
+) {
     let Some(session_bin) = &inputs.managed.shell_bin else {
         return log.record("Zoxide visit skipped: this Eon has no packaged Zoxide");
     };
@@ -3226,16 +3249,20 @@ fn record_visit(inputs: &Inputs, config: &Path, log: &Arc<DiagnosticLog>, direct
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     let worker = Arc::clone(log);
-    let started = thread::Builder::new().spawn(move || {
-        let failure = match zoxide.status() {
-            Ok(status) if status.success() => return,
-            Ok(status) => format!("zoxide {status}"),
-            Err(error) => error.to_string(),
-        };
-        worker.record(&format!("Zoxide visit failed: {failure}"));
-    });
-    if let Err(error) = started {
-        log.record(&format!("Zoxide visit failed: {error}"));
+    let started = thread::Builder::new()
+        .name("eon-zoxide-visit".into())
+        .spawn(move || {
+            let failure = match platform::require_waitable_children().and_then(|()| zoxide.status())
+            {
+                Ok(status) if status.success() => return,
+                Ok(status) => format!("zoxide {status}"),
+                Err(error) => error.to_string(),
+            };
+            worker.record(&format!("Zoxide visit failed: {failure}"));
+        });
+    match started {
+        Ok(worker) => visits.push(worker),
+        Err(error) => log.record(&format!("Zoxide visit failed: {error}")),
     }
 }
 
@@ -4714,7 +4741,7 @@ fn dispatch_registered_request(
                 {
                     log.record(&error);
                 }
-                record_visit(inputs, config, log, &directory);
+                record_visit(inputs, config, log, &directory, &mut state.visits);
             }
             if result.is_ok()
                 && let Some((switch, id, session, marker)) = pair_switch
@@ -5463,6 +5490,7 @@ mod tests {
             scrollback: Snapshots::new(&root),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log,
         };
         assert!(
@@ -7216,6 +7244,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let subscribe = |state: &mut SupervisorState, caller: Option<&str>, filter| {
@@ -7437,6 +7466,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -7651,6 +7681,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let Dispatched::Subscribe(subscriber) = super::dispatch(
@@ -7784,6 +7815,7 @@ mod tests {
             scrollback: Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let mut fixture = FinishingWindow {
@@ -8970,6 +9002,7 @@ mod tests {
             scrollback: Snapshots::new(&root.join("scrollback")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         }
     }
@@ -9773,6 +9806,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log,
         };
         let closes = (0..2)
@@ -9870,6 +9904,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log,
         };
         // The pending pair is a popup and not counted (EON-C18).
@@ -10085,6 +10120,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log,
         };
         let inputs = crate::fixtures::inputs();
@@ -10301,6 +10337,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(roots[0].join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
@@ -10425,6 +10462,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
         let inputs = crate::fixtures::inputs();
@@ -10492,6 +10530,7 @@ mod tests {
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon"),
         };
 
@@ -12080,6 +12119,7 @@ rows = 30
             scrollback: crate::scrollback::Snapshots::new(Path::new("/unused")),
             editor_sockets: Sockets::default(),
             pair_dispatches: crate::pair::Dispatches::default(),
+            visits: Vec::new(),
             log: DiagnosticLog::open_in(Ok(log_root.to_path_buf()), "g1-test", "eon"),
         }
     }

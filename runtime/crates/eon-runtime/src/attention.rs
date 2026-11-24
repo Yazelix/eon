@@ -428,6 +428,18 @@ struct HelperPending {
 }
 
 impl Attention {
+    pub(super) fn park(&mut self) -> bool {
+        self.helper_worker
+            .as_mut()
+            .is_none_or(helpers::Worker::park)
+    }
+
+    pub(super) fn unpark(&mut self) {
+        if let Some(worker) = &mut self.helper_worker {
+            worker.unpark();
+        }
+    }
+
     /// `enabled` is `[sidebar] enabled`; without it the sidebar is Off.
     pub(super) fn new(enabled: bool) -> Self {
         let now = Instant::now();

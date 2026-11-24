@@ -4879,6 +4879,11 @@ popup or automatic tutorial launch.
   than two hours, is ignored, and a supervisor that cannot read, lock or write
   it keeps its own schedule. Codex reads stay per supervisor and never back
   off.
+  After planned EON-C11 Update, Runtime uses any usable shared Claude or Google
+  schedule. Where it uses only a local schedule, its first read can start no
+  earlier than one ordinary collection interval after import: 60 seconds for
+  Codex and 300 seconds for Claude or Google. The local delay never advances a
+  shared schedule. Runtime can show an existing stored reading during that delay.
   The native chips show each selected supplied supported window and its remaining
   percentage, one chip per window, in `[bar] widgets` order
   ([Eon Bar](../venus/docs/PRESENTATION.md#eon-bar)), with provider periods,
