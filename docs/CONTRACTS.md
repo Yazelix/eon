@@ -1369,15 +1369,18 @@ names its socket. CLI JSON names a session `session` and a terminal
     tell a person's own identical value from the runner's: a person who sets
     one of these on purpose, such as `PAGER=cat`, and starts Eon from such an
     agent shell loses it in command panes, popups and the Editor unless their
-    shell configuration or the command itself sets it. Apart from the
-    Neovim-server names below, every other inherited name, agent settings such
-    as `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE` and API keys
-    included, keeps the treatment described above.
+    shell configuration or the command itself sets it. The Neovim and
+    Wayland launch inputs follow the rules below. Other inherited names,
+    including `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_FORCE_SESSION_PERSISTENCE`
+    and API keys, keep the treatment described above.
   - So that no terminal names a Neovim server it was not started from,
     Eon also removes `NVIM` and `NVIM_LISTEN_ADDRESS` from the environment
     of every terminal, popup, Venus and quota reader the supervisor
     starts. A Neovim that Eon starts, such as the Editor popup's, still
     sets `NVIM` for the processes it starts (EON-C10).
+  - On Linux, only the initial Venus child receives the fresh supervisor's
+    valid `WAYLAND_SOCKET` launch input. Runtime omits this variable from
+    its other child environments (EON-C11).
 - **Important failures:** Invalid or unreadable configuration, empty command,
   missing artifact, manifest mismatch, or shell launch fails explicitly without
   a replacement terminal. Optional integration failure warns without preventing
@@ -1394,10 +1397,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Boundary:** No global aliases, user-file mutation, prompt/completion schema,
   shell framework, automatic Direnv, mise installation or trust management,
   history/sync policy, plugin surface,
-  editor replacement, or remote/headless clipboard bridge. Apart from the
-  agent-session, tool-runner and Neovim-server removal above, arbitrary argv
-  remains unmanaged and `eon run -- COMMAND...` remains the explicit escape
-  hatch.
+  editor replacement, or remote/headless clipboard bridge. The environment
+  rules above, including Linux `WAYLAND_SOCKET` removal, also apply to
+  commands given as arbitrary argv. Eon passes the arguments through and
+  `eon run -- COMMAND...` remains the explicit escape hatch.
 - **Proof:** `795d735a8f61ef439c56d68e1cc4d3929af0dfcf`, `eon-monorepo-2oko.6`.
   - **Qualification:** The evidence at
     `795d735a8f61ef439c56d68e1cc4d3929af0dfcf` predates the Bend Orbit import
@@ -3199,6 +3202,16 @@ popup or automatic tutorial launch.
     have a 250 ms whole-request read budget and a 2,000 ms whole-reply write
     budget. Action execution keeps its own limits. These exchanges use their
     own I/O budgets before the Update Commit quiesce clock starts.
+  - On fresh supervisor startup, Runtime preserves standard input, output
+    and error and marks other inherited descriptors close-on-exec before
+    starting workers or children. If isolation fails, startup fails before
+    the window is admitted. On Linux a caller may supply `WAYLAND_SOCKET`
+    with an inherited, connected Unix stream above standard error. Runtime
+    passes that connection only to the initial Venus child and releases its
+    own copy after spawn. An absent or invalid input uses ordinary Wayland
+    display lookup. Later presentations open a connection through that
+    lookup. A launch or recovery command may forward the caller's input to
+    the fresh supervisor that will consume it. Darwin uses its native host.
   - Planned Update keeps the same supervisor PID, window lifetime, directory,
     listeners, locks, Orbit host, run, process, start, endpoint and record
     identities, management leases, PTYs, running programs and Orbit terminal
@@ -3316,6 +3329,8 @@ popup or automatic tutorial launch.
     Interpreter-owned `_`, `PWD` and `SHLVL` are recreated for each target rather
     than carried as user inputs. Exported Bash functions retain their behavior;
     their interpreter serialization is not a byte-preservation guarantee.
+    On Linux the saved launch inputs omit `WAYLAND_SOCKET`. Native child
+    launch environments and Update replay use that saved baseline.
     Preparing a later build for the same lifetime replays that lifetime's saved
     launch inputs with the target's validated wrapper facts; it never substitutes
     the active wrapper's expanded environment for that saved baseline. A fresh

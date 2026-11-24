@@ -16,6 +16,7 @@ pub const FACTS_VARIABLE: &str = "EON_LAUNCH_FACTS";
 pub const FACTS_LIMIT: usize = 65_536;
 pub(crate) const ROUTE_MARKER: &str = "EON_ROUTED";
 pub(crate) const DELEGATION_MARKER: &str = "EON_ATTACH_DELEGATED";
+pub(crate) const WAYLAND_SOCKET: &str = "WAYLAND_SOCKET";
 pub(crate) const TERMINAL_VARIABLE: &str = "EON_TERMINAL";
 pub(crate) const TAB_VARIABLE: &str = "EON_TAB";
 
@@ -163,6 +164,9 @@ impl LaunchInputs {
                 && !name.as_bytes().starts_with(b"EON_NEW_WINDOW_")
                 && !matches!(name.as_bytes(), b"_" | b"PWD" | b"SHLVL")
         });
+        if cfg!(target_os = "linux") {
+            environment.remove(OsStr::new(WAYLAND_SOCKET));
+        }
         Ok(Self {
             facts: facts.clone(),
             arguments,
@@ -280,6 +284,14 @@ pub(crate) fn remove_launch_markers(command: &mut Command) -> &mut Command {
         TAB_VARIABLE,
     ] {
         command.env_remove(name);
+    }
+    command
+}
+
+/// A connected display descriptor belongs to the initial Venus alone.
+pub(crate) fn remove_wayland_socket(command: &mut Command) -> &mut Command {
+    if cfg!(target_os = "linux") {
+        command.env_remove(WAYLAND_SOCKET);
     }
     command
 }

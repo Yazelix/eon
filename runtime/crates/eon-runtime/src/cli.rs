@@ -107,6 +107,12 @@ impl Inputs {
             Err(_) => Command::new(env::current_exe().map_err(|error| error.to_string())?),
         };
         super::launch_environment::remove_launch_markers(&mut command);
+        let display = super::launch_environment::WAYLAND_SOCKET;
+        if cfg!(target_os = "linux")
+            && let Some(value) = env::var_os(display)
+        {
+            command.env(display, value);
+        }
         Ok(command)
     }
 
@@ -4070,6 +4076,7 @@ mod tests {
                 .env("EON_CAPTURE_TEST_CHILD", "1")
                 .env("EON_PARENT_ONLY", "must disappear")
                 .env("EON_ROUTED", "old")
+                .env("WAYLAND_SOCKET", "17")
                 .output()
                 .unwrap();
             assert!(output.status.success(), "{output:?}");
@@ -4085,22 +4092,41 @@ mod tests {
         inputs.launch = crate::LaunchInputs::capture(
             &facts,
             vec!["eon".into()],
-            [(
-                "EON_LAUNCH_FACTS".into(),
-                "/share/eon/launch-environment".into(),
-            )],
+            [
+                (
+                    "EON_LAUNCH_FACTS".into(),
+                    "/share/eon/launch-environment".into(),
+                ),
+                ("WAYLAND_SOCKET".into(), "99".into()),
+            ],
         );
         let output = inputs
             .supervisor_command()
             .unwrap()
             .args([
                 "-c",
-                "test -z \"${EON_PARENT_ONLY+x}\" && test -z \"${EON_ROUTED+x}\" && printf clean",
+                "test -z \"${EON_PARENT_ONLY+x}\" && test -z \"${EON_ROUTED+x}\" && printf \"clean $WAYLAND_SOCKET\"",
             ])
             .output()
             .unwrap();
         assert!(output.status.success(), "{output:?}");
-        assert_eq!(output.stdout, b"clean");
+        // Linux replays no display number; a fresh supervisor gets the caller's.
+        let expected: &[u8] = if cfg!(target_os = "linux") {
+            b"clean 17"
+        } else {
+            b"clean 99"
+        };
+        assert_eq!(output.stdout, expected);
+        inputs.launch = Err("unwrapped".into());
+        let command = inputs.supervisor_command().unwrap();
+        let display = command
+            .get_envs()
+            .find(|(name, _)| *name == "WAYLAND_SOCKET")
+            .and_then(|(_, value)| value);
+        assert_eq!(
+            display,
+            cfg!(target_os = "linux").then_some(OsStr::new("17"))
+        );
     }
 
     #[test]

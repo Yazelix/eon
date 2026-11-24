@@ -44,7 +44,7 @@ use std::{
     fs,
     io::{self, Read, Write},
     net::Shutdown,
-    os::fd::{AsFd, OwnedFd},
+    os::fd::{AsFd, AsRawFd, OwnedFd},
     os::unix::{
         ffi::OsStrExt,
         fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt},
@@ -348,6 +348,8 @@ pub(super) fn launch_current(
             Err(error) => return Err(error.detail),
         }
     };
+    let display = isolate_launch_descriptors()
+        .map_err(|error| format!("cannot isolate launch descriptors: {error}"))?;
     let runtime = generation_directory(&root, &generation);
     let socket = runtime.join("eon.sock");
     let log = DiagnosticLog::open(&generation, mode.name());
@@ -367,6 +369,7 @@ pub(super) fn launch_current(
             lifecycle_lock,
             namespace_lock,
             &runtime,
+            display,
             child,
             options.directory.clone(),
             &generation,
@@ -394,6 +397,28 @@ pub(super) fn launch_current(
             Err(error)
         }
     })
+}
+
+fn isolate_launch_descriptors() -> io::Result<Option<OwnedFd>> {
+    #[cfg(target_os = "linux")]
+    let display = env::var(super::launch_environment::WAYLAND_SOCKET)
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .filter(|&number| {
+            use rustix::net::{AddressFamily, SocketType, getpeername, sockopt};
+            platform::inspect_inherited(number, |fd| {
+                Ok(sockopt::socket_type(fd)? == SocketType::STREAM
+                    && getpeername(fd)?
+                        .is_some_and(|peer| peer.address_family() == AddressFamily::UNIX))
+            })
+            .unwrap_or(false)
+        })
+        .map(platform::take_inherited)
+        .transpose()?;
+    #[cfg(target_os = "macos")]
+    let display = None;
+    platform::isolate_fresh_descriptors()?;
+    Ok(display)
 }
 
 fn attach_competing_supervisor(
@@ -1218,6 +1243,7 @@ fn supervise(
     lifecycle_lock: LifecycleLock,
     namespace_lock: Option<super::generation::NamespaceLock>,
     runtime: &Path,
+    mut display: Option<OwnedFd>,
     child: &[OsString],
     directory: Option<PathBuf>,
     generation: &str,
@@ -1423,6 +1449,30 @@ fn supervise(
         )
     };
     let fresh_animation = startup_animation.is_some() && sessions.is_empty() && !recovered_pair;
+    let mut initial_venus = || {
+        let mut command = venus_command(
+            inputs,
+            &inputs.venus,
+            config,
+            &presentation_socket,
+            mode,
+            terminal,
+            bar,
+            application_id,
+            decorations,
+            settings.warning_close_last_tab,
+            settings.animate_working_badge,
+            settings.number_keys,
+        );
+        if let Some(display) = display.take() {
+            command.env(
+                super::launch_environment::WAYLAND_SOCKET,
+                display.as_raw_fd().to_string(),
+            );
+            platform::inherit_for_child(&mut command, display);
+        }
+        command
+    };
     let admitted = if terminal.requires_startup_admission() || fresh_animation {
         let snapshot = if mode == LaunchMode::Workspace {
             let workspaces = if sessions.is_empty() && !recovered_pair {
@@ -1494,23 +1544,9 @@ fn supervise(
             }
             snapshot
         });
-        let command = venus_command(
-            inputs,
-            &inputs.venus,
-            config,
-            &presentation_socket,
-            mode,
-            terminal,
-            bar,
-            application_id,
-            decorations,
-            settings.warning_close_last_tab,
-            settings.animate_working_badge,
-            settings.number_keys,
-        );
         Some(
             PresentationProcess::start(
-                command,
+                initial_venus(),
                 true,
                 snapshot,
                 PRESENTATION_ADMISSION_TIMEOUT,
@@ -1655,25 +1691,13 @@ fn supervise(
     );
     let presentation = if startup_failed {
         drop(admitted);
+        drop(display);
         Ok(None)
     } else {
         match admitted {
             Some(venus) => Ok(Some(venus)),
             None => PresentationProcess::start(
-                venus_command(
-                    inputs,
-                    &inputs.venus,
-                    config,
-                    &presentation_socket,
-                    mode,
-                    terminal,
-                    bar,
-                    application_id,
-                    decorations,
-                    settings.warning_close_last_tab,
-                    settings.animate_working_badge,
-                    settings.number_keys,
-                ),
+                initial_venus(),
                 false,
                 None,
                 PRESENTATION_ADMISSION_TIMEOUT,
@@ -3242,7 +3266,7 @@ fn record_visit(
         Err(error) => return log.record(&format!("Zoxide visit skipped: {error}")),
     }
     let mut zoxide = Command::new(session_bin.join("zoxide"));
-    zoxide
+    super::launch_environment::remove_wayland_socket(&mut zoxide)
         .args(["add", "--"])
         .arg(OsStr::from_bytes(directory))
         .stdin(Stdio::null())
@@ -5596,6 +5620,7 @@ mod tests {
                 lock,
                 None,
                 &worker_runtime,
+                None,
                 &[],
                 Some(worker_root.clone()),
                 GENERATION,
@@ -6583,6 +6608,7 @@ mod tests {
                 lock,
                 None,
                 &root.join("a").join(&generation),
+                None,
                 &[],
                 None,
                 &generation,

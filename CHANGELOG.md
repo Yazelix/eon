@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Fresh Eon supervisors isolate inherited descriptors on Linux and macOS.
+  On Linux, only the initial Venus process receives a caller's Wayland socket.
+
 - An `eon.sock` client now has 250 ms from its accept to send its whole
   request; one that sends it too slowly gets a `malformed-action` failure and
   its action does not run. The private in-place Update test path finishes

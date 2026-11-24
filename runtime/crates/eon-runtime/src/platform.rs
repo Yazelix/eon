@@ -91,7 +91,8 @@ pub(crate) fn read_available(stream: &UnixStream, buffer: &mut [u8]) -> io::Resu
         .map_err(Into::into)
 }
 
-/// Inspect a descriptor inherited by the single-threaded resume entry.
+/// Inspect a descriptor inherited by a single-threaded entry: Update resume,
+/// or a fresh supervisor before isolation.
 pub(crate) fn inspect_inherited<T>(
     number: RawFd,
     inspect: impl FnOnce(BorrowedFd<'_>) -> io::Result<T>,
@@ -100,7 +101,7 @@ pub(crate) fn inspect_inherited<T>(
         return Err(io::Error::other("invalid inherited descriptor number"));
     }
     // SAFETY: F_GETFD takes only the integer. A successful query proves the
-    // fd is open; the resume entry starts no thread or other owner during inspection.
+    // fd is open; neither entry starts a thread or other owner during inspection.
     let (flags, fd) = unsafe {
         let flags = libc::fcntl(number, libc::F_GETFD);
         if flags < 0 {
@@ -189,7 +190,7 @@ fn open_descriptors() -> io::Result<Vec<RawFd>> {
 
 /// Call only once every producer of potentially inheritable fds is settled.
 /// F_GETFD uses the number without borrowing an fd another thread may close.
-fn inheritable_descriptors() -> io::Result<impl Iterator<Item = io::Result<RawFd>>> {
+fn inheritable_descriptors() -> io::Result<impl Iterator<Item = io::Result<(RawFd, libc::c_int)>>> {
     Ok(open_descriptors()?.into_iter().filter_map(|number| {
         if number < 3 {
             return None;
@@ -201,13 +202,40 @@ fn inheritable_descriptors() -> io::Result<impl Iterator<Item = io::Result<RawFd
             // Includes the already closed /proc/self/fd directory handle.
             return (error.raw_os_error() != Some(libc::EBADF)).then_some(Err(error));
         }
-        (flags & libc::FD_CLOEXEC == 0).then_some(Ok(number))
+        (flags & libc::FD_CLOEXEC == 0).then_some(Ok((number, flags)))
     }))
+}
+
+/// Isolate ambient descriptors before any fresh supervisor worker or child starts.
+pub(crate) fn isolate_fresh_descriptors() -> io::Result<()> {
+    for descriptor in inheritable_descriptors()? {
+        let (number, flags) = descriptor?;
+        // SAFETY: F_SETFD takes integers and changes only this process's descriptor flags.
+        if unsafe { libc::fcntl(number, libc::F_SETFD, flags | libc::FD_CLOEXEC) } < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
 pub(crate) fn inherited_numbers() -> io::Result<Vec<RawFd>> {
-    inheritable_descriptors()?.collect()
+    inheritable_descriptors()?
+        .map(|entry| entry.map(|(number, _)| number))
+        .collect()
+}
+
+pub(crate) fn inherit_for_child(command: &mut std::process::Command, fd: OwnedFd) {
+    use rustix::io::{FdFlags, fcntl_getfd, fcntl_setfd};
+    use std::os::unix::process::CommandExt;
+
+    // SAFETY: the hook owns the descriptor and only calls async-signal-safe fcntl.
+    unsafe {
+        command.pre_exec(move || {
+            let flags = fcntl_getfd(&fd)?;
+            fcntl_setfd(&fd, flags - FdFlags::CLOEXEC).map_err(Into::into)
+        });
+    }
 }
 
 /// Replace this process using only the command's explicit environment.
@@ -256,10 +284,10 @@ pub(crate) fn exec_inheriting(
         return Err(io::Error::other("update resource lacks close-on-exec"));
     }
     // The allowlist still has CLOEXEC here. Only stdio may already lack it.
-    if let Some(number) = inheritable_descriptors()?.next() {
+    if let Some(descriptor) = inheritable_descriptors()?.next() {
+        let (number, _) = descriptor?;
         return Err(io::Error::other(format!(
-            "unexpected inheritable descriptor {}",
-            number?
+            "unexpected inheritable descriptor {number}"
         )));
     }
     let mut changed = 0;
@@ -870,11 +898,31 @@ mod tests {
     }
 
     #[test]
+    fn fresh_isolation_changes_only_local_descriptor_flags() {
+        let output = child("isolate").output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+    }
+
+    #[test]
     fn platform_child() {
         let Ok(mode) = std::env::var("EON_TEST_PLATFORM_MODE") else {
             return;
         };
         match mode.as_str() {
+            "isolate" => {
+                use rustix::fs::{OFlags, fcntl_getfl};
+                use rustix::io::{FdFlags, fcntl_getfd, fcntl_setfd};
+                let file = std::fs::OpenOptions::new()
+                    .append(true)
+                    .open("/dev/null")
+                    .unwrap();
+                let status = fcntl_getfl(&file).unwrap();
+                assert!(status.contains(OFlags::APPEND));
+                fcntl_setfd(&file, FdFlags::empty()).unwrap();
+                super::isolate_fresh_descriptors().unwrap();
+                assert_eq!(fcntl_getfd(&file).unwrap(), FdFlags::CLOEXEC);
+                assert_eq!(fcntl_getfl(&file).unwrap(), status);
+            }
             "session" => {
                 let pid = rustix::process::getpid();
                 assert_eq!(rustix::process::getsid(None).unwrap(), pid);

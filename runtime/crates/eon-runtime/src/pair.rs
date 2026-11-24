@@ -773,7 +773,7 @@ impl Dispatches {
                 }
                 let pending = pending_marker(&marker, &token);
                 let mut command = Command::new(ya);
-                command
+                super::launch_environment::remove_wayland_socket(&mut command)
                     .args(["emit-to", &id.to_string(), "plugin", "quick-search", &token])
                     .stdin(Stdio::null())
                     .stdout(Stdio::null())

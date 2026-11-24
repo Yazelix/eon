@@ -1,6 +1,7 @@
 //! A/B subprocess exercise of the private EONU adoption route.
 
 use super::*;
+use crate::launch_environment::WAYLAND_SOCKET;
 use crate::{
     attention::Attention,
     control::{StopAnswer, connect_control, send_stop_on, socket_identity},
@@ -8,7 +9,8 @@ use crate::{
     session_registry::Registry,
     sessions::{self, FailedStarts},
     supervisor::{
-        PresentationProcess, lock_supervisor_lifecycle, prepare_runtime, temporary_directory,
+        PresentationProcess, launch_current, lock_supervisor_lifecycle, prepare_runtime,
+        temporary_directory,
     },
     workspace::{IdAllocator, Session, WorkspaceSet},
 };
@@ -27,6 +29,7 @@ const LIFE: &str = "g1-00000000000000000000000000000001";
 const ENTRY: &str = "supervisor::update::handoff::tests::update_process";
 const GATE: &str = "EON_TEST_HANDOFF";
 const START: Duration = Duration::from_secs(30);
+const SENTINEL: &str = "EON_TEST_FRESH_SENTINEL";
 
 fn bin(root: &Path, name: &str) -> PathBuf {
     root.join("store").join(name).join("bin")
@@ -91,6 +94,9 @@ case "$1" in
 --check-descriptors)
   export EON_TEST_HANDOFF=check
   ;;
+--check-fresh-descriptors)
+  export EON_TEST_HANDOFF=fresh-check
+  ;;
 esac
 exec {image} --exact {ENTRY} --nocapture
 "#,
@@ -109,10 +115,45 @@ fn until(what: &str, mut ready: impl FnMut() -> bool) {
     }
 }
 
+fn inherited_sentinel(root: &Path) -> Option<bool> {
+    let number = env::var(SENTINEL).ok()?.parse().unwrap();
+    let expected = object(&fstat(File::open(root.join("sentinel")).unwrap()).unwrap());
+    Some(
+        platform::inspect_inherited(number, |fd| Ok(object(&fstat(fd)?) == expected))
+            .unwrap_or(false),
+    )
+}
+
 #[test]
 fn update_process() {
     let Ok(mode) = env::var(GATE) else { return };
     let root = PathBuf::from(env::var_os("EON_TEST_HANDOFF_ROOT").unwrap());
+    if mode == "fresh-check" {
+        use rustix::fs::{FileType, fstat};
+        // The control socket moves to fd 3 so libtest output stays off it.
+        let input = fstat(io::stdin()).unwrap();
+        let output = platform::inspect_inherited(3, |fd| Ok(fstat(fd)?)).unwrap();
+        let error = fstat(io::stderr()).unwrap();
+        assert_eq!(FileType::from_raw_mode(input.st_mode), FileType::Socket);
+        assert_eq!(object(&input), object(&output));
+        assert_eq!(FileType::from_raw_mode(error.st_mode), FileType::Fifo);
+        assert!(env::var_os("EON_NEW_WINDOW_ENV_5741594c414e445f534f434b4554").is_none());
+        let proof = if let Ok(number) = env::var(WAYLAND_SOCKET) {
+            let sent = number.parse().ok().is_some_and(|number| {
+                platform::inspect_inherited(number, |fd| {
+                    rustix::io::write(fd, b"venus").map_err(Into::into)
+                })
+                .is_ok_and(|written| written == b"venus".len())
+            });
+            if sent { "display" } else { "invalid-display" }
+        } else if inherited_sentinel(&root) == Some(true) {
+            "leaked"
+        } else {
+            "isolated"
+        };
+        fs::write(root.join("fresh-child"), proof).unwrap();
+        return;
+    }
     if mode == "check" {
         for line in fs::read_to_string(root.join("descriptor-objects"))
             .unwrap()
@@ -148,10 +189,49 @@ fn update_process() {
         return;
     }
     if mode == "a" {
-        source(&root, &inputs);
+        if update::fault("fresh-launch-fd") || update::fault("fresh-launch-display") {
+            fresh_source(&root, inputs);
+        } else {
+            source(&root, &inputs);
+        }
     } else {
         replacement(&root, &inputs);
     }
+}
+
+fn fresh_source(root: &Path, mut inputs: Inputs) {
+    if update::fault("fresh-launch-fd") {
+        assert_eq!(inherited_sentinel(root), Some(true));
+    } else {
+        let launch = inputs.launch.as_ref().unwrap();
+        assert!(
+            launch
+                .command(launch.facts())
+                .get_envs()
+                .all(|(key, _)| key != WAYLAND_SOCKET)
+        );
+    }
+    let runtime = generation_directory(root, LIFE);
+    prepare_runtime(&runtime).unwrap();
+    crate::generation::record_launcher(&inputs, &runtime).unwrap();
+    inputs.venus = root.join("venus");
+    let result = launch_current(
+        &inputs,
+        LaunchMode::Workspace,
+        &[
+            "/bin/sh".into(),
+            "-c".into(),
+            r#"printf '%s\n' "${WAYLAND_SOCKET-unset}" > "$EON_TEST_HANDOFF_ROOT/orbit-display"; IFS= read -r answer"#.into(),
+        ],
+        false,
+        false,
+        "eon",
+        &LaunchOptions {
+            directory: Some(root.into()),
+            no_anima: true,
+        },
+    );
+    assert_eq!(result, Ok(0));
 }
 
 fn replacement(root: &Path, inputs: &Inputs) {
@@ -230,6 +310,7 @@ fn replacement(root: &Path, inputs: &Inputs) {
 }
 
 fn source(root: &Path, inputs: &Inputs) {
+    platform::isolate_fresh_descriptors().unwrap();
     assert_eq!(env::var("TERMINFO_DIRS").unwrap(), "a:base");
     assert_eq!(env::var("EON_TEST_A_ONLY").unwrap(), "source-only");
     let runtime = generation_directory(root, LIFE);
@@ -448,10 +529,20 @@ fn verify_descriptors_in_child(root: &Path, image: &str) -> io::Result<()> {
 struct Fixture {
     root: PathBuf,
     child: Child,
+    sentinel: Option<File>,
 }
 
 impl Fixture {
     fn start(fault: Option<&str>, pause: bool, attached: bool) -> Self {
+        Self::start_with_display(fault, pause, attached, None)
+    }
+
+    fn start_with_display(
+        fault: Option<&str>,
+        pause: bool,
+        attached: bool,
+        display: Option<OwnedFd>,
+    ) -> Self {
         let temporary = temporary_directory();
         let suffix = temporary
             .file_name()
@@ -483,6 +574,12 @@ impl Fixture {
                 &root.join("venus"),
                 r#"#!/bin/sh
 echo "$$" > "$EON_TEST_HANDOFF_ROOT/venus-pid"
+if [ -n "${EON_TEST_FRESH_SENTINEL-}" ]; then
+    "$EON_TEST_HANDOFF_ROOT/store/a/bin/eon" --check-fresh-descriptors 3>&1 >/dev/null || exit
+fi
+if [ "${EON_UPDATE_TEST_FAULT-}" = fresh-launch-display ]; then
+    exec "$EON_TEST_HANDOFF_ROOT/store/a/bin/eon" --check-fresh-descriptors 3>&1 >/dev/null
+fi
 while IFS= read -r line; do
     if [ "$line" = present ]; then
         echo "old Venus after exec" >&2
@@ -504,6 +601,8 @@ done
             .env_remove("EON_TEST_A_ONLY")
             .env_remove(WINDOW_RUNTIME)
             .env_remove("EON_UPDATE_TEST_FAULT")
+            .env_remove(SENTINEL)
+            .env_remove(WAYLAND_SOCKET)
             .current_dir(&root)
             .stdin(Stdio::null())
             .stdout(output.try_clone().unwrap())
@@ -550,16 +649,30 @@ if [ "$phase" = agy-version ]; then echo 1.5.6; else echo '{{}}'; fi
                 );
             }
         }
+        let sentinel = (fault == Some("fresh-launch-fd")).then(|| {
+            let file = OpenOptions::new()
+                .create_new(true)
+                .append(true)
+                .open(root.join("sentinel"))
+                .unwrap();
+            let fd = rustix::io::fcntl_dupfd_cloexec(&file, 131).unwrap();
+            command.env(SENTINEL, fd.as_raw_fd().to_string());
+            platform::inherit_for_child(&mut command, fd);
+            file
+        });
+        if let Some(display) = display {
+            command.env(WAYLAND_SOCKET, display.as_raw_fd().to_string());
+            platform::inherit_for_child(&mut command, display);
+        } else if fault == Some("fresh-launch-display") {
+            command.env(WAYLAND_SOCKET, "-1");
+        }
         let mut fixture = Self {
             root,
             child: command.spawn().unwrap(),
+            sentinel,
         };
         until("source window", || {
-            assert!(
-                fixture.child.try_wait().unwrap().is_none(),
-                "{}",
-                fixture.transcript()
-            );
+            fixture.assert_running();
             fixture.path(update::SOCKET).exists()
         });
         fixture
@@ -571,6 +684,24 @@ if [ "$phase" = agy-version ]; then echo 1.5.6; else echo '{{}}'; fi
 
     fn transcript(&self) -> String {
         fs::read_to_string(self.root.join("transcript")).unwrap_or_default()
+    }
+
+    fn assert_running(&mut self) {
+        assert!(
+            self.child.try_wait().unwrap().is_none(),
+            "{}",
+            self.transcript()
+        );
+    }
+
+    fn fresh_child(&mut self) -> String {
+        let mut proof = String::new();
+        until("initial presentation descriptor check", || {
+            self.assert_running();
+            proof = fs::read_to_string(self.root.join("fresh-child")).unwrap_or_default();
+            !proof.is_empty()
+        });
+        proof
     }
 
     fn request(&self, id: u8) -> Preflight {
@@ -712,6 +843,79 @@ impl Drop for Fixture {
             );
         }
         let _ = fs::remove_dir_all(&self.root);
+    }
+}
+
+#[test]
+fn update_isolates_descriptors_at_fresh_launch() {
+    let mut fixture = Fixture::start(Some("fresh-launch-fd"), false, true);
+    let child = fixture.fresh_child();
+    let before = fixture.inspect();
+    let request = fixture.request(11);
+    fixture.preflight(&request);
+    let reply = fixture.read(fixture.commit(&request));
+    assert!(
+        reply.is_empty(),
+        "{:?}\n{}",
+        Refused::decode(&reply, eonu::Direction::Reply),
+        fixture.transcript()
+    );
+    let after = fixture.inspect();
+    assert_eq!(after.pid, before.pid);
+    assert_eq!(after.active_build, request.target_build);
+    let outcome = after.last.unwrap();
+    assert_eq!(outcome.request, request.request);
+    assert_eq!(outcome.operation, Operation::Commit);
+    assert_eq!(outcome.refusal, None);
+    assert!(fixture.root.join("verified-child").exists());
+    assert_eq!(child, "isolated");
+    let sentinel = fixture.sentinel.as_ref().unwrap();
+    assert_eq!(
+        rustix::io::fcntl_getfd(sentinel).unwrap(),
+        rustix::io::FdFlags::CLOEXEC
+    );
+    assert!(
+        rustix::fs::fcntl_getfl(sentinel)
+            .unwrap()
+            .contains(rustix::fs::OFlags::APPEND)
+    );
+    fixture.stop();
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn fresh_launch_passes_the_display_only_to_initial_venus() {
+    use rustix::net::{AddressFamily, SocketType, socket};
+    let (mut compositor, display) = UnixStream::pair().unwrap();
+    let (datagram, _peer) = std::os::unix::net::UnixDatagram::pair().unwrap();
+    let high = |fd: OwnedFd| Some(rustix::io::fcntl_dupfd_cloexec(fd, 131).unwrap());
+    // Only an inherited, connected Unix stream is a display; Venus gets nothing else.
+    for (display, expected) in [
+        (high(display.into()), "display"),
+        (high(File::open("/dev/null").unwrap().into()), "isolated"),
+        (
+            high(socket(AddressFamily::UNIX, SocketType::STREAM, None).unwrap()),
+            "isolated",
+        ),
+        (high(datagram.into()), "isolated"),
+        (None, "isolated"),
+    ] {
+        let mut fixture =
+            Fixture::start_with_display(Some("fresh-launch-display"), false, true, display);
+        assert_eq!(fixture.fresh_child(), expected);
+        if expected == "display" {
+            compositor.set_read_timeout(Some(START)).unwrap();
+            let mut received = [0; 5];
+            compositor.read_exact(&mut received).unwrap();
+            assert_eq!(&received, b"venus");
+            assert_eq!(compositor.read(&mut received).unwrap(), 0);
+            fixture.assert_running();
+        }
+        until("terminal display environment", || {
+            fs::read_to_string(fixture.root.join("orbit-display"))
+                .is_ok_and(|value| value == "unset\n")
+        });
+        fixture.stop();
     }
 }
 

@@ -2792,7 +2792,7 @@ fn remove_agent_environment(
     {
         command.env_remove(name);
     }
-    command
+    super::launch_environment::remove_wayland_socket(command)
 }
 
 /// The locale names that Codex's tool runner set to `C.UTF-8` in `inherited`: a
@@ -2874,7 +2874,7 @@ const USER_MANAGER_COMMAND: &str = "systemctl --user show-environment";
 /// `systemctl --user show-environment` in its own process group, its output piped.
 fn user_manager_command(program: &OsStr) -> Command {
     let mut command = Command::new(program);
-    command
+    super::launch_environment::remove_wayland_socket(&mut command)
         .args(["--user", "--no-pager", "show-environment"])
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
