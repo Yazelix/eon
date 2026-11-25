@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Eligible Eon gates can run on Boat through bounded `timeout` and
+  allowlisted `env` prefixes. Single-package `eon-test -p` runs stay local
+  (`eon-o2k52`).
 - Boat builds on the standard paid plan count verified prepaid pack time
   toward the compute budget. The reserve and start limits still apply, and
   pay-as-you-go and invoice overage remain refused (`eon-r8hjf`, EON-C43).

@@ -1087,17 +1087,10 @@ fn run(
     }
 }
 
-/// The Boat shape `argv` is permitted as, or `None` when it must run locally. One
-/// `timeout DURATION` envelope may wrap a shape; the original argv still runs as given.
+/// Classifies the literal command. The original argv still runs as given.
 pub(crate) fn shape(config: &BoatConfig, argv: &[String]) -> Option<Shape> {
-    let command = match argv {
-        [program, duration, command @ ..] if program == "timeout" => {
-            // Boat's deadline also covers preparation, so the envelope must fit inside it.
-            let limit = config.timeout_seconds.saturating_sub(CLEANUP + PREPARATION);
-            (!command.is_empty() && seconds(duration)? <= limit).then_some(command)?
-        }
-        _ => argv,
-    };
+    let limit = config.timeout_seconds.saturating_sub(CLEANUP + PREPARATION);
+    let command = gate_command(argv, limit)?;
     let shape = if nix_gate(command) {
         Shape::NixGate
     } else {
@@ -1106,27 +1099,81 @@ pub(crate) fn shape(config: &BoatConfig, argv: &[String]) -> Option<Shape> {
     config.allow_shapes.contains(&shape).then_some(shape)
 }
 
-/// A `timeout` duration: a positive integer, without leading zeros, of seconds, minutes or
-/// hours. Options, fractions, other units and `infinity` are not durations here.
+fn gate_command(mut argv: &[String], limit: u64) -> Option<&[String]> {
+    let mut seen_timeout = false;
+    let mut seen_env = false;
+    loop {
+        let (program, args) = argv.split_first()?;
+        argv = match program.as_str() {
+            "timeout" if !seen_timeout => {
+                seen_timeout = true;
+                timeout_command(args, limit)?
+            }
+            "env" if !seen_env => {
+                seen_env = true;
+                let args = match args {
+                    [separator, rest @ ..] if separator == "--" => rest,
+                    _ => args,
+                };
+                // These exact values are safe to forward to the guest in argv.
+                let command = args
+                    .iter()
+                    .position(|arg| !matches!(arg.as_str(), "LANG=C" | "LC_ALL=C"))?;
+                &args[command..]
+            }
+            "timeout" | "env" => return None,
+            _ => return Some(argv),
+        };
+    }
+}
+
+fn timeout_command(mut argv: &[String], limit: u64) -> Option<&[String]> {
+    let mut kill_after = None;
+    let mut seen_signal = false;
+    while let Some((option, rest)) = argv.split_first().filter(|(word, _)| word.starts_with('-')) {
+        argv = rest;
+        let (flag, inline) = option
+            .split_once('=')
+            .map_or((option.as_str(), None), |(flag, value)| (flag, Some(value)));
+        let mut operand = || {
+            inline.or_else(|| {
+                let (value, rest) = argv.split_first()?;
+                argv = rest;
+                Some(value.as_str())
+            })
+        };
+        match (flag, inline) {
+            ("--", None) => break,
+            ("--foreground" | "--preserve-status", None) => (),
+            ("-k", None) | ("--kill-after", _) if kill_after.is_none() => {
+                kill_after = Some(seconds(operand()?)?);
+            }
+            ("-s", None) | ("--signal", _) if !seen_signal => {
+                let signal = operand()?;
+                if !matches!(signal, "1" | "2" | "3" | "9" | "15")
+                    && !matches!(
+                        signal.strip_prefix("SIG").unwrap_or(signal),
+                        "HUP" | "INT" | "QUIT" | "KILL" | "TERM"
+                    )
+                {
+                    return None;
+                }
+                seen_signal = true;
+            }
+            _ => return None,
+        }
+    }
+    let (duration, command) = argv.split_first()?;
+    // The envelope and any kill grace period share Boat's post-preparation budget.
+    (seconds(duration)?.checked_add(kill_after.unwrap_or(0))? <= limit).then_some(command)
+}
+
 fn seconds(duration: &str) -> Option<u64> {
-    let (unit, digits) = duration.as_bytes().split_last()?;
-    let scale = match unit {
-        b's' => 1,
-        b'm' => 60,
-        b'h' => 3600,
-        _ => return None,
-    };
-    if !(1..=6).contains(&digits.len())
-        || digits[0] == b'0'
-        || !digits.iter().all(u8::is_ascii_digit)
-    {
+    let digits = duration.strip_suffix(['s', 'm', 'h']).unwrap_or(duration);
+    if digits.len() > 6 || digits.starts_with('0') {
         return None;
     }
-    std::str::from_utf8(digits)
-        .ok()?
-        .parse::<u64>()
-        .ok()?
-        .checked_mul(scale)
+    rota::run::parse_timeout(duration)
 }
 
 fn dev_command(argv: &[String]) -> Option<Shape> {
@@ -1160,7 +1207,7 @@ fn dev_command(argv: &[String]) -> Option<Shape> {
             "--workspace" | "--locked" | "--offline" if cargo => (),
             "--release" | "--all-targets" if cargo => (),
             "--no-capture" | "--no-fail-fast" | "--doc" if shape == Shape::EonTest => (),
-            "-p" => {
+            "-p" if cargo => {
                 let package = words.next()?;
                 if package.is_empty()
                     || !package
@@ -1811,10 +1858,11 @@ mod tests {
         ));
         assert!(allowed(
             &config,
-            &words(&["nix", "develop", "-c", "eon-test", "-p", "rota-cli"])
+            &words(&["nix", "develop", "-c", "eon-test"])
         ));
         for argv in [
             vec!["nix", "develop", "-c", "cargo", "test"],
+            vec!["nix", "develop", "-c", "eon-test", "-p", "rota-cli"],
             vec![
                 "nix",
                 "develop",
@@ -1910,7 +1958,13 @@ mod tests {
         assert!(remote(
             7200,
             &[
-                "timeout", "30s", "nix", "develop", "-c", "eon-test", "-p", "rota-cli"
+                "timeout",
+                "30s",
+                "nix",
+                "develop",
+                "-c",
+                "eon-test",
+                "--no-capture"
             ]
         ));
         assert!(remote(3600, &gate("29m")));
@@ -1924,8 +1978,8 @@ mod tests {
             assert!(!remote(limit, &gate(duration)), "{limit} {duration}");
         }
         for duration in [
-            "0", "0m", "012m", "1.5h", "2d", "120", "inf", "infinity", "9999999h", "m", "1M",
-            "1m\u{e9}", "\u{e9}",
+            "0", "0m", "012m", "1.5h", "2d", "inf", "infinity", "9999999h", "m", "1M", "1m\u{e9}",
+            "\u{e9}",
         ] {
             assert!(!remote(7200, &gate(duration)), "{duration:?}");
         }
@@ -1947,18 +2001,6 @@ mod tests {
         for argv in [
             &landing_out_link[..],
             &wrapped_out_link,
-            &["timeout", "--", "1m", "nix", "build", ".#default"],
-            &["timeout", "-s", "KILL", "1m", "nix", "build", ".#default"],
-            &["timeout", "-k", "5", "1m", "nix", "build", ".#default"],
-            &["timeout", "--foreground", "1m", "nix", "build", ".#default"],
-            &[
-                "timeout",
-                "--preserve-status",
-                "1m",
-                "nix",
-                "build",
-                ".#default",
-            ],
             &[
                 "timeout",
                 "1m",
@@ -2022,6 +2064,101 @@ mod tests {
             &["nix", "develop", "-c", "cargo", "clippy", "--"],
         ] {
             assert!(!remote(7200, argv), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn boat_gate_prefixes_preserve_shape() {
+        let config = BoatConfig {
+            allow_shapes: vec![Shape::EonTest],
+            timeout_seconds: 7200,
+            ..BoatConfig::default()
+        };
+        let gate = ["nix", "develop", "-c", "eon-test", "--no-capture"];
+        for prefix in [
+            "timeout 120",
+            "timeout -k 5 -s KILL -- 5335s",
+            "timeout --kill-after=5s --signal=SIGTERM 1m",
+            "timeout --kill-after 5s --signal 15 --foreground --preserve-status 1m env -- LC_ALL=C",
+            "env -- LANG=C LC_ALL=C timeout 1m",
+            "env LANG=C",
+            "env --",
+            "env",
+        ] {
+            let argv: Vec<_> = prefix.split_ascii_whitespace().chain(gate).collect();
+            assert_eq!(
+                shape(&config, &words(&argv)),
+                Some(Shape::EonTest),
+                "{argv:?}"
+            );
+        }
+        let disabled = BoatConfig::default();
+        assert!(!allowed(
+            &disabled,
+            &words(&["env", "nix", "develop", "-c", "eon-test"])
+        ));
+    }
+
+    #[test]
+    fn boat_gate_prefixes_fail_closed() {
+        let config = BoatConfig {
+            allow_shapes: vec![Shape::NixGate, Shape::EonTest],
+            timeout_seconds: 7200,
+            ..BoatConfig::default()
+        };
+        for prefix in [
+            "/usr/bin/timeout 1m",
+            "timeout --verbose 1m",
+            "timeout --foregroun 1m",
+            "timeout --foreground=yes 1m",
+            "timeout -k 1m",
+            "timeout -k 0 1m",
+            "timeout -k 5 -k 1 1m",
+            "timeout --kill-after=5 5336",
+            "timeout --signal=STOP 1m",
+            "timeout --signal= 1m",
+            "timeout -s TERM -s KILL 1m",
+            "timeout 1m --",
+            "timeout 1m env timeout 1m",
+            "/usr/bin/env",
+            "env env",
+            "env LANG=C --",
+            "env -- -",
+            "env -C /work",
+            "env --chdir=/work",
+            "env -S LC_ALL=C",
+            "env --split-string=LC_ALL=C",
+            "env -u HOME",
+            "env --unset=HOME",
+            "env -i",
+            "env --ignore-environment",
+            "env --debug",
+            "env LITERAL=value",
+            "env LC_ALL=/private/value",
+            "env CARGO_TARGET_DIR=/private/target",
+            "env -- PATH=/private/bin",
+        ] {
+            let argv: Vec<_> = prefix
+                .split_ascii_whitespace()
+                .chain(["nix", "build", ".#default"])
+                .collect();
+            assert!(!allowed(&config, &words(&argv)), "{argv:?}");
+        }
+        for command in [
+            &["bash", "-c", "nix build .#default"][..],
+            &["sh", "-c", "nix build .#default"],
+            &["bash", "-e", "gate.sh"],
+            &["nix build .#default"],
+            &["nix", "develop", "-c", "eon-test", "-p", "rota-cli"],
+            &["nix", "develop", "-c", "cargo", "fmt"],
+            &["nix", "develop", "-c", "eon-bench", "gate"],
+            &[],
+        ] {
+            let argv: Vec<_> = ["env", "LC_ALL=C", "timeout", "1m"]
+                .into_iter()
+                .chain(command.iter().copied())
+                .collect();
+            assert!(!allowed(&config, &words(&argv)), "{argv:?}");
         }
     }
 

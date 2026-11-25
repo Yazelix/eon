@@ -416,21 +416,26 @@ The other supported `allow_shapes` values are `cargo-build`, `cargo-clippy` and
 `eon-test`. They permit `nix develop -c cargo build` (workspace/locked/offline/
 release/all-targets and `-p NAME`), `nix develop -c cargo clippy` with the same
 flags and an optional trailing `-- -D warnings`, and the pinned
-`nix develop -c eon-test` harness (ordinary subsets, `-p NAME`, doctests and 1–4
-test threads). Ignored, live, visual and benchmark selectors stay local; direct
-Cargo test/nextest commands do not bypass Eon's test sandbox.
+`nix develop -c eon-test` harness (ordinary filters, doctests and 1–4 test
+threads). `eon-test -p NAME` and ignored, live, visual and benchmark selectors
+stay local. Use `eon-test` to run tests in Eon's test sandbox.
 
-A permitted command may be wrapped in one `timeout DURATION`, where DURATION is
-a positive integer with an `s`, `m` or `h` suffix and no leading zero. The
-original argv, `timeout` included, runs unchanged. Boat's own deadline of
-`timeout_seconds` minus one minute starts before recovery, upload, Nix
-bootstrap and warmup, so the envelope may be at most `timeout_seconds` minus
-31 minutes: 89 minutes at 7200 and 29 minutes at 3600. A longer envelope,
-`timeout` options, `infinity`, fractions, other units and nested envelopes run
-locally. If preparation still overruns, Boat's deadline ends the run as an
-uncertain 125 with no local replay. A run stopped on the VM is cleaned up by
-deleting the VM, because `timeout` keeps its command in a separate process
-group.
+A permitted command may have one `timeout` and one `env` prefix in either
+order. The original argv runs unchanged. `env` accepts an optional leading
+`--` and the exact assignments `LANG=C` and `LC_ALL=C`. Other assignments
+and options, including `CARGO_TARGET_DIR` overrides, stay local.
+
+Before its duration, `timeout` accepts `--foreground`, `--preserve-status`,
+one `-k` or `--kill-after`, one `-s` or `--signal`, and a final optional
+`--`. Signals are HUP, INT, QUIT, KILL and TERM, also accepted with a `SIG`
+prefix or as 1, 2, 3, 9 and 15. A duration is a positive integer of up to
+six digits with no leading zero and an optional `s`, `m` or `h` suffix.
+Bare numbers are seconds. The duration and kill grace period together must
+fit `timeout_seconds` minus 31 minutes (89 minutes at 7200 and 29 minutes at
+3600). Unsupported options, invalid durations and repeated wrappers stay
+local. Boat's own deadline starts before recovery, upload and warmup. If it
+expires first, the result is an uncertain 125 with no local replay. Guest
+cleanup covers remaining processes even with `--foreground`.
 
 `environment` must be a named builds-only environment other than `base`.
 Create it with `boat env new eon-builds`, then set all passing controls off
