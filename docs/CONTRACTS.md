@@ -1502,6 +1502,10 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- **Amendment (2026-11-25):** `eon-dm8m6`, approved by eon-desk under
+  Lucca's 2026-11-13 delegation for contract text: a Files invocation that
+  shows a hidden Files moves it to the tab's current directory in place.
+
 - **Amendment (2026-11-21):** `eon-260mh.2.3`, approved by eon-lead under
   Lucca's delegation (`eon-260mh.2.1`): owner-authority sockets (workspace,
   Orbit, Editor listeners) stay under the window's runtime root, and Eon
@@ -2451,9 +2455,16 @@ names its socket. CLI JSON names a session `session` and a terminal
   popup configuration. Files is the tab's pair (EON-C18), whose key table,
   footers and Zoxide rules apply.
 
-  Files remains live when hidden and keeps its process, location and cursor
-  across tab-directory changes; only after its process exits does the next
-  invocation start a fresh instance at the tab directory.
+  Files remains live when hidden and keeps its process. Each Alt+Shift+Y
+  (EONW `InvokePopup` of `files`) that shows a hidden Files of an
+  established tab first moves its Yazi to the tab's current directory in
+  place, as `eon files reveal` navigates, so Yazi keeps its tabs and
+  history; its CLI path is `eon files reveal` with that directory. Project
+  (Alt+Z), `eon focus uN`, a screen switch of a shown pair, and a pending
+  tab's pair do not move it. A move that fails or does not finish within a
+  short internal bound leaves Yazi where it is, still shows Files, and is
+  recorded in the diagnostic log. Only after its process exits does the
+  next invocation start a fresh instance at the tab directory.
   In Files, Yazi's edit opener runs `eon edit`, so Enter on a text file opens it
   as `eon edit` does, by default in the tab's Editor popup, which then shows in
   place of Files. Enter

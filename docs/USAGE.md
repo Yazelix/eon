@@ -1067,8 +1067,10 @@ hovered file's details. Esc first leaves a visual mode, selection, filter,
 find or search, one per press, and otherwise closes the popup; Ctrl+C does the
 same and no longer closes a Yazi tab. In a Files left over from a supervisor
 recovery, they quit Yazi instead. Every other Yazi key, including file
-operations, works as usual; Z, q and Q do nothing. Files keeps its place when
-hidden and when the tab's directory changes. Only a folder you use enters
+operations, works as usual; Z, q and Q do nothing. Each time Alt+Shift+Y
+shows a hidden Files, Files moves to the tab's current directory; the same
+Yazi keeps its tabs and history, so H goes back to where you were.
+Alt+Shift+Y from quick search keeps Files where it is. Only a folder you use enters
 Zoxide history, as Zoxide records it (by default it skips your home
 directory); browsing and searching add none, and `[shell] zoxide = false`
 stops even that. Enter on a text file opens it with your

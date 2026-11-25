@@ -70,6 +70,12 @@ pub(crate) enum SessionOperation {
         target: RevealPath,
         fresh: bool,
     },
+    /// Moves the hidden Files pair `session` to its tab's `directory` as it
+    /// is shown (EON-C10). The show goes on whether or not it moves.
+    MoveFiles {
+        session: Session,
+        directory: PathBuf,
+    },
     /// Clears (`pending: false`) or restores (`pending: true`) the pending
     /// mark of the pair `session`, which recovery reads to stop a pending
     /// tab's pair (EON-C18). A commit clears it before anything changes and is
@@ -2185,6 +2191,14 @@ impl Workspace {
             if let Some(index) = self.displaced_transient(tab_index, Some(&popup.id))? {
                 self.stop_popup(tab_index, index, operate)?;
             }
+            // Showing a hidden Files moves it to the tab directory first
+            // (EON-C10); a move that fails leaves it where it is.
+            if entry == FILES_ENTRY && !selected {
+                let _ = operate(SessionOperation::MoveFiles {
+                    session: popup.session.clone(),
+                    directory: self.tabs[tab_index].directory.clone(),
+                });
+            }
             self.select_tab_popup(tab_index, popup.id, false);
             return Ok(());
         }
@@ -2298,8 +2312,9 @@ impl Workspace {
     }
 
     /// Whether invoking `popup`'s entry stops it and starts a fresh one at
-    /// the tab's directory. Retargeting preserves Files' location and
-    /// Editor's buffers; a Scrollback snapshot belongs to no directory.
+    /// the tab's directory. Files moves in place instead (`invoke_popup`),
+    /// Editor keeps its buffers, and a Scrollback snapshot belongs to no
+    /// directory.
     fn retargets(&self, tab_index: usize, popup: &Popup, definition: &PopupDefinition) -> bool {
         popup.entry != FILES_ENTRY
             && !matches!(
@@ -4360,8 +4375,9 @@ pub(crate) fn required_effects(
             let effects = starts.union(tab_state(tab, &|workspace, index| {
                 Effects::NONE.with_if(workspace.invocation_stops(index, entry), Close)
             }));
-            // A fixed key into Eon's own pair (leaving quick search) or
-            // Workspaces picker (Enter); not a content command.
+            // A fixed key or Files move into Eon's own pair (leaving quick
+            // search, `cd` to the tab directory) or Workspaces picker (Enter);
+            // not a content command.
             let sends = routed.is_some_and(|(set, _, caller)| {
                 set.pair(caller, tab, entry).is_some()
                     || (*intent == InvokeIntent::Toggle
@@ -5887,7 +5903,9 @@ pub(crate) mod tests {
         let fail_start = |operation| match operation {
             SessionOperation::Start { .. } => Err("start failed".into()),
             SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
-            SessionOperation::RevealFiles { .. } => unreachable!("no reveal was requested"),
+            SessionOperation::RevealFiles { .. } | SessionOperation::MoveFiles { .. } => {
+                unreachable!("no reveal was requested")
+            }
         };
         let error = if exited {
             set.session_ended(&popup.session, SessionEnd::Exited, fail_start)
@@ -7815,7 +7833,62 @@ pub(crate) mod tests {
             SessionOperation::Stop(_) => observed.with(Close),
             SessionOperation::MarkPair { .. } => *observed,
             SessionOperation::RevealFiles { fresh, .. } => observed.with(Run).with_if(!fresh, Send),
+            SessionOperation::MoveFiles { .. } => observed.with(Run).with(Send),
         };
+    }
+
+    /// Alt+Shift+Y on a hidden Files moves it to the tab's current directory
+    /// before showing it; hiding, Alt+Z and a fresh start do not, and a failed
+    /// move still shows Files (EON-C10).
+    #[test]
+    fn showing_a_hidden_files_moves_it_to_the_tab_directory_first() {
+        use SessionOperation::MoveFiles;
+        let mut set = two_workspace_set(|_| Ok(()));
+        let t = set.workspaces[0].tabs[0].id.clone();
+        let requests = std::cell::Cell::new(0);
+        let run = |set: &mut WorkspaceSet, action: Action, fail: bool| {
+            requests.set(requests.get() + 1);
+            let mut moves = Vec::new();
+            let request = format!("files-{}", requests.get());
+            set.dispatch(&request, None, action, prepared, |operation| {
+                let MoveFiles { session, directory } = operation else {
+                    return Ok(());
+                };
+                moves.push((session, directory));
+                if fail {
+                    Err("Yazi did not move".into())
+                } else {
+                    Ok(())
+                }
+            })
+            .unwrap();
+            moves
+        };
+        let shown = |set: &WorkspaceSet| set.workspaces[0].tabs[0].selected_popup.clone();
+        assert!(run(&mut set, invoke(&t, FILES_ENTRY), false).is_empty());
+        let files = set.workspaces[0].tabs[0].popups[0].clone();
+        let toggle = |entry: &str| Action::InvokePopup {
+            tab: t.clone(),
+            entry: entry.into(),
+            expected_instance: Some(files.id.clone()),
+            intent: InvokeIntent::Toggle,
+        };
+        assert!(run(&mut set, toggle(FILES_ENTRY), false).is_empty());
+        assert_eq!(shown(&set), None);
+        let directory = Action::Workspace(WorkspaceAction::SetTabDirectory {
+            tab: t.clone(),
+            directory: b"/tmp".to_vec(),
+        });
+        assert!(run(&mut set, directory, false).is_empty());
+        let moved = vec![(files.session.clone(), PathBuf::from("/tmp"))];
+        assert_eq!(run(&mut set, toggle(FILES_ENTRY), false), moved);
+        assert_eq!(shown(&set), Some(files.id.clone()));
+        assert!(run(&mut set, toggle(FILES_ENTRY), false).is_empty());
+        assert_eq!(run(&mut set, toggle(FILES_ENTRY), true), moved);
+        assert_eq!(shown(&set), Some(files.id.clone()));
+        assert!(run(&mut set, toggle(FILES_ENTRY), false).is_empty());
+        assert!(run(&mut set, toggle(PROJECT_ENTRY), false).is_empty());
+        assert_eq!(shown(&set), Some(files.id.clone()));
     }
 
     #[test]
@@ -8016,6 +8089,16 @@ pub(crate) mod tests {
         let transient = with("commands");
         let keep_alive = with("agent");
         let pair = with(FILES_ENTRY);
+        let mut hidden_pair = with(FILES_ENTRY);
+        let files = Action::InvokePopup {
+            tab: tab(&hidden_pair),
+            entry: FILES_ENTRY.into(),
+            expected_instance: hidden_pair.workspaces[0].tabs[0].selected_popup.clone(),
+            intent: InvokeIntent::Toggle,
+        };
+        hidden_pair
+            .dispatch("hide", None, files.clone(), prepared, |_| Ok(()))
+            .unwrap();
         let picker = with("workspaces");
         let scrollback = with("scrollback");
         let scrollback_popup = scrollback.workspaces[0].tabs[0].popups[0].id.clone();
@@ -8319,6 +8402,8 @@ pub(crate) mod tests {
                 new(&[Run, Arrange, Send]),
                 true,
             ),
+            // Showing a hidden Files moves it with Eon's own `cd`.
+            (&hidden_pair, None, files, new(&[Run, Arrange, Send]), true),
             (
                 &picker,
                 None,
@@ -10574,7 +10659,8 @@ pub(crate) mod tests {
                     SessionOperation::MarkPair { session, pending } => {
                         PathBuf::from(format!("mark {session} {pending}"))
                     }
-                    SessionOperation::RevealFiles { .. } => unreachable!("no reveal was requested"),
+                    SessionOperation::RevealFiles { .. } | SessionOperation::MoveFiles { .. } =>
+                        unreachable!("no reveal was requested"),
                 })
                 .collect::<Vec<_>>(),
             [
@@ -10633,7 +10719,8 @@ pub(crate) mod tests {
                         SessionOperation::Start { .. } | SessionOperation::MarkPair { .. } => {
                             Ok(())
                         }
-                        SessionOperation::RevealFiles { .. } =>
+                        SessionOperation::RevealFiles { .. }
+                        | SessionOperation::MoveFiles { .. } =>
                             unreachable!("no reveal was requested"),
                     }
                 )
@@ -10654,7 +10741,8 @@ pub(crate) mod tests {
                     prepared,
                     |operation| match operation {
                         SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
-                        SessionOperation::RevealFiles { .. } =>
+                        SessionOperation::RevealFiles { .. }
+                        | SessionOperation::MoveFiles { .. } =>
                             unreachable!("no reveal was requested"),
                         SessionOperation::Start { .. } => Err("start failed".into()),
                     }
@@ -10790,7 +10878,9 @@ pub(crate) mod tests {
                 prepared,
                 |operation| match operation {
                     SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
-                    SessionOperation::RevealFiles { .. } => unreachable!("no reveal was requested"),
+                    SessionOperation::RevealFiles { .. } | SessionOperation::MoveFiles { .. } => {
+                        unreachable!("no reveal was requested")
+                    }
                     SessionOperation::Start { .. } => Err("start failed".into()),
                 },
             )
@@ -10858,7 +10948,9 @@ pub(crate) mod tests {
                 |operation| match operation {
                     SessionOperation::Stop(_) => Err("stop failed".into()),
                     SessionOperation::Start { .. } | SessionOperation::MarkPair { .. } => Ok(()),
-                    SessionOperation::RevealFiles { .. } => unreachable!("no reveal was requested"),
+                    SessionOperation::RevealFiles { .. } | SessionOperation::MoveFiles { .. } => {
+                        unreachable!("no reveal was requested")
+                    }
                 },
             )
             .unwrap_err();
@@ -11213,7 +11305,8 @@ pub(crate) mod tests {
                         SessionOperation::Start { .. } => Err("start failed".into()),
                         SessionOperation::Stop(_) => Err("stop failed".into()),
                         SessionOperation::MarkPair { .. } => Ok(()),
-                        SessionOperation::RevealFiles { .. } => {
+                        SessionOperation::RevealFiles { .. }
+                        | SessionOperation::MoveFiles { .. } => {
                             unreachable!("no reveal was requested")
                         }
                     }

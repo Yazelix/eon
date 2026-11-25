@@ -3335,6 +3335,28 @@ fn apply_session_operation(
                 .join("ya");
             return pair::reveal(running, &target, fresh, &ya, start_pump, log);
         }
+        SessionOperation::MoveFiles { session, directory } => {
+            let moved = sessions
+                .iter()
+                .find(|item| item.id == session.id && item.endpoint == session.endpoint)
+                .ok_or_else(|| "the Files pair is no longer live".to_owned())
+                .and_then(|running| {
+                    let ya = inputs
+                        .managed
+                        .shell_bin
+                        .as_ref()
+                        .ok_or("this Eon has no packaged ya")?
+                        .join("ya");
+                    let target = pair::RevealPath::validate_directory(&directory)?;
+                    pair::move_to(running, &target, &ya, start_pump)
+                });
+            return moved.inspect_err(|error| {
+                log.record(&format!(
+                    "Files did not move to {}: {error}",
+                    directory.display()
+                ));
+            });
+        }
         SessionOperation::MarkPair { session, pending } => {
             let Some(pair) = sessions.iter().find(|item| item.id == session) else {
                 return Ok(());

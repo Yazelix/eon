@@ -4157,7 +4157,18 @@ struct PairWindow {
 
 impl PairWindow {
     fn assert_quick_dispatches(&self, clients: &[u64]) {
-        let calls = wait_for_lines(&self.ya_log, clients.len());
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let calls = loop {
+            // Files moves (`exec cd`) share the log; count only the dispatches.
+            let calls: Vec<_> = log_lines(&self.ya_log)
+                .into_iter()
+                .filter(|call| call.starts_with("emit-to "))
+                .collect();
+            if calls.len() >= clients.len() || Instant::now() >= deadline {
+                break calls;
+            }
+            thread::sleep(Duration::from_millis(10));
+        };
         assert_eq!(calls.len(), clients.len(), "{calls:?}");
         let mut tokens = std::collections::HashSet::new();
         for (call, client) in calls.iter().zip(clients) {
@@ -4227,7 +4238,7 @@ while [ ! -e "$EON_TEST_STOP" ] && [ ! -e "$EON_TEST_FILES_EXIT.$session" ]; do 
         );
         executable(
             &session_bin.join("ya"),
-            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EON_TEST_YA_LOG\"\n",
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$EON_TEST_YA_LOG\"\n[ \"$1\" = exec ] && [ -e \"$EON_TEST_YA_LOG.fail\" ] && exit 1\nexit 0\n",
         );
         executable(
             &session_bin.join("zoxide"),
@@ -5287,6 +5298,16 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         response => panic!("{response:?}"),
     };
 
+    // Alt+Shift+Y moves a hidden Files to the tab directory in place (EON-C10).
+    let moves = || -> Vec<String> {
+        log_lines(&window.ya_log)
+            .into_iter()
+            .filter(|call| call.starts_with("exec "))
+            .collect()
+    };
+    let move_to = |directory: &Path| format!("exec cd --raw {}", directory.display());
+    let dispatches = || log_lines(&window.ya_log).len() - moves().len();
+
     // Project names the tab's Files pair as its observed instance.
     assert!(matches!(
         window.invoke_popup("project-stale", "project", None),
@@ -5306,6 +5327,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     // Alt+Shift+Y shows the hidden pair on Files, leaving quick search with
     // its key through the lease, which stops once fzf ends.
     assert!(shown(&window.invoke_popup("y-show", "files", Some("u1"))));
+    assert_eq!(moves(), [move_to(&window.launch)]);
     quick.wait_for_leaves(1);
     quick.end();
     // On quick search, Alt+Shift+Y switches to Files and keeps the pair shown.
@@ -5320,16 +5342,55 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         leave_keys(&window.root.join("input.log"), "terminal-2"),
         1 + leaves
     );
+    assert_eq!(moves().len(), 1, "a screen switch moved Files");
     // Quick search runs no listener.
     assert!(!window.generation().join("terminal-2.quick.sock").exists());
 
-    // On Files, Alt+Shift+Y hides the pair; on a hidden Files it shows it as is.
+    // On Files, Alt+Shift+Y hides the pair; on a hidden Files it first moves
+    // Files to the tab's current directory.
     assert!(!shown(&window.invoke_popup("y-hide", "files", Some("u1"))));
+    assert_eq!(moves().len(), 1, "hiding moved Files");
+    let home = window.home.to_str().unwrap();
+    assert!(
+        window
+            .eon(&["tab", "directory", "t1", "--", home])
+            .status
+            .success()
+    );
     assert!(shown(&window.invoke_popup(
         "y-show-files",
         "files",
         Some("u1")
     )));
+    assert_eq!(moves(), [move_to(&window.launch), move_to(&window.home)]);
+    assert_eq!(log_lines(&window.files_log).len(), 1, "Files restarted");
+    // A move that fails still shows Files, within its short bound, and is logged.
+    assert!(!shown(&window.invoke_popup(
+        "y-hide-2",
+        "files",
+        Some("u1")
+    )));
+    let fail = PathBuf::from(format!("{}.fail", window.ya_log.display()));
+    fs::write(&fail, "").unwrap();
+    let asked = Instant::now();
+    assert!(shown(&window.invoke_popup("y-failed", "files", Some("u1"))));
+    let waited = asked.elapsed();
+    fs::remove_file(&fail).unwrap();
+    assert!(waited < Duration::from_secs(10), "{waited:?}");
+    let failed = moves().split_off(2);
+    assert!(
+        !failed.is_empty() && failed.iter().all(|call| *call == move_to(&window.home)),
+        "{failed:?}"
+    );
+    let logs: String = fs::read_dir(window.root.join("state/eon/logs"))
+        .unwrap()
+        .filter_map(|entry| fs::read_to_string(entry.unwrap().path()).ok())
+        .collect();
+    assert!(
+        logs.contains(&format!("Files did not move to {home}")),
+        "{logs}"
+    );
+    let moved = moves().len();
     // On Files, Alt+Z switches to quick search and keeps the pair shown.
     assert!(shown(&window.invoke_popup(
         "z-switch",
@@ -5338,7 +5399,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     )));
     window.assert_quick_dispatches(&[id, id]);
     thread::sleep(Duration::from_millis(300));
-    assert_eq!(log_lines(&window.ya_log).len(), 2);
+    assert_eq!(dispatches(), 2);
 
     // Both keys work on a pending tab; its own screen's key dismisses it. A
     // new tab starts on quick search, which counts as shown while its fzf is
@@ -5360,7 +5421,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     let starting = QuickSearch::up(&window, "terminal-3");
     starting.wait_for_leaves(1);
     starting.end();
-    assert_eq!(log_lines(&window.ya_log).len(), 2);
+    assert_eq!(dispatches(), 2);
     // On Files, Alt+Z asks for quick search; while it starts, Alt+Z keeps
     // the pair shown and asks for nothing more; once it is up, it dismisses.
     assert!(still_pending(&window.invoke_popup(
@@ -5382,7 +5443,8 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
     ));
     drop(up);
     thread::sleep(Duration::from_millis(300));
-    assert_eq!(log_lines(&window.ya_log).len(), 3);
+    assert_eq!(dispatches(), 3);
+    assert_eq!(moves().len(), moved, "Alt+Z or a pending pair moved Files");
     window.stop_generation(&mut supervisor);
 }
 

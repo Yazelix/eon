@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Alt+Shift+Y opens Files at the tab's current directory each time it shows
+  a hidden Files. The same Yazi moves in place, so its tabs and history stay
+  and H goes back to where you were. Alt+Shift+Y from quick search keeps
+  Files where it is (`eon-dm8m6`, EON-C10).
 - `slots.boat.allow_shapes` accepts `eon-darwin-clippy`, so
   `nix develop -c eon-darwin-clippy` (bare or with `-p NAME`) can run on Boat.
   Older Eon builds reject the value; update them before listing it

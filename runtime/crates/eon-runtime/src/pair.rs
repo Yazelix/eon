@@ -45,6 +45,10 @@ const RESEND: Duration = Duration::from_millis(250);
 /// Internal recovery timing.
 const LEAVE_BOUND: Duration = Duration::from_secs(2);
 
+/// How long showing Files waits for its Yazi to move (EON-C10). Internal
+/// recovery timing: a blocked Yazi delays the show by at most this.
+const MOVE_BOUND: Duration = Duration::from_secs(1);
+
 /// The key that leaves quick search for Files: Ctrl+Alt+Shift+PageDown. It
 /// produces no text and no packaged Yazi binding uses it, so a copy that
 /// reaches Yazi instead of fzf changes nothing there.
@@ -538,6 +542,18 @@ impl RevealPath {
         Ok(target)
     }
 
+    /// Where showing Files moves it: a readable UTF-8 directory only.
+    pub(super) fn validate_directory(path: &Path) -> Result<Self, String> {
+        let text = path
+            .to_str()
+            .ok_or_else(|| format!("cannot move Files to {path:?} as a UTF-8 path"))?;
+        let target = Self::validate(text)?;
+        if !target.directory {
+            return Err(format!("{path:?} is not a directory"));
+        }
+        Ok(target)
+    }
+
     fn kind(path: &Path) -> Result<bool, String> {
         let metadata =
             fs::metadata(path).map_err(|error| format!("cannot reveal {path:?}: {error}"))?;
@@ -569,12 +585,7 @@ pub(super) fn reveal(
     log: &DiagnosticLog,
 ) -> Result<(), String> {
     let deadline = Instant::now() + TERMINAL_START_TIMEOUT;
-    let id = client_id(&session.endpoint).to_string();
-    let command = || {
-        let mut command = Command::new(ya);
-        command.env("YAZI_ID", &id).arg("exec");
-        command
-    };
+    let command = || ya_exec(ya, &session.endpoint);
     if !target.directory
         && target
             .path
@@ -618,6 +629,29 @@ pub(super) fn reveal(
         }
         pump.wait((now + Duration::from_millis(25)).min(deadline));
     }
+}
+
+/// Moves the hidden Files pair in `session` to `target` in place, as showing
+/// it does (EON-C10); the switch that shows it runs afterwards.
+pub(super) fn move_to(
+    session: &RunningSession,
+    target: &RevealPath,
+    ya: &Path,
+    pump: &mut StartPump,
+) -> Result<(), String> {
+    let mut command = ya_exec(ya, &session.endpoint);
+    command.args(["cd", "--raw"]).arg(&target.path);
+    let deadline = Instant::now() + MOVE_BOUND;
+    run_reveal_ya(command, target, deadline, "ya exec cd", pump)
+}
+
+/// `ya exec` addressed to the exact pair whose terminal listens at `endpoint`.
+fn ya_exec(ya: &Path, endpoint: &Path) -> Command {
+    let mut command = Command::new(ya);
+    command
+        .env("YAZI_ID", client_id(endpoint).to_string())
+        .arg("exec");
+    command
 }
 
 fn run_reveal_ya(
