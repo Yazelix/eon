@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C2: Venus sends the window title, pointer icon and input-method settings
+  to its native host only when they change, so an event a setting causes cannot
+  send it again; contract change approved under Rule 1 (`eon-33cww.2`).
+
 - Visible quota chips update their reset text at the next local date boundary
   or reset time, including when the clock chip is hidden (`eon-vtby5`).
 

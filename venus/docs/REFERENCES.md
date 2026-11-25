@@ -19,6 +19,21 @@ adapter. The Rune candidate uses the existing native chrome tree route.
 [Rune activation queue](https://github.com/Yazelix/eon-rune/blob/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/crates/rune/src/a11y/mod.rs#L84-L113)
 and [Rune tree guard](https://github.com/Yazelix/eon-rune/blob/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/crates/rune/src/a11y/tree.rs#L142-L170).
 
+Native window settings follow equality at the effect sink: the state owner
+marks real changes and the sink sends a level only when its value changes
+within a window's lifetime, as winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` already does for
+input-method permission on
+[Wayland](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/mod.rs#L616-L625)
+and [AppKit](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/macos/view.rs#L883-L899).
+The same pin sends a
+[Wayland title](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/state.rs#L1122-L1139)
+and [pointer icon](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/state.rs#L734-L746)
+and invalidates
+[AppKit caret coordinates](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/macos/view.rs#L901-L906)
+on every call, so Venus keeps one memo per window in front of its host
+(VEN-C2; the feedback table is in `INTERACTION.md`). Elm's virtual-tree diff
+and Salsa's tracked graph were rejected (eon-33cww.1).
+
 ## Generated chrome palettes
 
 `eon-eon-themes-or3q.2` inspects Ramps at
