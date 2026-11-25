@@ -187,7 +187,7 @@ pub struct SidebarRow {
     pub(crate) text_right: f32,
     /// The pane's pinned name, else Claude's session name, the record title or app name.
     pub(crate) title: String,
-    /// The age, the source terminal, "+N" for other records and "status stale".
+    /// The age, the source terminal, "+N" for other records, "status stale" and the pane's tag.
     pub(crate) detail: String,
     /// The popup outline marker at the padded right edge, centered across the row.
     pub(crate) popup_marker: Option<SceneRect>,
@@ -611,6 +611,8 @@ pub enum HeaderText<'a> {
     Reading,
     /// Text fitted to at most this many pixels.
     Fit(f32),
+    /// Text fitted to at most this many pixels, shortened only after its first this many bytes.
+    After(usize, f32),
 }
 
 /// One item Eon may place in the Eon Bar between the drag region and Shortcuts.
@@ -2083,6 +2085,7 @@ impl DialogScene {
             let mut row = attention_row(
                 &entry.attention,
                 pinned_name,
+                None,
                 &entry.tab,
                 &entry.target,
                 source,
@@ -2537,6 +2540,7 @@ fn sidebar_rect(
 fn attention_row(
     attention: &Attention,
     pinned_name: Option<&str>,
+    tag: Option<&str>,
     tab: &str,
     target: &str,
     source: &str,
@@ -2610,6 +2614,9 @@ fn attention_row(
     if stale {
         detail.push_str(" · status stale");
     }
+    if let Some(tag) = tag {
+        let _ = write!(detail, " · {tag}");
+    }
     let message = record
         .filter(|_| attention.state == AttentionState::NeedsInput)
         .map(|record| record.message.clone())
@@ -2636,6 +2643,9 @@ fn attention_row(
     }
     if let Some(location) = location {
         let _ = write!(accessible_label, " in {location}, {source}");
+    }
+    if let Some(tag) = tag {
+        let _ = write!(accessible_label, ", tag {tag}");
     }
     if popup {
         accessible_label.push_str(", popup");
@@ -2721,6 +2731,7 @@ fn sidebar_contents(
     card: SceneRect,
     metrics: CellMetrics,
     view: SidebarView<'_>,
+    header_text: &mut impl FnMut(HeaderText<'_>, &str) -> (String, f32),
 ) -> (Vec<SidebarHeading>, Vec<SidebarRow>, SceneRect, f32, f32) {
     let line = metrics.height;
     let padding = metrics.padding;
@@ -2771,7 +2782,7 @@ fn sidebar_contents(
                     .expect("EONW validates popup entries")
                     .label
                     .as_str();
-                (&popup.id, &popup.attention, label, true, None)
+                (&popup.id, &popup.attention, label, true, None, None)
             })
             .chain(tab.panes().map(|pane| {
                 (
@@ -2780,15 +2791,17 @@ fn sidebar_contents(
                     pane.id.as_str(),
                     false,
                     pane.pinned_name.as_deref(),
+                    pane.tag.as_deref(),
                 )
             }));
-        for (target, attention, source, popup, pinned_name) in terminals {
+        for (target, attention, source, popup, pinned_name, tag) in terminals {
             let Some(attention) = attention else {
                 continue;
             };
-            let row = attention_row(
+            let mut row = attention_row(
                 attention,
                 pinned_name,
+                tag,
                 &tab.id,
                 target,
                 source,
@@ -2801,6 +2814,17 @@ fn sidebar_contents(
                 metrics,
                 SceneRect { top, ..list },
             );
+            // Only the tag, last on the line, shortens; without room for "…" it is left out.
+            if let Some(tag) = tag {
+                let prefix = row.detail.len() - tag.len();
+                let width = row.text_right - row.text_left;
+                let fitted = header_text(HeaderText::After(prefix, width), &row.detail).0;
+                if fitted.len() > prefix {
+                    row.detail = fitted;
+                } else {
+                    row.detail.truncate(prefix - " · ".len());
+                }
+            }
             top = row.rect.bottom();
             rows.push(row);
         }
@@ -4142,7 +4166,7 @@ impl WorkspaceScene {
         let (sidebar_headings, sidebar_rows, sidebar_list, sidebar_scroll, sidebar_max_scroll) =
             sidebar.map_or_else(
                 || (Vec::new(), Vec::new(), SceneRect::default(), 0.0, 0.0),
-                |card| sidebar_contents(snapshot, card, metrics, sidebar_view),
+                |card| sidebar_contents(snapshot, card, metrics, sidebar_view, &mut header_text),
             );
         // Tabs follow the label's or the icon's gap, or else the bar's left inset.
         let mut tab_end = if workspace_label.is_some() || eon_icon.is_some() {

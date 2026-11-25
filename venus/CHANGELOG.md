@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- VEN-C30: A sidebar pane row's second line ends with the pane's tag, after
+  the age, pane ID, `+N` and `status stale` (`1h · p25 · eon-igae.25`). Only the
+  tag shortens, with `…`, when the line does not fit, and the row's accessible
+  name adds the whole tag (`eon-wih11`, approved 2026-11-25 by eon-desk under
+  Lucca's delegation).
+
 - Visible quota chips update their reset text at the next local date boundary
   or reset time, including when the clock chip is hidden (`eon-vtby5`).
 

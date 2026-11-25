@@ -3251,6 +3251,9 @@ impl Application {
                 HeaderText::Reading => (label.to_owned(), state.renderer.reading_width()),
                 HeaderText::Fact => state.renderer.measure_header_text(label),
                 HeaderText::Fit(width) => state.renderer.fit_header_text(label, width),
+                HeaderText::After(prefix, width) => {
+                    state.renderer.fit_header_text_after(label, prefix, width)
+                }
             },
             initial_hints,
             zoom,

@@ -623,6 +623,16 @@ carries no pane pin. Popup agents have no pane pin and keep that fallback too.
 Rows retain their state, app icon, age, source pane ID or popup label and
 needs-input message; their accessible names include the pin when present.
 
+A sidebar pane row's second line ends with the pane's tag (set by `eon pane
+rename PANE NAME --tag TAG`), in the line's muted colour, after the age, the pane
+ID and any `+N` or `status stale`: `1h · p25 · eon-igae.25`. A pane without a
+tag keeps the line unchanged. When the line does not fit, only the tag shortens,
+keeping its start and end around `…` as tab labels do; the age, pane ID and
+other items always stay whole, and a tag with no room even for `…` is left out.
+The tag is plain text and is never read as a Beads ID. The row's accessible name
+adds `tag eon-igae.25` after the pane ID, with the whole tag. Popup rows and the
+attention inbox show no tag.
+
 Popup-source rows from the shown session in the sidebar and attention inbox use
 the same fill as pane rows. Two thin overlapping rounded-square outlines form
 a window mark larger than the label text at the padded right edge, vertically

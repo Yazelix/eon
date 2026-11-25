@@ -2083,6 +2083,17 @@ impl Renderer {
         fit_header_text(&mut self.fonts.font_system, self.metrics, label, width)
     }
 
+    /// Fit header text to `width` pixels, eliding only after its first `prefix` bytes.
+    pub fn fit_header_text_after(
+        &mut self,
+        label: &str,
+        prefix: usize,
+        width: f32,
+    ) -> (String, f32) {
+        let fonts = &mut self.fonts.font_system;
+        crate::contour::fit_header_text_after(fonts, self.metrics, label, prefix, width)
+    }
+
     /// The tooltip of the hovered bar item, or the popup of the hovered shortcut hints keycap.
     pub(super) fn build_header_tooltip(
         &mut self,
@@ -8655,6 +8666,23 @@ mod tests {
                 (String::new(), 0.0)
             );
         }
+    }
+
+    #[test]
+    fn sidebar_tag_fit_keeps_the_prefix_whole_and_elides_only_the_tag() {
+        use crate::contour::fit_header_text_after as fit;
+        let (mut fonts, metrics) = (test_sans(), CellMetrics::for_scale(1.0));
+        let (prefix, text) = ("1h · p25 · ", "1h · p25 · eon-eon-agent-lr8sx.39.13");
+        let (n, least) = (prefix.len(), format!("{prefix}…"));
+        let full = fit(&mut fonts, metrics, text, 0, f32::INFINITY).1;
+        let (fitted, measured) = fit(&mut fonts, metrics, text, n, full - 1.0);
+        let tag = fitted.strip_prefix(prefix).expect("the prefix stays whole");
+        let (head, tail) = tag.split_once('…').expect("only the tag elides");
+        assert!(measured <= full - 1.0 && !head.is_empty() && !tail.is_empty());
+        assert!(text[n..].starts_with(head) && text.ends_with(tail));
+        let width = fit(&mut fonts, metrics, &least, 0, f32::INFINITY).1;
+        assert_eq!(fit(&mut fonts, metrics, text, n, width).0, least);
+        assert!(fit(&mut fonts, metrics, text, n, width - 1.0).0.len() < n);
     }
 
     #[test]

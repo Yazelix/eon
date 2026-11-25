@@ -16,6 +16,10 @@ installation, and proven contract changes.
   `eon session --json` names each running window's `client` (`shipping` or
   `rune-preview`). The preview is temporary: `eon-yp6vg.54` removes the flag
   and the entry when Rune becomes the client (`eon-yp6vg.7.4`).
+- The Agents sidebar shows a pane's tag (`eon pane rename PANE NAME --tag TAG`)
+  at the end of its row's second line, such as `1h · p25 · eon-igae.25`. On a
+  narrow sidebar only the tag shortens, with `…`, and screen readers hear the
+  whole tag (`eon-wih11`).
 - `slots.boat.allow_shapes` accepts `eon-darwin-clippy`, so
   `nix develop -c eon-darwin-clippy` (bare or with `-p NAME`) can run on Boat.
   Older Eon builds reject the value; update them before listing it

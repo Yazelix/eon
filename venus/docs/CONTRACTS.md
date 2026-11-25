@@ -2499,6 +2499,10 @@ re-proved when that platform or feature is next touched.
   glyph (Lucide `bot` mask); a terminal without records leaves the slot empty;
   monogram tile, letter and generic glyph follow the row's contrast-adapted
   and stale palette; installed proof pending.
+  Amended by `eon-wih11` (approved 2026-11-25 by eon-desk under Lucca's
+  delegation): a sidebar pane row's second line ends with the pane's tag, which
+  alone shortens when the line does not fit, and its accessible name adds the
+  whole tag; installed proof pending.
 - **Consumer:** One person using a Venus window attached to a full Eon
   workspace. The sidebar itself needs `sidebar` other than `Off`. When
   admitted under VEN-C8 and VEN-C20, Alt+G and Alt+Shift+G work under `Off` too.
@@ -2601,7 +2605,12 @@ re-proved when that platform or feature is next touched.
       - the source terminal, by the pane's `pN` identity as in pane headers
         and AccessKit (VEN-C8), or, for a popup, its catalog label such as
         "Agent popup", because the spec says shown status should name its
-        source terminal.
+        source terminal;
+      - a pane's `tag` (EONW admits only nonempty, trimmed plain text), as
+        plain text, last on the line after the age, source terminal, "+N"
+        and "status stale". When the line does not fit, only the tag shortens
+        with "…"; the items before it stay whole, and a tag with no room for
+        "…" is left out. Popup rows and attention inbox rows show no tag.
     - A stale record is dimmed and labelled "status stale".
     - A needs-input row adds one plain-text, truncated `msg` line.
     - Other records of a terminal fold into "+N".
@@ -2697,7 +2706,8 @@ re-proved when that platform or feature is next touched.
       terminal, as the clipboard notice does.
   - **Accessibility.** The sidebar is one named AccessKit region after the
     header and before the panes. Each row's accessible name gives the state
-    word, app, Claude Code's session name, tab, source terminal and message.
+    word, app, Claude Code's session name, tab, source terminal, the pane's
+    whole tag when set (`tag eon-igae.25`) and message.
 - **Important failures:**
   - With no attention, the sidebar shows an explanatory empty state.
   - The sidebar never takes desktop focus and never changes Orbit state.
