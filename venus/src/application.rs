@@ -3062,6 +3062,10 @@ impl Application {
         ))
     }
 
+    fn scene_matches_grid(scene: &Scene, size: SurfaceSize) -> bool {
+        (scene.columns, scene.rows) == (size.cols, size.rows)
+    }
+
     fn scrollback_label(&self, workspace: Option<&WorkspaceScene>) -> Option<String> {
         let state = self.window.as_ref()?;
         let scene = self.terminal.model.scene()?;
@@ -3069,7 +3073,7 @@ impl Application {
             terminal_screen(workspace, state.renderer.size()),
             state.renderer.metrics(),
         )?;
-        if scene.columns != size.cols || scene.rows != size.rows {
+        if !Self::scene_matches_grid(scene, size) {
             return None;
         }
         self.terminal.model.scrollback_label()
@@ -3099,19 +3103,24 @@ impl Application {
         self.window.as_ref()?.renderer.presented_scrollback_rect()
     }
 
-    fn presentation_candidate(&self, workspace: Option<&WorkspaceScene>) -> PresentationIdentity {
-        let revision = self
-            .terminal
-            .model
+    fn terminal_scene_for_presentation(&self) -> Option<&Scene> {
+        let model = &self.terminal.model;
+        model
             .scene()
-            .filter(|_| {
-                self.terminal.model.is_attached() && !self.terminal.model.awaiting_current_frame()
-            })
-            .and_then(|scene| {
-                let state = self.window.as_ref()?;
-                let screen = terminal_screen(workspace, state.renderer.size());
-                surface_size(screen, state.renderer.metrics()).map(|_| scene.revision)
-            });
+            .filter(|_| model.is_attached() && !model.awaiting_current_frame())
+    }
+
+    fn presentation_candidate(&self, workspace: Option<&WorkspaceScene>) -> PresentationIdentity {
+        let revision = self.terminal_scene_for_presentation().and_then(|scene| {
+            let state = self.window.as_ref()?;
+            let screen = terminal_screen(workspace, state.renderer.size());
+            surface_size(screen, state.renderer.metrics())
+                .filter(|&size| {
+                    matches!(state.native, NativeWindow::Winit { .. })
+                        || Self::scene_matches_grid(scene, size)
+                })
+                .map(|_| scene.revision)
+        });
         self.presentation.candidate(revision)
     }
 

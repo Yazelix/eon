@@ -7,7 +7,8 @@
 //! - `on_window_geometry` (output entry, applied size and scale) is the admission fact winit's
 //!   `current_monitor` is, then `Resized` and the scale change, as winit delivers them;
 //! - `on_window_event` sees each raw size and scale first, in the same dispatch as input: a
-//!   change withdraws input at once, and the next applied geometry and its draw re-admit it;
+//!   change withdraws input at once. A draw of the Orbit grid for the applied geometry
+//!   re-admits it;
 //! - `on_focus`, `on_visibility` are `Focused` and `Occluded`;
 //! - a native close request (and macOS Quit) is `CloseRequested`: Venus decides (detach, or quit
 //!   with consent) and Rune always defers, so no native callback stops Orbit or exits by itself;
@@ -212,15 +213,14 @@ impl From<WindowGeometry> for Geometry {
     }
 }
 
-impl Geometry {
-    fn matches_slot(self, slot: SlotGeometry) -> bool {
-        // This candidate's grid_view fills the window. Chrome will give the grid its own bounds.
-        let (width, height) = self.size;
-        slot.same_slot(SlotGeometry::new(
-            [0.0, 0.0, width as f32, height as f32],
-            self.scale as f32,
-        ))
-    }
+fn window_slot((width, height): (u32, u32), scale: f32) -> SlotGeometry {
+    SlotGeometry::new([0.0, 0.0, width as f32, height as f32], scale)
+}
+
+fn slot_for_target(slot: SlotGeometry, size: (u32, u32)) -> SlotGeometry {
+    // The grid fills the window. Slot rounding must not move Orbit to a different grid.
+    let target = window_slot(size, slot.scale());
+    if slot.same_slot(target) { target } else { slot }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -461,8 +461,8 @@ impl Host {
     }
 
     /// Rune's raw size or scale, before Rune applies it and before `on_window_geometry` reports
-    /// it. Input admitted at the applied geometry stops at once, and no frame re-admits it until
-    /// the window is back at that geometry or the idle report applies the new one, with the
+    /// it. Input admitted at the applied geometry stops at once. A draw can qualify after the
+    /// window returns to that geometry or the idle report applies the new one, with the
     /// canonical Resize. True when state changed.
     fn raw_geometry(&mut self, size: Option<(u32, u32)>, scale: Option<f64>) -> bool {
         let Some(applied) = self.geometry else {
@@ -590,6 +590,7 @@ impl Host {
                 return None;
             }
         };
+        let geometry = slot_for_target(geometry, f.size);
         if f.rt.state.identity.is_none() {
             let fonts = f.rt.state.fonts.take()?;
             match hosted_renderer(f, geometry, fonts) {
@@ -646,6 +647,7 @@ impl Host {
         prepared: Option<(SlotGeometry, PresentationIdentity)>,
         drawn: Drawn,
     ) -> bool {
+        self.frames.staged.take();
         if let Some(refusal) = drawn.refusal {
             self.fail(refusal);
             return false;
@@ -669,8 +671,12 @@ impl Host {
         if let Some(((prepared, candidate), at)) = prepared.zip(drawn.slot)
             && self.raw.is_none()
             && self.geometry.is_some_and(|geometry| {
-                geometry.has_output && geometry.matches_slot(prepared) && geometry.matches_slot(at)
+                geometry.has_output
+                    && prepared == window_slot(geometry.size, geometry.scale as f32)
+                    && at.same_slot(prepared)
             })
+            && (candidate.revision.is_some()
+                || self.app.terminal_scene_for_presentation().is_none())
         {
             self.frames.staged.set(Some(candidate));
         }
