@@ -9,6 +9,8 @@ installation, and proven contract changes.
   `nix develop -c eon-darwin-clippy` (bare or with `-p NAME`) can run on Boat.
   Older Eon builds reject the value; update them before listing it
   (`eon-03uy8`).
+- Stopping a window no longer fails when one of its terminals exits at the
+  same moment (`eon-bt1g8`).
 - Eligible Eon gates can run on Boat through bounded `timeout` and
   allowlisted `env` prefixes. Single-package `eon-test -p` runs stay local
   (`eon-o2k52`).

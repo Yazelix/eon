@@ -542,15 +542,28 @@ pub(crate) fn peer_identity(stream: impl AsFd) -> io::Result<(libc::pid_t, libc:
 /// The process with `pid`, or `None` when no process has it.
 #[cfg(target_os = "linux")]
 pub(crate) fn process(pid: u32) -> Result<Option<Process>, String> {
-    let stat = match std::fs::read_to_string(format!("/proc/{pid}/stat")) {
-        Ok(stat) => stat,
-        Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(None),
+    process_stat(std::fs::File::open(format!("/proc/{pid}/stat")))
+}
+
+/// Reads an opened `/proc/<pid>/stat`. A process reaped after the open reads
+/// as ESRCH and, as on Darwin, has no process.
+#[cfg(target_os = "linux")]
+fn process_stat(file: io::Result<std::fs::File>) -> Result<Option<Process>, String> {
+    let mut stat = String::new();
+    match file.and_then(|mut file| io::Read::read_to_string(&mut file, &mut stat)) {
+        Ok(_) => {}
+        Err(error)
+            if error.kind() == io::ErrorKind::NotFound
+                || error.raw_os_error() == Some(libc::ESRCH) =>
+        {
+            return Ok(None);
+        }
         Err(error) => {
             return Err(format!(
                 "cannot validate terminal process identity: {error}"
             ));
         }
-    };
+    }
     let mut fields = stat
         .rsplit_once(')')
         .map(|(_, fields)| fields.split_whitespace())
@@ -1064,6 +1077,36 @@ mod tests {
             .unwrap(),
         );
         assert_eq!(super::peer_identity(&stream).unwrap(), (0, u32::MAX));
+    }
+
+    /// Stop reads a terminal's identity while its Orbit may be reaped. A
+    /// process reaped between the open and the read has none (eon-bt1g8);
+    /// an unreaped one keeps its identity.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_process_reaped_after_its_identity_opened_has_none() {
+        use rustix::process::{Pid, WaitId, WaitIdOptions, waitid};
+        let mut child = std::process::Command::new("sleep")
+            .arg("30")
+            .spawn()
+            .unwrap();
+        let pid = child.id();
+        let stat = || fs::File::open(format!("/proc/{pid}/stat"));
+        let live = super::process(pid).unwrap().unwrap();
+        assert!(!live.ended);
+        child.kill().unwrap();
+        let exited = WaitIdOptions::EXITED | WaitIdOptions::NOWAIT;
+        while let Err(error) = waitid(WaitId::Pid(Pid::from_child(&child)), exited) {
+            assert_eq!(error, rustix::io::Errno::INTR, "{error}");
+        }
+        let opened = stat().unwrap();
+        let zombie = super::process_stat(stat()).unwrap().unwrap();
+        assert!(zombie.ended && zombie.start == live.start);
+        child.wait().unwrap();
+        assert!(super::process_stat(Ok(opened)).unwrap().is_none());
+        // Other read failures still fail validation.
+        let error = super::process_stat(fs::File::open("/proc/self")).err();
+        assert!(error.is_some_and(|error| error.starts_with("cannot validate terminal process")));
     }
 
     #[test]
