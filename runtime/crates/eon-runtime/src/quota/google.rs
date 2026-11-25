@@ -54,35 +54,19 @@ impl std::fmt::Display for AgyVersion {
     }
 }
 
-/// The agy versions whose `/usage` dispatch is verified (EON-C27): 1.4.1 by source review
-/// and a turn-free report, 1.5.6 by its recorded zero-turn report (eon-9iriq). A
-/// version stays out until its evidence is recorded, so it never risks a model turn.
-pub const ACCEPTED_AGY_VERSIONS: [AgyVersion; 2] =
-    [AgyVersion::new(1, 4, 1), AgyVersion::new(1, 5, 6)];
-
-/// What the Google collector's version preflight finds (EON-C27), for `eon doctor` (EON-C1).
+/// What `eon doctor`'s agy check finds (EON-C1). Google collection admits any version
+/// whose `/usage` report validates (EON-C27), so the version is only reported.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AgyCheck {
-    Accepted(AgyVersion),
-    /// The version found, or None when agy's report is not a plain `MAJOR.MINOR.PATCH`.
-    Unsupported(Option<AgyVersion>),
-    /// Why the preflight could not finish.
+    /// `agy --version` succeeded: the version, or None when it is not a plain
+    /// `MAJOR.MINOR.PATCH`.
+    Found(Option<AgyVersion>),
+    /// Why the check could not finish.
     Unavailable(&'static str),
 }
 
-fn accepted(bytes: &[u8]) -> Result<AgyVersion, Option<AgyVersion>> {
-    match AgyVersion::parse(bytes) {
-        Some(version) if ACCEPTED_AGY_VERSIONS.contains(&version) => Ok(version),
-        found => Err(found),
-    }
-}
-
-pub(super) fn check_version(bytes: &[u8]) -> Result<(), Failure> {
-    accepted(bytes).map(drop).map_err(|_| Failure::Start)
-}
-
-/// Runs the collector's version preflight against `agy` on `path`, with the collector's
-/// bounds and `limit` as its deadline.
+/// Runs `agy --version` from `path` with the collector's resolution and bounds, and
+/// `limit` as its deadline.
 pub(super) fn version_check_on(path: Option<&OsStr>, limit: Duration) -> AgyCheck {
     let Ok(program) = resolve(path) else {
         return AgyCheck::Unavailable("no executable agy on an absolute PATH entry");
@@ -92,22 +76,19 @@ pub(super) fn version_check_on(path: Option<&OsStr>, limit: Duration) -> AgyChec
     let (_running, stop) = mpsc::channel();
     let report = in_private_directory(|directory| {
         let mut remaining = MAX_BYTES;
-        version_report(
-            &program,
-            directory,
-            &mut |command, remaining| super::run_command(command, deadline, remaining, &stop),
+        super::run_command(
+            command(&program, directory, &["--version"]),
+            deadline,
             &mut remaining,
+            &stop,
         )
     });
     match report {
-        Ok(Some(bytes)) => match accepted(&bytes) {
-            Ok(version) => AgyCheck::Accepted(version),
-            Err(found) => AgyCheck::Unsupported(found),
-        },
+        Ok(Some((bytes, status))) if status.success() => AgyCheck::Found(AgyVersion::parse(&bytes)),
         Ok(None) => AgyCheck::Unavailable("agy --version was stopped"),
         Err(Failure::Deadline) => AgyCheck::Unavailable("agy --version did not finish in time"),
         Err(Failure::OutputLimit) => AgyCheck::Unavailable("agy --version wrote too much output"),
-        Err(_) => AgyCheck::Unavailable("agy --version could not run or failed"),
+        Ok(Some(_)) | Err(_) => AgyCheck::Unavailable("agy --version could not run or failed"),
     }
 }
 
@@ -130,23 +111,6 @@ fn in_private_directory<T>(body: impl FnOnce(&Path) -> Result<T, Failure>) -> Re
     let result = body(&directory);
     let _ = fs::remove_dir_all(directory);
     result
-}
-
-/// The `--version` phase shared by collection and doctor: its stdout, or None when stopped.
-fn version_report(
-    program: &Path,
-    directory: &Path,
-    run: &mut impl FnMut(Command, &mut usize) -> super::CommandResult,
-    remaining: &mut usize,
-) -> Result<Option<Vec<u8>>, Failure> {
-    let Some((version, status)) = run(command(program, directory, &["--version"]), remaining)?
-    else {
-        return Ok(None);
-    };
-    if !status.success() {
-        return Err(Failure::Start);
-    }
-    Ok(Some(version))
 }
 
 /// Unattended collection never searches the workspace through relative PATH entries.
@@ -214,10 +178,6 @@ fn fetch_with(
     };
     in_private_directory(|directory| {
         let mut remaining = MAX_BYTES;
-        let Some(version) = version_report(&program, directory, &mut run, &mut remaining)? else {
-            return Ok(None);
-        };
-        check_version(&version)?;
         let Some((bytes, status)) = run(
             command(
                 &program,
@@ -262,15 +222,7 @@ pub(super) fn normalize(bytes: &[u8], observed_at: u64) -> Result<Option<GoogleQ
         "SUCCESS" => {}
         _ => return Err(Failure::Malformed),
     }
-    let command = report["command"].as_object().ok_or(Failure::Malformed)?;
-    if command
-        .get("name")
-        .and_then(Value::as_str)
-        .ok_or(Failure::Malformed)?
-        != "usage"
-    {
-        return Err(Failure::ProviderError);
-    }
+    // Turns first: a prompt turn's report has no `command`, and must back off (EON-C27).
     let turns = report["num_turns"].as_u64().ok_or(Failure::Malformed)?;
     let usage = report["usage"].as_object().ok_or(Failure::Malformed)?;
     let mut tokens = false;
@@ -288,6 +240,15 @@ pub(super) fn normalize(bytes: &[u8], observed_at: u64) -> Result<Option<GoogleQ
             != 0;
     }
     if turns != 0 || tokens {
+        return Err(Failure::ProviderError);
+    }
+    let command = report["command"].as_object().ok_or(Failure::Malformed)?;
+    if command
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or(Failure::Malformed)?
+        != "usage"
+    {
         return Err(Failure::ProviderError);
     }
     if observed_at == 0 {
@@ -404,6 +365,9 @@ mod tests {
     // SHA-256: d6c77d417f3a6493e049fa065a061d7b0ffc03f6ce904b57fb46037b635eae6f
     const REPORT_1_5_6: &[u8] = include_bytes!("../../testdata/agy-usage-1.5.6.json");
     const NOW_1_5_6: u64 = 1795132800; // 2026-11-20T00:00:00Z, before the fixture resets.
+    // Synthetic report with agy 1.5.17's fields (eon-n588l): invented values, no identity.
+    const REPORT_1_5_17: &[u8] = include_bytes!("../../testdata/agy-usage-1.5.17.json");
+    const NOW_1_5_17: u64 = 1795629600; // 2026-11-25T18:00:00Z, before the fixture resets.
 
     fn sample() -> Value {
         serde_json::from_slice(REPORT).unwrap()
@@ -483,20 +447,16 @@ mod tests {
         let mut failures = Vec::new();
         for (label, version, expected) in [
             (
-                "1.5.6",
-                "printf '1.5.6\\n'",
-                AgyCheck::Accepted(AgyVersion::new(1, 5, 6)),
+                "1.5.17",
+                "printf '1.5.17\\n'",
+                AgyCheck::Found(Some(AgyVersion::new(1, 5, 17))),
             ),
             (
-                "1.3.0",
-                "printf 1.3.0",
-                AgyCheck::Unsupported(Some(AgyVersion::new(1, 3, 0))),
+                "2.0.0",
+                "printf 2.0.0",
+                AgyCheck::Found(Some(AgyVersion::new(2, 0, 0))),
             ),
-            (
-                "unrecognized",
-                "printf unknown",
-                AgyCheck::Unsupported(None),
-            ),
+            ("unrecognized", "printf unknown", AgyCheck::Found(None)),
             (
                 "failed",
                 "printf 1.5.6; exit 3",
@@ -561,44 +521,16 @@ mod tests {
     }
 
     #[test]
-    fn collection_budget_is_inclusive_and_shared_across_phases() {
+    fn collection_runs_only_usage_within_an_inclusive_cap() {
         use std::os::unix::process::ExitStatusExt;
 
         let root = crate::supervisor::temporary_directory();
         let program = root.join("agy");
         super::super::tests::script(&program, "exit 91");
         let mut failures = Vec::new();
-        for (label, padding, usage, expected, expected_calls) in [
-            ("exact cap", 0, MAX_BYTES - 5, Ok(Some(MAX_BYTES - 5)), 2),
-            (
-                "padded exact cap",
-                100,
-                MAX_BYTES - 105,
-                Ok(Some(MAX_BYTES - 105)),
-                2,
-            ),
-            (
-                "aggregate overflow",
-                100,
-                MAX_BYTES - 100,
-                Err(Failure::OutputLimit),
-                2,
-            ),
-            (
-                "version overflow",
-                MAX_BYTES - 4,
-                0,
-                Err(Failure::OutputLimit),
-                1,
-            ),
-            ("version exact cap", MAX_BYTES - 5, 0, Ok(Some(0)), 2),
-            (
-                "usage after exact version",
-                MAX_BYTES - 5,
-                1,
-                Err(Failure::OutputLimit),
-                2,
-            ),
+        for (label, usage, expected) in [
+            ("exact cap", MAX_BYTES, Ok(Some(MAX_BYTES))),
+            ("over cap", MAX_BYTES + 1, Err(Failure::OutputLimit)),
         ] {
             let mut calls = 0;
             let result = fetch_with(&program, |command, remaining| {
@@ -606,22 +538,13 @@ mod tests {
                     .get_args()
                     .map(|argument| argument.to_str().unwrap())
                     .collect::<Vec<_>>();
-                let bytes = match calls {
-                    0 => {
-                        assert_eq!(arguments, ["--version"]);
-                        let mut version = b"1.4.1".to_vec();
-                        version.resize(5 + padding, b' ');
-                        version
-                    }
-                    1 => {
-                        assert_eq!(arguments, ["-p", "/usage", "--output-format", "json"]);
-                        vec![b'0'; usage]
-                    }
-                    _ => panic!("unexpected third collection phase"),
-                };
+                assert_eq!(arguments, ["-p", "/usage", "--output-format", "json"]);
                 calls += 1;
-                super::super::consume_output(remaining, bytes.len())?;
-                Ok(Some((bytes, std::process::ExitStatus::from_raw(0))))
+                super::super::consume_output(remaining, usage)?;
+                Ok(Some((
+                    vec![b'0'; usage],
+                    std::process::ExitStatus::from_raw(0),
+                )))
             });
             check(
                 &mut failures,
@@ -629,12 +552,7 @@ mod tests {
                 result.map(|bytes| bytes.map(|bytes| bytes.len())),
                 expected,
             );
-            check(
-                &mut failures,
-                &format!("{label} calls"),
-                calls,
-                expected_calls,
-            );
+            check(&mut failures, &format!("{label} calls"), calls, 1);
         }
         fs::remove_dir_all(root).unwrap();
         assert!(failures.is_empty(), "{}", failures.join("\n"));
@@ -693,6 +611,30 @@ mod tests {
                     ("Claude and GPT models", 10080, 75, 1795748400),
                     ("Claude and GPT models", 300, 100, 1795147200),
                     ("Gemini 4 Argon", 10080, 90, 1795755600),
+                ]
+                .map(
+                    |(scope, duration_minutes, remaining_percent, reset)| QuotaWindow {
+                        scope: Some(scope.into()),
+                        duration_minutes,
+                        remaining_percent,
+                        resets_at: Some(reset),
+                    },
+                )
+                .into(),
+            })),
+        );
+        check(
+            &mut failures,
+            "agy 1.5.17 report",
+            normalize(REPORT_1_5_17, NOW_1_5_17),
+            Ok(Some(GoogleQuota {
+                state: GoogleQuotaState::Fresh,
+                observed_at: NOW_1_5_17,
+                windows: [
+                    ("Gemini Models", 10080, 40, 1796180400),
+                    ("Gemini Models", 300, 85, 1795640400),
+                    ("Claude and GPT models", 10080, 60, 1796115600),
+                    ("Gemini 4 Argon", 10080, 70, 1796119200),
                 ]
                 .map(
                     |(scope, duration_minutes, remaining_percent, reset)| QuotaWindow {
@@ -1093,6 +1035,15 @@ mod tests {
                 Failure::InvalidWindow,
             ));
         }
+        // A prompt turn's report has no `command`; it must still back off as a provider error.
+        let mut prompt = one_bucket();
+        prompt["num_turns"] = json!(1);
+        prompt.as_object_mut().unwrap().remove("command");
+        cases.push((
+            "turn without command",
+            serde_json::to_vec(&prompt).unwrap(),
+            Failure::ProviderError,
+        ));
         let mut seven = one_bucket();
         let group = seven["command"]["data"]["groups"][0].clone();
         seven["command"]["data"]["groups"] = json!(
@@ -1122,45 +1073,25 @@ mod tests {
     }
 
     #[test]
-    fn source_versions_are_listed_and_the_input_cap_is_inclusive() {
+    fn agy_versions_parse_only_plain_numbers_and_the_input_cap_is_inclusive() {
         let mut failures = Vec::new();
-        // agy 1.5.6's `--version` prints exactly these six bytes (od -c, eon-9iriq).
-        for bytes in [
-            b"1.4.1".as_slice(),
-            b"1.4.1\n",
-            b" 1.4.1\r\n",
-            b"1.5.6\n",
-            b"\t1.5.6 ",
-        ] {
-            check(
-                &mut failures,
-                &format!("accepted version {bytes:?}"),
-                check_version(bytes),
-                Ok(()),
-            );
-        }
+        // agy 1.5.6's `--version` prints exactly `1.5.6\n` (od -c, eon-9iriq).
         for (bytes, found) in [
-            (b"1.4.0".as_slice(), (1, 4, 0)),
-            (b"1.4.2", (1, 4, 2)),
+            (b"1.4.1".as_slice(), (1, 4, 1)),
+            (b"1.4.1\n", (1, 4, 1)),
+            (b" 1.4.1\r\n", (1, 4, 1)),
+            (b"1.5.6\n", (1, 5, 6)),
+            (b"\t1.5.17 ", (1, 5, 17)),
             (b"1.4.10", (1, 4, 10)),
-            (b"1.5.5", (1, 5, 5)),
-            (b"1.5.7\n", (1, 5, 7)),
             (b"2.0.0", (2, 0, 0)),
             (b"0.0.0", (0, 0, 0)),
             (b"4294967295.0.0", (u32::MAX, 0, 0)),
         ] {
-            let label = format!("refused version {bytes:?}");
             check(
                 &mut failures,
-                &label,
-                check_version(bytes),
-                Err(Failure::Start),
-            );
-            check(
-                &mut failures,
-                &label,
-                accepted(bytes),
-                Err(Some(AgyVersion::new(found.0, found.1, found.2))),
+                &format!("version {bytes:?}"),
+                AgyVersion::parse(bytes),
+                Some(AgyVersion::new(found.0, found.1, found.2)),
             );
         }
         for bytes in [
@@ -1178,14 +1109,12 @@ mod tests {
             b"+1.4.1",
             b"4294967296.0.0",
         ] {
-            let label = format!("unrecognized version {bytes:?}");
             check(
                 &mut failures,
-                &label,
-                check_version(bytes),
-                Err(Failure::Start),
+                &format!("unrecognized version {bytes:?}"),
+                AgyVersion::parse(bytes),
+                None,
             );
-            check(&mut failures, &label, accepted(bytes), Err(None));
         }
         check(
             &mut failures,

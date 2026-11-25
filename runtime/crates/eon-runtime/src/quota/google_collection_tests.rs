@@ -22,24 +22,18 @@ fn report_from(fixture: &[u8]) -> Value {
     value
 }
 
-fn backend(root: &Path, name: &str, version: &str, body: &str) -> PathBuf {
+/// An agy that answers only the usage command: collection runs nothing else.
+fn backend(root: &Path, name: &str, body: &str) -> PathBuf {
     let path = root.join(name);
     script(
         &path,
-        &format!(
-            "if [ \"$1\" = --version ]; then [ \"$#\" = 1 ] || exit 8; {version}; exit; fi\n[ \"$*\" = '-p /usage --output-format json' ] || exit 8\n{body}"
-        ),
+        &format!("[ \"$*\" = '-p /usage --output-format json' ] || exit 8\n{body}"),
     );
     path
 }
 
 fn good(root: &Path) -> PathBuf {
-    backend(
-        root,
-        "agy",
-        "printf '1.4.1\\n'",
-        &format!("printf '%s' '{}'", report()),
-    )
+    backend(root, "agy", &format!("printf '%s' '{}'", report()))
 }
 
 fn wait(condition: impl Fn() -> bool) {
@@ -99,7 +93,7 @@ fn snapshot(quotas: &Quotas) -> Snapshot {
 }
 
 #[test]
-fn google_source_is_verified_before_usage() {
+fn google_source_resolves_absolute_executables() {
     let root = root().canonicalize().unwrap();
     let absolute = root.join("bin");
     fs::create_dir(&absolute).unwrap();
@@ -120,44 +114,13 @@ fn google_source_is_verified_before_usage() {
         google::resolve(Some(absolute.as_os_str())),
         Err(Failure::Start)
     );
-    let marker = root.join("usage");
     let (_stop, stopped) = mpsc::channel();
-    for (index, version) in ["printf 1.4.0", "printf unknown", "printf 1.4.1; exit 3"]
-        .iter()
-        .enumerate()
-    {
-        let program = backend(
-            &root,
-            &format!("bad-{index}"),
-            version,
-            &format!("touch '{}'", marker.display()),
-        );
-        assert_eq!(
-            google::fetch(&program, Duration::from_secs(1), &stopped),
-            Err(Failure::Start)
-        );
-        assert!(!marker.exists());
-    }
     assert_eq!(
         google::fetch(&root.join("missing"), Duration::from_secs(1), &stopped),
         Err(Failure::Start)
     );
-    let target = good(&root);
     let link = root.join("link");
-    symlink(&target, &link).unwrap();
-    let body = format!("printf '%s' '{}'", report());
-    let canonical = backend(
-        &root,
-        "canonical",
-        &format!(
-            "rm '{}'; ln -s /missing '{}'; printf 1.4.1",
-            link.display(),
-            link.display()
-        ),
-        &body,
-    );
-    fs::remove_file(&link).unwrap();
-    symlink(&canonical, &link).unwrap();
+    symlink(good(&root), &link).unwrap();
     assert_eq!(
         google::fetch(&link, Duration::from_secs(2), &stopped).unwrap(),
         Some(report().to_string().into_bytes())
@@ -176,7 +139,6 @@ fn google_commands_use_private_cwd_and_sanitized_environment() {
     let program = backend(
         &root,
         "agy",
-        &format!("{check}\nprintf 1.4.1"),
         &format!("{check}\nprintf '%s' '{}'", report()),
     );
     let (_stop, stopped) = mpsc::channel();
@@ -187,8 +149,7 @@ fn google_commands_use_private_cwd_and_sanitized_environment() {
     );
     let directories = fs::read_to_string(&seen).unwrap();
     let paths = directories.lines().collect::<Vec<_>>();
-    assert_eq!(paths.len(), 2);
-    assert_eq!(paths[0], paths[1]);
+    assert_eq!(paths.len(), 1);
     assert_ne!(Path::new(paths[0]), root);
     assert!(!Path::new(paths[0]).exists());
     for args in [
@@ -265,7 +226,6 @@ fn google_worker_classifies_object_reports_and_nonzero_exits() {
         let program = backend(
             &root,
             &format!("case-{index}"),
-            "printf 1.4.1",
             &format!("printf '%s' '{body}'; exit {exit}"),
         );
         let fetched = google::fetch(&program, Duration::from_secs(2), &stopped).and_then(|bytes| {
@@ -277,44 +237,20 @@ fn google_worker_classifies_object_reports_and_nonzero_exits() {
 }
 
 #[test]
-fn google_read_bounds_cover_both_phases() {
+fn google_read_bounds_cover_the_usage_command() {
     let root = root();
     let (_stop, stopped) = mpsc::channel();
-    // Real processes can reach either bound first; the phase-policy unit pins byte limits.
+    // Real processes can reach either bound first; the fetch unit pins the byte limit.
     let bounded_errors = &[Failure::Deadline, Failure::OutputLimit][..];
-    for (name, version, body, expected) in [
-        (
-            "slow-version",
-            "sleep 2; printf 1.4.1",
-            "exit 9",
-            &[Failure::Deadline][..],
-        ),
-        (
-            "slow-usage",
-            "printf 1.4.1",
-            "sleep 2",
-            &[Failure::Deadline][..],
-        ),
-        (
-            "combined",
-            "sleep 0.15; printf 1.4.1",
-            "sleep 0.15",
-            &[Failure::Deadline][..],
-        ),
-        (
-            "flood-version",
-            "while :; do printf '%01024d' 0; done",
-            "exit 9",
-            bounded_errors,
-        ),
+    for (name, body, expected) in [
+        ("slow-usage", "sleep 2", &[Failure::Deadline][..]),
         (
             "flood-usage",
-            "printf 1.4.1",
             "while :; do printf '%01024d' 0; done",
             bounded_errors,
         ),
     ] {
-        let program = backend(&root, name, version, body);
+        let program = backend(&root, name, body);
         let fetched = google::fetch(&program, Duration::from_millis(250), &stopped)
             .map(|bytes| bytes.map(|bytes| bytes.len()));
         assert!(
@@ -328,47 +264,63 @@ fn google_read_bounds_cover_both_phases() {
 }
 
 #[test]
-fn agy_1_5_6_reports_reach_the_session() {
+fn agy_reports_reach_the_session_whatever_the_version() {
     let root = root();
-    // Installed agy 1.5.6 prints exactly `1.5.6\n` for --version (od -c, eon-9iriq).
-    let program = backend(
-        &root,
-        "agy",
-        "printf '1.5.6\\n'",
-        &format!(
-            "printf '%s' '{}'",
-            report_from(include_bytes!("../../testdata/agy-usage-1.5.6.json"))
-        ),
-    );
-    let quotas = start_google(&program, Duration::from_secs(1), None);
-    wait(|| snapshot(&quotas).google_quota.is_some());
-    let snapshot = snapshot(&quotas);
-    assert_eq!(snapshot.google_quota_failure, None);
-    let json: Value = serde_json::from_str(&crate::workspace::json(&snapshot)).unwrap();
-    let scopes = json["google_quota"]["windows"]
-        .as_array()
+    let asked = root.join("asked-version");
+    let broken = root.join("broken");
+    let v1_5_17 = report_from(include_bytes!("../../testdata/agy-usage-1.5.17.json"));
+    let mut missing = v1_5_17.clone();
+    missing["usage"]
+        .as_object_mut()
         .unwrap()
-        .iter()
-        .map(|window| {
-            (
-                window["scope"].as_str().unwrap().to_owned(),
-                window["duration_minutes"].as_u64().unwrap(),
-                window["remaining_percent"].as_u64().unwrap(),
-            )
-        })
-        .collect::<Vec<_>>();
-    assert_eq!(
-        scopes,
-        [
-            ("Gemini Models".to_owned(), 10080, 50),
-            ("Gemini Models".to_owned(), 300, 28),
-            ("Claude and GPT models".to_owned(), 10080, 75),
-            ("Claude and GPT models".to_owned(), 300, 100),
-            ("Gemini 4 Argon".to_owned(), 10080, 90),
-        ]
-    );
-    assert_eq!(json["google_quota_failure"], Value::Null);
-    drop(quotas);
+        .remove("total_tokens");
+    // Each agy would print its version if asked; collection must not ask.
+    for (version, report, windows) in [
+        ("1.4.1", report(), 4),
+        (
+            "1.5.6",
+            report_from(include_bytes!("../../testdata/agy-usage-1.5.6.json")),
+            5,
+        ),
+        ("1.5.17", v1_5_17.clone(), 4),
+        ("2.0.0", v1_5_17.clone(), 4),
+        ("nightly", v1_5_17.clone(), 4),
+    ] {
+        let program = root.join(version);
+        script(
+            &program,
+            &format!(
+                "if [ \"$1\" = --version ]; then : > '{}'; printf '{version}\\n'; exit; fi\n[ \"$*\" = '-p /usage --output-format json' ] || exit 8\nif [ -e '{}' ]; then printf '%s' '{missing}'; else printf '%s' '{report}'; fi",
+                asked.display(),
+                broken.display(),
+            ),
+        );
+        let store = root.join(format!("{version}-quota"));
+        let quotas = start_google(&program, Duration::from_millis(1), Some(store.clone()));
+        wait(|| snapshot(&quotas).google_quota.is_some());
+        let read = snapshot(&quotas);
+        assert_eq!(read.google_quota_failure, None, "{version}");
+        assert_eq!(
+            read.google_quota.unwrap().windows.len(),
+            windows,
+            "{version}"
+        );
+        if version == "nightly" {
+            // A report missing a required field fails; the last good reading stays.
+            let retained = fs::read(store.join("google.json")).unwrap();
+            fs::write(&broken, "").unwrap();
+            wait(|| snapshot(&quotas).google_quota_failure.is_some());
+            let failed = snapshot(&quotas);
+            assert_eq!(
+                failed.google_quota_failure.unwrap().reason,
+                Failure::Malformed
+            );
+            assert!(failed.google_quota.is_some());
+            assert_eq!(fs::read(store.join("google.json")).unwrap(), retained);
+        }
+        drop(quotas);
+    }
+    assert!(!asked.exists(), "collection ran agy --version");
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -399,7 +351,6 @@ fn google_success_missing_and_failure_keep_distinct_state() {
     let program = backend(
         &root,
         "agy",
-        "printf 1.4.1",
         &format!(
             "case $(cat '{}') in good) printf '%s' '{}';; empty) printf '%s' '{}';; *) printf '%s' '{{\"status\":\"ERROR\"}}'; exit 3;; esac",
             mode.display(),
@@ -594,7 +545,6 @@ fn google_supervisors_share_schedule_and_backoff() {
     let program = backend(
         &root,
         "agy",
-        "printf 1.4.1",
         &format!(
             "mode=$(cat '{mode}'); : > '{root}'/read-$$; printf '%s %s\\n' \"$mode\" \"$$\" >> '{log}'; if [ \"$mode\" = error ]; then printf '%s' '{{\"status\":\"ERROR\"}}'; exit 3; fi; printf '%s' '{report}'",
             mode = mode.display(),
@@ -709,7 +659,6 @@ fn google_schedule_fallback_preserves_local_spacing() {
     let program = backend(
         &root,
         "agy",
-        "printf 1.4.1",
         &format!(
             "echo x >> '{}'; printf '%s' '{{\"status\":\"ERROR\"}}'; exit 3",
             log.display()
@@ -751,43 +700,32 @@ fn google_schedule_fallback_preserves_local_spacing() {
 }
 
 #[test]
-fn google_unlisting_cancels_each_process_phase() {
+fn google_unlisting_cancels_the_usage_command() {
     let root = root();
-    for phase in ["version", "usage"] {
-        let started = root.join(format!("{phase}.started"));
-        let directory = root.join(format!("{phase}.directory"));
-        let pid = root.join(format!("{phase}.pid"));
-        let slow = format!(
-            "pwd > '{}'; sleep 30 & echo $! > '{}'; touch '{}'; wait",
-            directory.display(),
-            pid.display(),
-            started.display()
-        );
-        let program = backend(
-            &root,
-            phase,
-            if phase == "version" {
-                &slow
-            } else {
-                "printf 1.4.1"
-            },
-            if phase == "usage" { &slow } else { "exit 9" },
-        );
-        let mut quotas = start_google(&program, Duration::from_secs(1), None);
-        wait(|| started.exists());
-        let cwd = fs::read_to_string(&directory).unwrap();
-        let descendant: i32 = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
-        let began = Instant::now();
-        quotas.show(&[]);
-        assert!(began.elapsed() < Duration::from_secs(2));
-        assert!(!Path::new(cwd.trim()).exists());
-        // A killed descendant can briefly remain a zombie under the sandbox's init.
-        wait(|| {
-            let stat = fs::read_to_string(format!("/proc/{descendant}/stat")).unwrap_or_default();
-            stat.is_empty() || stat.split_whitespace().nth(2) == Some("Z")
-        });
-        assert!(snapshot(&quotas).google_quota.is_none());
-        assert!(snapshot(&quotas).google_quota_failure.is_none());
-    }
+    let started = root.join("started");
+    let directory = root.join("directory");
+    let pid = root.join("pid");
+    let slow = format!(
+        "pwd > '{}'; sleep 30 & echo $! > '{}'; touch '{}'; wait",
+        directory.display(),
+        pid.display(),
+        started.display()
+    );
+    let program = backend(&root, "agy", &slow);
+    let mut quotas = start_google(&program, Duration::from_secs(1), None);
+    wait(|| started.exists());
+    let cwd = fs::read_to_string(&directory).unwrap();
+    let descendant: i32 = fs::read_to_string(&pid).unwrap().trim().parse().unwrap();
+    let began = Instant::now();
+    quotas.show(&[]);
+    assert!(began.elapsed() < Duration::from_secs(2));
+    assert!(!Path::new(cwd.trim()).exists());
+    // A killed descendant can briefly remain a zombie under the sandbox's init.
+    wait(|| {
+        let stat = fs::read_to_string(format!("/proc/{descendant}/stat")).unwrap_or_default();
+        stat.is_empty() || stat.split_whitespace().nth(2) == Some("Z")
+    });
+    assert!(snapshot(&quotas).google_quota.is_none());
+    assert!(snapshot(&quotas).google_quota_failure.is_none());
     fs::remove_dir_all(root).unwrap();
 }

@@ -92,6 +92,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   under Lucca's standing delegation) by `eon-6zoxr`: local Doctor and report.
   Amended on 2026-11-19 (approved by eon-lead under Lucca's 2026-11-19 rule) by
   `eon-9iriq`: Doctor's `quota` check of agy's version.
+  Amended on 2026-11-25 (approved by eon-desk under Lucca's standing
+  2026-11-13 delegation) by `eon-n588l`: Doctor's `quota` check names the agy
+  version it finds instead of judging its eligibility.
 - **Consumer:** A user launching Eon or eonbase from one accepted product
   generation.
 - **Trigger:** Eon starts a new composed runtime or adopts an exact live run.
@@ -159,7 +162,8 @@ names its socket. CLI JSON names a session `session` and a terminal
     calling terminal's live window build when it can be established, Eon
     configuration, terminal identity, display environment, GPU adapter, editor,
     local update route and, when `[bar] widgets` selects Google quota, whether
-    agy's version is eligible (EON-C27). A check that cannot establish an observation
+    `agy --version` succeeds, naming the version when it reports a plain
+    `MAJOR.MINOR.PATCH`; any version passes (EON-C27). A check that cannot establish an observation
     required for `PASS` reports `WARN` and names that observation. A failure
     established from other observations still reports `FAIL`.
     The command writes one result per check to stdout, with status `PASS`,
@@ -189,7 +193,7 @@ names its socket. CLI JSON names a session `session` and a terminal
     supervisor. Doctor runs only `infocmp`, the packaged Helix version
     command and, when `[bar] widgets` selects Google quota, the user's
     `agy --version`, each under a time limit. It resolves and runs agy as the
-    EON-C27 Google preflight does: absolute caller PATH entries only, a
+    EON-C27 Google collector does: absolute caller PATH entries only, a
     sanitized environment, null stdin, and an empty private directory that it
     removes afterwards, within the collector's 64 KiB output cap. agy is the
     user's own program, the one the window's collector already runs; Eon does
@@ -4932,6 +4936,10 @@ popup or automatic tutorial launch.
   Amended on 2026-11-19 by `eon-9iriq` (approved by eon-lead under Lucca's
   2026-11-19 rule): agy 1.5.6 is eligible, and `eon doctor` names an ineligible agy
   version.
+  Amended on 2026-11-25 by `eon-n588l` (approved by eon-desk under Lucca's
+  standing 2026-11-13 delegation): every agy version is eligible; Runtime
+  admits a Google read by its `/usage` report alone and runs no version
+  preflight, and `eon doctor` names the version it finds.
   Amended 2026-11-13 by `eon-o9f3h.4` under Lucca's approved eon-w31ps
   decision: Google collection, shared scheduling and last-good retention.
   Amended on 2026-11-07 (approved by eon-overseer under Lucca's standing rule)
@@ -4994,8 +5002,7 @@ popup or automatic tutorial launch.
   or in another format version is ignored, never shown as zero usage.
   While Runtime reads a provider, it keeps that provider's last failed read in
   memory: its wall-clock end and one reason, `start` (the collector could not
-  be resolved, started or read, or its version preflight was unsuccessful or
-  unsupported), `deadline`, `output_limit`, `exit_status`, `malformed` (not the
+  be resolved, started or read), `deadline`, `output_limit`, `exit_status`, `malformed` (not the
   selected collector's expected JSON report shape), `provider_error` (another
   provider or source, or a reported error, also on a nonzero exit carrying the
   collector's valid error envelope), `estimated`, `observation_time`
@@ -5108,21 +5115,19 @@ popup or automatic tutorial launch.
 Full Eon may read the selected Google account's Antigravity baseline subscription
 quota through the noninteractive command `agy -p /usage --output-format json`.
 Runtime reads `command.data` only from a successful `usage` command report with no
-model turn. Only agy versions 1.4.1 and 1.5.6 are eligible: before invoking
-`/usage`, Runtime resolves the executable, checks its version noninteractively with
-`--version` and uses that resolved executable for collection. Runtime searches
-only absolute PATH entries for agy; empty and relative entries are skipped, so a
-collector planted in the supervisor's starting directory is never selected
-through them. An absent, unrecognized or different
-version is unavailable and never invokes `/usage`. A version is recognized only as
-plain `MAJOR.MINOR.PATCH`. `eon doctor` runs the same preflight and names the
-version found and the eligible versions (EON-C1). Another version becomes
-eligible after either (a) a source review confirming noninteractive
-slash-command dispatch, or (b) a recorded zero-turn, zero-token `/usage` report
-from that exact version, together with Runtime's per-read zero-turn and token
-check; record that evidence in the owning bead and update the accepted-version
-rule. Each eligible version's evidence: 1.4.1, source review (a) and a turn-free
-report; 1.5.6, its recorded report (b), without a source review. Unsupported sources never fall
+model turn. Every agy version is eligible: Runtime runs no version preflight and
+admits a read only by its report, which must pass the validation below; a report
+that fails it fails the read and the last good reading stays. Runtime resolves
+agy for each read, searching only absolute PATH entries; empty and relative
+entries are skipped, so a collector planted in the supervisor's starting
+directory is never selected through them. `eon doctor` resolves agy the same way,
+runs its `--version` and names the version found (EON-C1). The per-read
+zero-turn and zero-token check rejects a report that carries a model turn, before
+any other shape check, but cannot undo the turn: an agy build that ran `/usage`
+as a prompt would spend one turn per read. A report carrying the turn fails as
+`provider_error`, spaced by the provider-error backoff below; a prompt run that
+passes the deadline or the output cap fails as `deadline` or `output_limit` and
+repeats at the five-minute spacing. Unsupported sources never fall
 back to an inference prompt. The provider is `google_quota`, not an agy-specific
 allowance. One Google window is one active reported model-group bucket: `5h` is
 300 minutes and `weekly` is 10080 minutes, remaining percent is the validated
@@ -5154,9 +5159,8 @@ for the supported subscription scope; a report without identity does not prove t
 account or plan tier. API-key and enterprise allowances are not claimed as
 personal-subscription quota.
 
-Each Google read attempt, including its version preflight and usage command
-together, has one ten-second deadline and one aggregate 64 KiB stdout cap; both
-commands use null stdin, suppressed raw stderr, process-group cleanup and
+Each Google read attempt runs one usage command with a ten-second deadline and a
+64 KiB stdout cap, null stdin, suppressed raw stderr, process-group cleanup and
 child-environment sanitization. The reader uses an empty private working directory
 rather than the user's workspace. A successful normalized reading contains at most
 six active windows, each scoped by a nonempty, control-free name of at most 32
@@ -5194,7 +5198,7 @@ Extend the meanings of existing `start`, `malformed`, `provider_error`,
 `observation_time` and `invalid_window` descriptions to the selected collector,
 rather than adding agy-only failure enums. A CLI `status=ERROR` is
 `provider_error`; nonzero exit without that valid error envelope is `exit_status`.
-A source-version preflight failure is `start`; an invalid reset timestamp is
+A missing or nonexecutable agy is `start`; an invalid reset timestamp is
 `invalid_window`. Google reader failures use these existing reasons.
 
 - **Google installed evidence** (`eon-o9f3h.6`, x86_64 Linux native Wayland/Nix):
@@ -5235,6 +5239,21 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   `doctor_preflight_reports_the_version_with_the_collector_bounds` and
   `doctor_names_an_unsupported_agy_version`. The fresh-window chip observation
   is recorded on `eon-9iriq` after landing.
+- **Parse-based admission** (`eon-n588l`): no agy version list remains.
+  `agy_reports_reach_the_session_whatever_the_version` collects the 1.4.1,
+  1.5.6 and 1.5.17 fixtures, collects the 1.5.17 report from agy builds that
+  report `2.0.0` and no plain version, and keeps the last good reading with
+  reason `malformed` when a report lacks a required field. It replaces
+  `agy_1_5_6_reports_reach_the_session`; `doctor_reports_the_agy_version_it_finds`
+  replaces `doctor_names_an_unsupported_agy_version`.
+  `runtime/crates/eon-runtime/testdata/agy-usage-1.5.17.json` is synthetic:
+  1.5.6's fields plus `conversation_id`, `response`, `duration_seconds`,
+  `description` on the data, groups and buckets, and `id` and `name` on
+  buckets, the fields the lead's 2026-11-25 comparison of a real 1.5.17
+  report found, with invented values. `invalid_reports_reject_the_whole_read_with_bounded_reasons`
+  fails a turn-carrying report without `command` as `provider_error`.
+  The 1.5.6 open risk above, a model turn spent before the read fails, now
+  applies to every version.
 - **Google open proof:** Account class and plan tier were not verified by the
   checked agy report fields. An identity-free successful read and authorization
   to use a personal subscription do not establish either. Verify them through

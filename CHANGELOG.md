@@ -5,6 +5,11 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Google quota chips keep working when agy updates. Eon reads Google quota
+  from any agy version whose `/usage` report passes its checks, and keeps the
+  last good reading when a report does not. `eon doctor` names the agy
+  version it finds instead of warning that a version is unsupported
+  (`eon-n588l`, EON-C1, EON-C27).
 - Alt+Shift+Y opens Files at the tab's current directory each time it shows
   a hidden Files. The same Yazi moves in place, so its tabs and history stay
   and H goes back to where you were. Alt+Shift+Y from quick search keeps

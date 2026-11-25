@@ -11,9 +11,7 @@ use std::{
     time::Duration,
 };
 
-use eon_runtime::{
-    ACCEPTED_AGY_VERSIONS, AgyCheck, CallerBuild, DiagnosticConfiguration, DiagnosticWindow, Inputs,
-};
+use eon_runtime::{AgyCheck, CallerBuild, DiagnosticConfiguration, DiagnosticWindow, Inputs};
 use serde_json::json;
 
 use crate::{
@@ -484,9 +482,9 @@ fn helix_version_finding(result: Result<ExitStatus, Bounded>) -> Option<Check> {
     }
 }
 
-/// The Google quota collector's version preflight, run only when a Google selector is listed
+/// Names the version `agy --version` reports, run only when a Google selector is listed
 /// (EON-C1, EON-C27). It reads agy from this terminal's PATH, not the window's.
-fn quota_check(google_quota: Option<bool>, preflight: impl FnOnce() -> AgyCheck) -> Check {
+fn quota_check(google_quota: Option<bool>, agy: impl FnOnce() -> AgyCheck) -> Check {
     const ID: &str = "quota";
     match google_quota {
         None => {
@@ -499,27 +497,15 @@ fn quota_check(google_quota: Option<bool>, preflight: impl FnOnce() -> AgyCheck)
         Some(false) => return Check::pass(ID, "Google quota is not selected in [bar] widgets."),
         Some(true) => {}
     }
-    let supported = ACCEPTED_AGY_VERSIONS
-        .iter()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join(", ");
-    match preflight() {
-        AgyCheck::Accepted(version) => Check::pass(
+    const ANY: &str = "Google quota reads any agy version whose /usage report passes Eon's checks.";
+    match agy() {
+        AgyCheck::Found(Some(version)) => Check::pass(
             ID,
-            format!("agy {version} on this terminal's PATH is supported for Google quota."),
+            format!("agy {version} on this terminal's PATH runs; {ANY}"),
         ),
-        AgyCheck::Unsupported(found) => Check::warn(
+        AgyCheck::Found(None) => Check::pass(
             ID,
-            match found {
-                Some(version) => format!(
-                    "agy {version} on this terminal's PATH is not a supported version for Google quota (supported: {supported})."
-                ),
-                None => format!(
-                    "agy on this terminal's PATH reported an unrecognized version (supported: {supported})."
-                ),
-            },
-            "Install a supported agy version, or an Eon release that supports this one.",
+            format!("agy on this terminal's PATH runs but reports no plain version; {ANY}"),
         ),
         AgyCheck::Unavailable(why) => Check::warn(
             ID,

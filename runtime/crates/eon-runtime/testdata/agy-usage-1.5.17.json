@@ -1,0 +1,77 @@
+{
+  "conversation_id": "00000000-0000-4000-8000-000000000000",
+  "status": "SUCCESS",
+  "response": "Gemini Models\tWeekly Limit Remaining\t40%\t2026-12-02T03:00:00Z\n",
+  "duration_seconds": 0.5,
+  "num_turns": 0,
+  "usage": {
+    "input_tokens": 0,
+    "output_tokens": 0,
+    "thinking_tokens": 0,
+    "cache_read_tokens": 0,
+    "total_tokens": 0
+  },
+  "command": {
+    "name": "usage",
+    "data": {
+      "description": "Synthetic description.",
+      "groups": [
+        {
+          "name": "Gemini Models",
+          "description": "Synthetic group description.",
+          "buckets": [
+            {
+              "id": "gemini-weekly",
+              "name": "Weekly Limit Remaining",
+              "description": "Synthetic bucket description.",
+              "window": "weekly",
+              "remaining_fraction": 0.4,
+              "reset_time": "2026-12-02T03:00:00Z"
+            },
+            {
+              "id": "gemini-5h",
+              "name": "Five Hour Limit Remaining",
+              "window": "5h",
+              "remaining_fraction": 0.85,
+              "reset_time": "2026-11-25T21:00:00Z"
+            }
+          ]
+        },
+        {
+          "name": "Claude and GPT models",
+          "description": "Synthetic group description.",
+          "buckets": [
+            {
+              "id": "3p-weekly",
+              "name": "Weekly Limit Remaining",
+              "window": "weekly",
+              "remaining_fraction": 0.6,
+              "reset_time": "2026-12-01T09:00:00Z"
+            },
+            {
+              "id": "3p-5h",
+              "name": "Five Hour Limit Remaining",
+              "description": "Synthetic bucket description.",
+              "window": "5h",
+              "disabled": true,
+              "remaining_fraction": 1
+            }
+          ]
+        },
+        {
+          "name": "Gemini 4 Argon",
+          "description": "Synthetic group description.",
+          "buckets": [
+            {
+              "id": "gemini-argon-weekly",
+              "name": "Gemini 4 Argon Weekly Limit",
+              "window": "weekly",
+              "remaining_fraction": 0.7,
+              "reset_time": "2026-12-01T10:00:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  }
+}

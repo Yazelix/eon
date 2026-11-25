@@ -1554,7 +1554,7 @@ fn doctor_reports_offline_findings_without_leaking_or_changing_inputs() {
 }
 
 #[test]
-fn doctor_names_an_unsupported_agy_version() {
+fn doctor_reports_the_agy_version_it_finds() {
     let root = temporary_directory();
     let config = root.join("config");
     fs::create_dir(&config).unwrap();
@@ -1601,24 +1601,26 @@ fn doctor_names_an_unsupported_agy_version() {
     };
     let quota = |bin: &Path| result(doctor(bin.as_os_str()).output().unwrap());
 
-    let refused = agy("refused", "printf 1.3.0");
+    let old = agy("old", "printf 1.3.0");
     fs::write(config.join("config.toml"), "[bar]\nwidgets = [\"clock\"]\n").unwrap();
-    assert_eq!(quota(&refused).0, "PASS");
+    assert_eq!(quota(&old).0, "PASS");
     assert!(!ran.exists(), "doctor ran agy without a Google selector");
 
+    // Any version passes: Google quota admits a read by its report, not agy's version.
     fs::write(config.join("config.toml"), selected).unwrap();
-    let (status, message) = quota(&refused);
-    assert_eq!(status, "WARN");
-    for named in ["agy 1.3.0", "1.4.1", "1.5.6", "this terminal's PATH"] {
-        assert!(message.contains(named), "{named}: {message}");
+    let installed = agy("installed", "printf '1.5.17\\n'");
+    for (bin, named) in [
+        (&old, "agy 1.3.0"),
+        (&installed, "agy 1.5.17"),
+        (&agy("future", "printf 2.0.0"), "agy 2.0.0"),
+    ] {
+        let (status, message) = quota(bin);
+        assert_eq!(status, "PASS", "{message}");
+        for named in [named, "this terminal's PATH"] {
+            assert!(message.contains(named), "{named}: {message}");
+        }
     }
     assert!(ran.exists());
-
-    // Installed agy 1.5.6 prints exactly `1.5.6\n` for --version (od -c, eon-9iriq).
-    let supported = agy("supported", "printf '1.5.6\\n'");
-    let (status, message) = quota(&supported);
-    assert_eq!(status, "PASS");
-    assert!(message.contains("agy 1.5.6"), "{message}");
 
     // Under a Codex shell's locale, the agy preflight still starts nothing but agy: no
     // desktop-locale `systemctl`, from an absolute or a relative PATH entry (EON-C1).
@@ -1629,7 +1631,7 @@ fn doctor_names_an_unsupported_agy_version() {
         executable(&root.join(directory).join("systemctl"), &forbidden);
     }
     let path =
-        std::env::join_paths([Path::new("planted"), &supported, &root.join("system")]).unwrap();
+        std::env::join_paths([Path::new("planted"), &installed, &root.join("system")]).unwrap();
     let (status, message) = result(
         doctor(&path)
             .current_dir(&root)
@@ -1644,8 +1646,8 @@ fn doctor_names_an_unsupported_agy_version() {
     assert!(!systemctl.exists(), "doctor started systemctl");
 
     let (status, message) = quota(&agy("unrecognized", "printf doctor-agy-marker"));
-    assert_eq!(status, "WARN");
-    assert!(message.contains("unrecognized"), "{message}");
+    assert_eq!(status, "PASS");
+    assert!(message.contains("no plain version"), "{message}");
 
     let empty = root.join("empty");
     fs::create_dir(&empty).unwrap();

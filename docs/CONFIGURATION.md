@@ -1459,15 +1459,16 @@ widgets = ["google_quota:Gemini Models:5h", "google_quota:Gemini Models:7d", "cl
 parameterized Google forms in `element_forms`, including scope byte/control
 bounds. Runtime owns validation; Venus reads only resolved launch arguments.
 
-Google collection uses your already signed-in `agy` on PATH, versions 1.4.1
-and 1.5.6. Only absolute PATH entries are searched; empty and relative entries
+Google collection uses your already signed-in `agy` on PATH, whatever its
+version. Only absolute PATH entries are searched; empty and relative entries
 are skipped so an `agy` planted in the supervisor's starting directory is never
-selected through them. Each scheduled attempt verifies `agy --version` before
-running `agy -p /usage --output-format json` with that same resolved executable.
-There is no inference fallback, bundled agy, login or account switching. A missing,
-nonexecutable or unsupported agy records failure reason `start`; the last good
-reading remains available. `eon doctor` says which: it names an unsupported
-version and the supported ones. The Google subscription scope is Antigravity's
+selected through them. Each scheduled attempt runs
+`agy -p /usage --output-format json` and uses the report only when it passes
+Eon's checks; a report that does not records a failure reason such as
+`malformed`, and the last good reading remains available. There is no
+inference fallback, bundled agy, login or account switching. A missing or
+nonexecutable agy records failure reason `start`. `eon doctor` names the agy
+version it finds. The Google subscription scope is Antigravity's
 baseline model-group allowances, not Gemini Apps, Gemini API or AI-credit balances.
 The intended support scope is consumer OAuth on x86_64 Linux native Wayland
 with Nix; account-class and plan-tier verification remains open. The installed
@@ -1483,8 +1484,8 @@ unselected groups. Collection is checked on open, reopen and accepted reload;
 removing every Google selector cancels the current read and clears memory and
 failure, while keeping the last good disk reading. A read runs away from the
 workspace in an empty private directory with null stdin, sanitized session
-context, suppressed stderr and process-group cleanup. Its version check and
-usage command together have one ten-second deadline and one 64 KiB stdout cap.
+context, suppressed stderr and process-group cleanup. Its one usage command has
+a ten-second deadline and a 64 KiB stdout cap.
 
 Google starts at least five minutes apart, including failures and re-enabling.
 Supervisors share `google.schedule` beside the retained reading under a short
