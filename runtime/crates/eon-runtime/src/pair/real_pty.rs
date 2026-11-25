@@ -309,8 +309,44 @@ impl Pair {
             && !text.trim_end().ends_with(" left")
     }
 
-    fn quick_search_shown(&mut self) -> String {
-        self.until("quick search", |text| text.contains("Quick search >"))
+    /// Quick search up for its keys: this search's fzf has written the ready
+    /// marker, and its rows are exactly `folders`. The marker tells this
+    /// search from the last one's kept frame (`--no-clear`); the rows, from
+    /// a prompt fzf draws before it has read the history.
+    fn quick_search_shown(&mut self, folders: &[&str]) {
+        let shown = self.poll(
+            |pair| (pair.marker.exists(), pair.screen()),
+            |(ready, text)| *ready && Self::quick_search_lists(text, folders),
+        );
+        if let Err((_, text)) = shown {
+            self.fail(&format!("quick search listing {folders:?}"), &text, None);
+        }
+    }
+
+    /// A query typed into quick search, once fzf has narrowed its rows to
+    /// `folders`, so Enter and Tab act on the matching row.
+    fn queried(&mut self, query: &str, folders: &[&str]) {
+        self.until(&format!("the query {query} listing {folders:?}"), |text| {
+            text.contains(&format!("> {query}")) && Self::quick_search_lists(text, folders)
+        });
+    }
+
+    /// Whether the rows below quick search's prompt name exactly `folders`,
+    /// in any order, since Zoxide's order for the fixture's equal entries is
+    /// not fixed. A row keeps
+    /// its right end under `--keep-right`, so its folder is what follows
+    /// the last `/w/files/`.
+    fn quick_search_lists(text: &str, folders: &[&str]) -> bool {
+        let mut rows: Vec<_> = text
+            .lines()
+            .skip_while(|line| !line.contains("Quick search >"))
+            .skip(1)
+            .filter_map(|line| Some(line.trim_end().rsplit_once("/w/files/")?.1))
+            .collect();
+        let mut folders = folders.to_vec();
+        rows.sort_unstable();
+        folders.sort_unstable();
+        !folders.is_empty() && rows == folders
     }
 
     /// One supervisor turn for this shown pair.
@@ -716,7 +752,7 @@ fn reveal_navigates_the_live_pair_from_project_to_a_cold_file() {
             ..Start::default()
         },
     );
-    pair.quick_search_shown();
+    pair.quick_search_shown(&["alpha", "beta"]);
     leave_requested(&pair.marker);
     let cold = pair.root.join("w/unvisited/cold");
     fs::create_dir_all(&cold).unwrap();
@@ -830,14 +866,13 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
             ..Start::default()
         },
     );
-    let quick = pair.until(
-        "quick search with the tutor header after readiness",
-        |text| text.contains("Quick search >") && text.contains("Tutor header fixture"),
-    );
+    pair.quick_search_shown(&["alpha", "beta"]);
+    pair.until("the tutor header after readiness", |text| {
+        text.contains("Tutor header fixture")
+    });
     let mut keyboard = pair.keyboard();
-    assert!(quick.contains("beta") && quick.contains("alpha"), "{quick}");
-    // fzf can draw before its start action writes the ready marker, and the
-    // initial request lasts until the first turn after that. Then the marker
+    // The initial request lasts until the first turn after fzf's start
+    // action writes the ready marker. Then the marker
     // is quick search's only entry beside the endpoint: no socket.
     pair.turns_until(
         "the ready marker as quick search's only entry",
@@ -863,16 +898,16 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
 
     // A query typed, then Alt+Shift+Y.
     keyboard.text("bet");
-    pair.until("the query", |text| text.contains("> bet"));
+    pair.queried("bet", &["beta"]);
     assert!(pair.leave("quick search with a query", None) >= 1);
     pair.files_shown();
     pair.until("alpha's preview", |text| text.contains("a-inside"));
 
     // Enter picks the highlighted folder.
     pair.show_quick_search();
-    pair.quick_search_shown();
+    pair.quick_search_shown(&["alpha", "beta"]);
     keyboard.text("bet");
-    pair.until("the query", |text| text.contains("> bet"));
+    pair.queried("bet", &["beta"]);
     keyboard.press(PhysicalKey::ENTER);
     pair.turns_until(
         "the tab's directory set to beta",
@@ -888,9 +923,9 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
 
     // Tab moves Files to the highlighted folder.
     pair.show_quick_search();
-    pair.quick_search_shown();
+    pair.quick_search_shown(&["alpha", "beta"]);
     keyboard.text("alp");
-    pair.until("the query", |text| text.contains("> alp"));
+    pair.queried("alp", &["alpha"]);
     keyboard.press(PhysicalKey::TAB);
     pair.until("Files in alpha", |text| {
         text.contains("Tab Search") && text.contains("files/alpha")
@@ -899,7 +934,8 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
 
     // Esc closes Files.
     pair.show_quick_search();
-    pair.quick_search_shown();
+    // Tab left Files in alpha, which quick search leaves out.
+    pair.quick_search_shown(&["beta"]);
     keyboard.press(PhysicalKey::ESCAPE);
     pair.turns_until(
         "Files hidden",
