@@ -184,7 +184,8 @@ keys reach Eon directly and one release and one config file cover everything.
 
 Most of what you know carries over. Each tab belongs to one project, picked
 with Zoxide quick search or Yazi, and Eon pins the same Nushell, Helix, Yazi,
-LazyGit and Anima. The movement grid is the same: `Alt+H/J/K/L` moves focus,
+LazyGit and Anima. Eon's Helix is built without Steel, so it ignores `helix.scm`
+and `init.scm`. The movement grid is the same: `Alt+H/J/K/L` moves focus,
 `Ctrl+Alt+H/J/K/L` moves panes, `Alt+M` opens a pane and `Alt+Shift+T` a tab.
 `Alt+Shift+Y`, `J`, `L`, `M` and `A` open Files, Git, Agent, Commands and
 Anima; `Alt+Shift+H` toggles the sidebar and `Alt+Shift+B` the shortcut hints.
