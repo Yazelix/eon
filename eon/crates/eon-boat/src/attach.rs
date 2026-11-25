@@ -1,7 +1,7 @@
 //! Following a detached Boat command until it ends. A lost `exec --attach` stream is
 //! not a lost result: liveness comes only from Boat's own process status and the run
 //! deadline, never from what the stream delivered (eon-lnfc7).
-use super::{CONTROL, Client, Output, TEARDOWN, billing_policy, remaining};
+use super::{CONTROL, Client, Output, TEARDOWN, keep_going_off, prepaid_remaining};
 use rota::slots::Signals;
 use serde_json::Value;
 use std::fs::{self, File};
@@ -30,7 +30,7 @@ fn now_seconds() -> u64 {
 }
 
 fn budget_safe(limits: &Value, client: &Client) -> bool {
-    if billing_policy(limits).is_err() || limits["keepGoing"]["enabled"] != false {
+    if !keep_going_off(limits) {
         return false;
     }
     limits["activeSandboxes"].as_u64().is_some_and(|active| {
@@ -38,7 +38,7 @@ fn budget_safe(limits: &Value, client: &Client) -> bool {
         // count already reported by the provider.
         let parallel = active.max(u64::from(client.parallel_leases));
         let buffer = parallel as f64 * client.machine.weight() * (TEARDOWN + CONTROL) as f64;
-        remaining(limits).is_ok_and(|seconds| seconds > client.reserve_seconds + buffer)
+        prepaid_remaining(limits).is_ok_and(|seconds| seconds > client.reserve_seconds + buffer)
     })
 }
 
@@ -626,33 +626,36 @@ pub(super) fn follow(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::sync::Arc;
 
     #[test]
-    fn budget_buffer_covers_concurrent_teardown_and_the_next_poll() {
+    fn prepaid_pack_in_flight_keeps_a_strict_weighted_buffer_and_trial_cap() {
         let mut client = Client::cleanup(crate::Machine::Large, 120, false);
         client.reserve_seconds = 14400.0;
-        let mut limits = serde_json::json!({
-            "accessTier": "trial",
-            "subscriptionStatus": "trialing",
-            "sandboxPlanKey": "trial",
-            "keepGoing": {"enabled": false},
-            "planIncluded": {"vmHoursRemaining": 20},
-            "subscriptionRemainingSeconds": 72000,
-            "trialComputeCapSeconds": 90000,
-            "trialComputeUsedSeconds": 74800,
-            "activeSandboxes": 1
-        });
-        assert!(budget_safe(&limits, &client));
-        limits["activeSandboxes"] = 2.into();
+        let mut limits = crate::tests::paid_limits();
+        for (active, parallel, buffered) in [(1, 1, 1), (1, 2, 2), (2, 1, 2)] {
+            limits["activeSandboxes"] = json!(active);
+            client.parallel_leases = parallel;
+            let pack_needed = 14400 + buffered * 2 * (TEARDOWN + CONTROL) - 3599;
+            limits["packBalanceSeconds"] = json!(pack_needed);
+            assert!(!budget_safe(&limits, &client));
+            limits["packBalanceSeconds"] = json!(pack_needed + 1);
+            assert!(budget_safe(&limits, &client));
+        }
+        limits["keepGoing"]["enabled"] = json!(true);
         assert!(!budget_safe(&limits, &client));
-        limits["activeSandboxes"] = 1.into();
-        client.parallel_leases = 3;
+        limits["keepGoing"]["enabled"] = json!(false);
+        limits["packExpiresAt"] = Value::Null;
         assert!(!budget_safe(&limits, &client));
-        limits["trialComputeUsedSeconds"] = 70000.into();
-        assert!(budget_safe(&limits, &client));
-        limits["activeSandboxes"] = Value::Null;
-        assert!(!budget_safe(&limits, &client));
+
+        let mut trial = crate::tests::trial_limits();
+        trial["trialComputeUsedSeconds"] = json!(75100);
+        assert!(!budget_safe(&trial, &client));
+        trial["trialComputeUsedSeconds"] = json!(70000);
+        assert!(budget_safe(&trial, &client));
+        trial["activeSandboxes"] = Value::Null;
+        assert!(!budget_safe(&trial, &client));
     }
 
     #[derive(Clone, Default)]

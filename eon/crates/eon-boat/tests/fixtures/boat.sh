@@ -95,11 +95,13 @@ limits)
   active_plan=box_20
   case "$mode" in paid*) tier=paid; status=active; plan=box_20 ;; standard*) tier=standard; status=active; plan=box_20 ;; esac
   if [ "$mode" = paid-mismatch ]; then active_plan=box_100; fi
+  hours=555 seconds=1998000 pack=0 cap=90000
+  [ "$mode" != paid ] || { hours=1; seconds=3600; pack=30000; cap=null; used=null; }
   if [ -e "$root/attached" ]; then
     case "$mode" in post-reserve-loss*) used=90000 ;; esac
     if [ "$mode" = post-plan-loss ]; then tier=paid; status=active; plan=box_20; active_plan=box_100; fi
   fi
-  printf '{"canStart":true,"activeSandboxes":%s,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true},{"type":"large","available":%s}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":555,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":1998000,"accessTier":"%s","subscriptionStatus":"%s","sandboxPlanKey":"%s","activeSandboxPlanKey":"%s","trialComputeCapSeconds":90000,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$active" "$large" "$tier" "$status" "$plan" "$active_plan" "$used"
+  printf '{"canStart":true,"activeSandboxes":%s,"keepGoing":{"enabled":false},"nextStartDollars":0,"machineTypes":[{"type":"default","available":true},{"type":"large","available":%s}],"starts":{"minute":{"remaining":3},"hour":{"remaining":20},"day":{"remaining":74}},"planIncluded":{"vmHoursRemaining":%s,"periodEnd":"2099-01-01T00:00:00.000Z"},"subscriptionRemainingSeconds":%s,"packBalanceSeconds":%s,"accessTier":"%s","subscriptionStatus":"%s","sandboxPlanKey":"%s","activeSandboxPlanKey":"%s","trialComputeCapSeconds":%s,"trialComputeUsedSeconds":%s,"subscriptionTrialEndsAt":"2099-01-01T00:00:00.000Z"}\n' "$active" "$large" "$hours" "$seconds" "$pack" "$tier" "$status" "$plan" "$active_plan" "$cap" "$used"
   ;;
 new)
   if [ "$mode" = create-refused ]; then echo '{"ok":false}'; exit 1; fi

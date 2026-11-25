@@ -463,9 +463,10 @@ all other caller credential files remain forbidden.
 Requested commands clear inherited/ambient process capabilities and still use
 the ordinary `eon-test` isolation harness.
 
-`reserve_hours` is a finite nonnegative amount of included compute kept in
-reserve. Admission uses the smaller of included plan time and any trial cap;
-wallet credit never authorizes a paid start. Keep-going must be off. The
+`reserve_hours` is a finite nonnegative amount of compute kept in reserve.
+On the verified standard paid plan, the reserve applies to plan-included time
+plus verified prepaid pack time. Trials use included plan time up to the trial
+cap. Keep Going must be off and starts must fit the start allowance. The
 whole run's lifetime must fit above the reserve and before the trial/billing
 boundary. `timeout_seconds` accepts 120–7200 and is also the VM's lifetime,
 after which Boat stops it, so it bounds billed time. The run itself, setup
@@ -486,8 +487,8 @@ Only large has a qualified image, so every remote run uses large. The ceiling
 defaults to 0, meaning the large VM is unqualified, and accepts 0 or 8–12; set
 it to at least 8 to route remote runs. A cap that only the default type covers
 enters local admission with reason `image-unpinned`, and a cap above every
-ceiling with `unqualified-ceiling`. Both sizes draw from the same lease pool. A large job
-requires twice the default rate of included credit.
+ceiling with `unqualified-ceiling`. Both sizes draw from the same lease pool.
+A large job draws from the compute budget at twice the default rate.
 
 The guest checks the actual per-job limit, no swap, ancestor limits, a local
 Nix store without an external builder, and spare memory before preparation.
@@ -512,11 +513,11 @@ requests reread the limit at grant. If the file becomes unreadable or invalid,
 they stay queued until it can be read and validated again. Reducing the limit
 lets holders finish and makes
 requests wait until occupancy falls below the configured limit. Quiet policy
-still applies. Admission checks
-included compute for the new run and live siblings. Upgrade every `eon agent`
-reader of the shared file before setting this key. Remove the key before
-rolling back to an older reader. Before remote execution, policy/connectivity or
-budget refusal falls back through the local slot queue and reports a reason.
+still applies. Admission reserves eligible compute for the new run and live
+siblings. Upgrade every `eon agent` reader of the shared file before setting
+this key. Remove the key before rolling back to an older reader. Before remote
+execution, policy/connectivity or budget refusal falls back through the local
+slot queue and reports a reason.
 A dropped output stream does not end a remote run. When `boat exec --attach`
 fails, Eon reads the command's status with `boat exec --status`, and
 re-attaches while it still runs. Waits between attempts grow from 1 to 30
@@ -596,13 +597,13 @@ characters escaped as `\xNN` so it cannot drive the terminal. A cleanup failure 
 be reconciled before another remote VM starts.
 An unreadable or incompatible Boat journal appears as `boat_error` in JSON
 listing and a reason in text; local holders and waiters remain visible.
-Usage dollars are Boat's metered list cost consumed from the included allowance,
-not authorization to spend beyond it.
-Only a verified trial or active standard `box_20` plan is admitted; wallet,
-packs and nonstandard paid plans cannot bypass the included-credit guard.
-Unknown identity/schema and near-reserve credit choose local before execution;
-after execution may have begun, budget loss/provider stop is unresolved125,
-with no local retry. Each start reads fresh limits. Cleanup always runs.
+Usage dollars report Boat's metered list cost for the run.
+Only a verified trial or active standard `box_20` plan is admitted. Wallet and
+invoice overage do not count toward the budget. On the standard paid plan,
+unknown or expired pack terms choose local before execution. Unverified billing
+data and near-reserve credit also choose local before execution.
+A budget loss or provider stop after execution may have begun returns status
+125 without a local retry. Each start reads fresh limits. Cleanup always runs.
 Private records retain `kill_sent`, monotonic `duration_seconds` (the run's
 time up to its result, without teardown or later reconciliation), VM `usage`,
 and observed `trial_seconds_used` with `trial_usage_reason`. Trial counter

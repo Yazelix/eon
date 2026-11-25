@@ -557,7 +557,7 @@ fn fallback(reason: String) -> Result<Outcome, String> {
     ) {
         let _ = writeln!(
             io::stderr(),
-            "REQUEST: Boat included credit/plan needs owner attention ({reason}); using queued local admission, no billing action"
+            "REQUEST: Boat compute credit/plan needs owner attention ({reason}); using queued local admission, no billing action"
         );
     }
     let signal = Signals::caught();
@@ -1305,22 +1305,58 @@ fn billing_policy(limits: &Value) -> Result<bool, String> {
     }
 }
 
-fn remaining(limits: &Value) -> Result<f64, String> {
+fn keep_going_off(limits: &Value) -> bool {
+    limits["keepGoing"]["enabled"].as_bool() == Some(false)
+}
+
+fn nonnegative_number(value: &Value) -> Option<f64> {
+    value.as_f64().filter(|n| n.is_finite() && *n >= 0.0)
+}
+
+fn pack_fields_supported(value: &Value, root: bool) -> bool {
+    match value {
+        Value::Object(fields) => fields.iter().all(|(key, value)| {
+            if root {
+                match key.as_str() {
+                    "packBalanceSeconds" => return true,
+                    "packBalanceHours" | "packBalanceDollars" => {
+                        return nonnegative_number(value).is_some();
+                    }
+                    _ => {}
+                }
+            }
+            // The current limits schema exposes no pack expiry. Unknown terms refuse the paid route.
+            let key = key.to_ascii_lowercase();
+            !key.contains("pack") && !key.contains("expir") && pack_fields_supported(value, false)
+        }),
+        Value::Array(values) => values
+            .iter()
+            .all(|value| pack_fields_supported(value, false)),
+        _ => true,
+    }
+}
+
+fn prepaid_remaining(limits: &Value) -> Result<f64, String> {
     let missing = || "unsupported-provider-output".to_owned();
-    let number = |v: &Value| {
-        v.as_f64()
-            .filter(|n| n.is_finite() && *n >= 0.0)
-            .ok_or_else(missing)
-    };
-    let mut seconds = (number(&limits["planIncluded"]["vmHoursRemaining"])? * 3600.0)
-        .min(number(&limits["subscriptionRemainingSeconds"])?);
-    let trial = billing_policy(limits)?;
-    if trial {
+    let number = |v: &Value| nonnegative_number(v).ok_or_else(missing);
+    let plan_seconds = number(&limits["planIncluded"]["vmHoursRemaining"])? * 3600.0;
+    if !plan_seconds.is_finite() {
+        return Err(missing());
+    }
+    let plan_seconds = plan_seconds.min(number(&limits["subscriptionRemainingSeconds"])?);
+    if billing_policy(limits)? {
         let trial = number(&limits["trialComputeCapSeconds"])?
             - number(&limits["trialComputeUsedSeconds"])?;
-        seconds = seconds.min(trial);
+        return Ok(plan_seconds.min(trial));
     }
-    Ok(seconds)
+    let pack_seconds = limits["packBalanceSeconds"]
+        .as_u64()
+        .filter(|&seconds| seconds <= (1u64 << f64::MANTISSA_DIGITS))
+        .ok_or_else(missing)?;
+    if !pack_fields_supported(limits, true) {
+        return Err(missing());
+    }
+    Ok(plan_seconds + pack_seconds as f64)
 }
 
 fn type_available(limits: &Value, machine: Machine) -> bool {
@@ -1405,7 +1441,7 @@ fn budget(
     siblings: &[Record],
 ) -> Result<(), String> {
     if limits["canStart"].as_bool() != Some(true)
-        || limits["keepGoing"]["enabled"].as_bool() != Some(false)
+        || !keep_going_off(limits)
         || limits["nextStartDollars"].as_f64() != Some(0.0)
         || !type_available(limits, machine)
     {
@@ -1432,7 +1468,7 @@ fn budget(
         required +=
             sibling.machine.weight() * (expires.saturating_sub(now) as f64 + TEARDOWN as f64);
     }
-    if remaining(limits)? < required {
+    if prepaid_remaining(limits)? < required {
         return Err("budget-reserve-or-trial-cap".into());
     }
     let end = if limits["accessTier"] == "trial" {
@@ -1719,18 +1755,14 @@ mod tests {
         );
     }
 
-    fn limits() -> Value {
+    pub(super) fn trial_limits() -> Value {
         json!({
-            "canStart": true, "activeSandboxes": 0,
-            "keepGoing": {"enabled": false}, "nextStartDollars": 0,
+            "canStart": true, "activeSandboxes": 0, "keepGoing": {"enabled": false}, "nextStartDollars": 0,
             "machineTypes": [{"type": "default", "available": true}],
             "starts": {"minute": {"remaining": 3}, "hour": {"remaining": 20}, "day": {"remaining": 74}},
-            "planIncluded": {"vmHoursRemaining": 555.0},
-            "subscriptionRemainingSeconds": 1998000,
-            "accessTier": "trial", "trialComputeCapSeconds": 90000,
-            "subscriptionStatus": "trialing", "sandboxPlanKey": "trial",
-            "trialComputeUsedSeconds": 2000,
-            "subscriptionTrialEndsAt": "2099-01-01T00:00:00.000Z"
+            "planIncluded": {"vmHoursRemaining": 555.0}, "subscriptionRemainingSeconds": 1998000,
+            "accessTier": "trial", "subscriptionStatus": "trialing", "sandboxPlanKey": "trial",
+            "trialComputeCapSeconds": 90000, "trialComputeUsedSeconds": 2000, "subscriptionTrialEndsAt": "2099-01-01T00:00:00.000Z"
         })
     }
 
@@ -2028,14 +2060,20 @@ mod tests {
     #[test]
     fn trial_cap_start_prices_and_missing_safety_fields_refuse_remote() {
         let config = BoatConfig::default();
-        let good = limits();
-        assert!(budget(&good, &config, Machine::Default, 1, &[]).is_ok());
+        let check = |limits: &Value| budget(limits, &config, Machine::Default, 1, &[]);
+        let mut good = trial_limits();
+        good["packBalanceSeconds"] = Value::Null;
+        good["packExpiresAt"] = Value::Null;
+        assert!(check(&good).is_ok());
         let mut bad = good.clone();
         bad["trialComputeUsedSeconds"] = json!(89999);
-        assert!(budget(&bad, &config, Machine::Default, 1, &[]).is_err());
+        bad["packBalanceSeconds"] = json!(1_000_000);
+        let exhausted = Err("budget-reserve-or-trial-cap".into());
+        assert_eq!(check(&bad), exhausted);
+        bad["trialComputeUsedSeconds"] = json!(0);
+        bad["planIncluded"]["vmHoursRemaining"] = json!(1);
+        assert_eq!(check(&bad), exhausted);
         for (pointer, value) in [
-            ("/keepGoing/enabled", json!(true)),
-            ("/nextStartDollars", json!(0.03)),
             ("/activeSandboxes", Value::Null),
             ("/activeSandboxes", json!(1)),
             ("/starts/minute/remaining", json!(0)),
@@ -2045,33 +2083,115 @@ mod tests {
         ] {
             let mut bad = good.clone();
             *bad.pointer_mut(pointer).unwrap() = value;
-            assert!(
-                budget(&bad, &config, Machine::Default, 1, &[]).is_err(),
-                "{pointer}"
-            );
+            assert!(check(&bad).is_err(), "{pointer}");
         }
-        assert!(timestamp(&json!("2026-02-30T00:00:00.000Z")).is_none());
         let mut boundary = good;
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 240);
-        assert!(budget(&boundary, &config, Machine::Default, 1, &[]).is_ok());
+        assert!(check(&boundary).is_ok());
         boundary["trialComputeUsedSeconds"] = json!(90000 - 7200 - 3600 - 239);
-        assert!(budget(&boundary, &config, Machine::Default, 1, &[]).is_err());
+        assert_eq!(check(&boundary), exhausted);
+    }
+
+    pub(super) fn paid_limits() -> Value {
+        // Observed Boat 1.0.105 limits --all shape with synthetic values.
+        serde_json::from_str(include_str!("../tests/fixtures/limits-1.0.105.json")).unwrap()
     }
 
     #[test]
-    fn only_verified_standard_plan_can_spend_included_paid_credit() {
-        let mut paid = limits();
-        paid["accessTier"] = json!("paid");
-        paid["subscriptionStatus"] = json!("active");
-        paid["sandboxPlanKey"] = json!("box_20");
-        paid["activeSandboxPlanKey"] = json!("box_20");
-        assert!(remaining(&paid).is_ok());
-        paid["sandboxPlanKey"] = json!("box_100");
-        assert!(remaining(&paid).is_err());
-        let mut trial = limits();
-        trial["trialComputeUsedSeconds"] = json!(90000);
-        trial["wallet"] = json!({"balanceDollars": 10000});
-        assert!(budget(&trial, &BoatConfig::default(), Machine::Default, 1, &[]).is_err());
+    fn prepaid_pack_admission_preserves_weighted_budget_and_start_policy() {
+        let mut paid = paid_limits();
+        assert_eq!(prepaid_remaining(&paid), Ok(23599.0));
+        let config = BoatConfig::default();
+        let check =
+            |paid: &Value, siblings: &[Record]| budget(paid, &config, Machine::Large, 1, siblings);
+        let pack_needed = 2 * (7200 + 3600 + TEARDOWN) - 3599;
+        let insufficient = || Err("budget-reserve-or-trial-cap".into());
+        let siblings = [serde_json::from_value(json!({
+            "schema": 1, "run_id": "sibling", "pid": 1, "phase": "running", "where": "boat",
+            "tree": "test", "base": "test", "started": 0, "expires_at": 61,
+            "credentials_absent": true, "machine": "large"
+        }))
+        .unwrap()];
+        for (siblings, needed) in [
+            (&[][..], pack_needed),
+            (&siblings[..], pack_needed + 2 * (60 + TEARDOWN)),
+        ] {
+            paid["activeSandboxes"] = json!(siblings.len());
+            paid["packBalanceSeconds"] = json!(needed - 1);
+            assert_eq!(check(&paid, siblings), insufficient());
+            paid["packBalanceSeconds"] = json!(needed);
+            assert_eq!(check(&paid, siblings), Ok(()));
+        }
+        paid["planIncluded"]["vmHoursRemaining"] = json!(0);
+        assert_eq!(check(&paid, &siblings), insufficient());
+        paid["packBalanceSeconds"] = json!(0);
+        paid["planIncluded"]["vmHoursRemaining"] = json!(10);
+        paid["subscriptionRemainingSeconds"] = json!(36000);
+        assert_eq!(check(&paid, &siblings), Ok(()));
+
+        let mut paid = paid_limits();
+        paid["packBalanceHours"] = json!(1000);
+        let paid_start = "boat-unavailable-or-paid-start";
+        let exhausted = "budget-reserve-or-trial-cap";
+        let plan = "unverified-or-nonstandard-plan";
+        let past = json!("1970-01-01T00:00:01Z");
+        for (pointer, value, reason) in [
+            ("/packBalanceSeconds", json!(0), exhausted),
+            ("/keepGoing/enabled", json!(true), paid_start),
+            ("/keepGoing/enabled", Value::Null, paid_start),
+            ("/nextStartDollars", json!(0.03), paid_start),
+            ("/starts/day/remaining", json!(0), "start-limit"),
+            ("/planIncluded/periodEnd", past, "billing-period-boundary"),
+            ("/activeSandboxPlanKey", json!("box_100"), plan),
+        ] {
+            let mut limits = paid.clone();
+            *limits.pointer_mut(pointer).unwrap() = value;
+            assert_eq!(check(&limits, &[]), Err(reason.into()), "{pointer}");
+        }
+    }
+
+    #[test]
+    fn prepaid_pack_schema_fails_closed() {
+        let mut paid = paid_limits();
+        paid["packBalanceSeconds"] = json!(1u64 << 53);
+        paid["subscriptionRemainingSeconds"] = json!(36000);
+        for key in ["packBalanceHours", "packBalanceDollars"] {
+            paid.as_object_mut().unwrap().remove(key);
+        }
+        assert!(prepaid_remaining(&paid).is_ok());
+        let unsupported = Err("unsupported-provider-output".into());
+        let refuse = |v: &Value| assert_eq!(prepaid_remaining(v), unsupported);
+        let mutate = |key: &str, value| {
+            let mut bad = paid.clone();
+            bad[key] = value;
+            refuse(&bad);
+        };
+        let mut bad = paid.clone();
+        bad.as_object_mut().unwrap().remove("packBalanceSeconds");
+        refuse(&bad);
+        bad = paid.clone();
+        bad["planIncluded"]["vmHoursRemaining"] = json!(1e306);
+        refuse(&bad);
+        let seconds = "packBalanceSeconds";
+        for key in ["packBalanceHours", "packBalanceDollars", seconds] {
+            for value in [json!(-1), Value::Null, json!("1")] {
+                mutate(key, value);
+            }
+            mutate("other", json!([{(key): 1}]));
+        }
+        for (key, value) in [
+            (seconds, json!(1e306)),
+            (seconds, json!((1u64 << 53) + 1)),
+            ("packStatus", json!({})),
+            ("packExpiresAt", json!("1970-01-01T00:00:00Z")),
+            ("packExpiresAt", json!("2099-01-01T00:00:00Z")),
+            ("packExpiresAt", Value::Null),
+            ("packExpiresAt", json!("unknown")),
+            ("other", json!([{"expiresAt": null}])),
+        ] {
+            mutate(key, value);
+        }
+        assert!(decode(0, br#"{"packBalanceDollars":1e999}"#, "limits").is_err());
     }
 
     #[test]

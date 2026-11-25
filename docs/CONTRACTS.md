@@ -8615,6 +8615,9 @@ reference to existing pane creation, not by the unapproved targeting beads.
   Amendment for eon-klt8h.1 (qualified bootstrap-image pin, cold-only starts,
   image-based machine selection) approved by eon-lead on 2026-11-20 (INBOX
   02:18:45Z), exact bead/contract-proposal.md text.
+
+  Amendment for eon-r8hjf defines the prepaid compute budget for the existing
+  Boat route. Its bead records approval and exact-tree proof.
 - **Consumer:** A person or cooperating local agent running a heavy foreground
   command, in any project or terminal, under the same operating-system user.
 - **Trigger:**
@@ -8679,10 +8682,15 @@ reference to existing pane creation, not by the unapproved targeting beads.
     paths. Desktop/GPU proofs,
     visual checks, timing/frame benchmarks, profile installs and Update stay local.
     Before each VM start, admission verifies Boat reachability, a
-    builds-only environment with credential passing disabled, included compute
-    and start allowances, the configured reserve and bounded run lifetime; it
-    never enables paid overage. A remote run holds a separate remote lease, not
-    local heavy capacity. Policy refusal or pre-execution unavailability
+    builds-only environment with credential passing disabled, the compute
+    budget and start allowances, the configured reserve and bounded run lifetime.
+    On the verified standard paid plan, the compute budget combines plan-included
+    time and verified prepaid pack time. Trials use plan-included time up to the
+    trial cap and exclude pack credit. Admission requires Keep Going disabled
+    and refuses starts beyond the start allowance and all pay-as-you-go or
+    invoice overage. A remote
+    run holds a separate remote lease, leaving local heavy capacity free.
+    Policy refusal or pre-execution unavailability
     falls back through the local queue with a reason. A configured host-only
     local admission runner may own this local queue: the handoff preserves
     original queue age, releases native capacity before the delegate waits or
@@ -8707,16 +8715,18 @@ reference to existing pane creation, not by the unapproved targeting beads.
     stay local. A cap selects the smallest machine type that has a qualified
     bootstrap image and whose ceiling covers it: default up to 6G, large up to
     its measured configured ceiling. Only large has a qualified image, so remote
-    runs use large, with size-aware included-credit guards. Remote runs share a
+    runs use large, with size-aware compute-budget guards. Remote runs share a
     Boat lease pool. `slots.boat.max_parallel_leases` accepts integers 1 through 3
     and defaults to 1. Each lease owns one VM and one journal. Eligible waiters
     retain the existing queue order and quiet policy. Lowering the limit lets
     current holders finish and blocks new grants until the occupied count falls
     below the configured limit. Unresolved cleanup continues to block new remote
-    starts. Admission verifies the identity of active VMs and reserves included
-    compute for the candidate and live siblings. In-flight checks account for
-    concurrent consumption and teardown. `slot ls --json` retains the aggregate
-    Boat fields and reports each occupied lease, including preflight occupancy.
+    starts. Admission verifies the identity of active VMs and reserves compute
+    for the candidate and live siblings. The configured reserve applies to the
+    combined budget on the standard paid plan. In-flight checks account for
+    concurrent consumption and teardown. Unverified or expired pack terms fail
+    closed on the standard paid plan. `slot ls --json` retains the aggregate Boat
+    fields and reports each occupied lease, including preflight occupancy.
     A cap that only an unqualified type covers uses local admission with
     an unpinned-image capacity reason before remote queueing.
 
@@ -8883,7 +8893,7 @@ reference to existing pane creation, not by the unapproved targeting beads.
   surfaces and one isolated installed observation using an overseer-provided
   candidate. Model-language choice and model checking remain pending.
   Boat route: policy-negative/local fallback, exact dirty-tree transfer,
-  credential absence, included-budget and trial-cap refusal, full result/log
+  credential absence, prepaid-budget and trial-cap refusal, full result/log
   return, remote listing, cancellation/contact-loss cleanup, and one real remote
   landing gate with laptop-load observations. Pinned cold start from the
   qualified large image, including the three attended memory proofs on the

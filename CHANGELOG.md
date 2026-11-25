@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Boat builds on the standard paid plan count verified prepaid pack time
+  toward the compute budget. The reserve and start limits still apply, and
+  pay-as-you-go and invoice overage remain refused (`eon-r8hjf`, EON-C43).
 - Clicking tabs, pane titles and workspace buttons keeps keyboard focus on the
   terminal. F6 and assistive-technology focus requests can focus workspace
   controls (`eon-6xybm`).
