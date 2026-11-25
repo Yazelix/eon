@@ -2376,7 +2376,7 @@ names its socket. CLI JSON names a session `session` and a terminal
 - **Owner:** Eon Runtime supervisor session/action state and CLI projection;
   its canonical EONW package owns types, codec and result ordering. Eon supplies
   validated component facts and product defaults.
-- **Consumes:** Current EONW v50 and accepted Orbit management operations.
+- **Consumes:** Current EONW v51 and accepted Orbit management operations.
 - **Boundary:** Additive lifecycle tags do not widen the pinned Venus workspace
   consumer. There is no event stream or subscription policy other than
   EON-C39's event subscription, and no remote transport,
@@ -2388,7 +2388,7 @@ names its socket. CLI JSON names a session `session` and a terminal
   child-protocol escape hatch.
 - **Package owner:** The canonical EONW crate lives in
   `runtime/crates/eon-workspace-protocol` with its accepted package/API and
-  v50 bytes. Venus, Eon Runtime and Eon consume it by path.
+  v51 bytes. Venus, Eon Runtime and Eon consume it by path.
   See [package selection](ARCHITECTURE.md#in-tree-package-selection).
   EONW v48 appends one byte to the v47 Snapshot payload. Bits 0, 1, 2, and 3
   mean that the window has released physical Alt+M, Alt+W, Alt+Q, and Alt+G,
@@ -2411,6 +2411,15 @@ names its socket. CLI JSON names a session `session` and a terminal
   NUL and with the existing 4096-byte path limit. Runtime requires a
   canonical `tN` when a tab ID is present. An accepted request returns
   the ordinary Snapshot. Other payload layouts, the six-byte prefix and
+  Reserved Stop remain unchanged. Workspace requests and snapshots keep
+  exact-version admission.
+  EONW v51 extends request discriminator 39 (`SendTerminal`) with
+  `TerminalInput::Key` (input tag 2), carrying one modifier byte
+  (`SHIFT | CTRL | ALT | SUPER`, reserved bits zero) followed by a
+  length-prefixed canonical physical-key name of at most 16 UTF-8 bytes
+  from the 74-key EON-C36 set (`KeyA`–`KeyZ`, `Digit0`–`Digit9`,
+  `F1`–`F12`, the 15 named control/editing/navigation keys and the 11
+  ASCII punctuation keys). Other payload layouts, the six-byte prefix and
   Reserved Stop remain unchanged. Workspace requests and snapshots keep
   exact-version admission.
   The Google wire amendment (`eon-o9f3h.1`) adds optional Google quota and
@@ -3657,7 +3666,7 @@ popup or automatic tutorial launch.
 - **Owner:** Eon Runtime generation identity/selection, namespaces, discovery,
   Present, explicit Stop and exact owned residue; Eon supplies immutable
   assembly/default/validator/graph/Cargo/Nix-generated inputs.
-- **Consumes:** Orbit management v9 (`ORB-C15` foreground), `ORB-C3`
+- **Consumes:** Orbit management v10 (`ORB-C15` foreground), `ORB-C3`
   admission, EON-C31 polling, and Venus `VEN-C14`.
 - **Boundary:** No manager daemon, persisted topology, machine-restart recovery,
   PTY handoff, old-generation backport, updater, Nix evaluation, package-channel
@@ -3992,11 +4001,16 @@ popup or automatic tutorial launch.
   then five-second Stop cleanup and a one-second margin; excessive queues
   can still fail. Reserved Stop request and reply bytes are unchanged; this
   is a client read allowance only.
+  Because Orbit management v10 also frames `ORBR` live records and tombstones
+  with version 10 (even though `RECORD_GENERATION` stays 1), v10 recovery
+  rejects v9 `ORBR` records closed (`UnsupportedVersion`) without adopting or
+  deleting v9 runs, and live update refuses v9 hosts before handoff
+  (`HostProtocol`, requiring manual move).
 - **Owner:** Eon Runtime generation/recovery enforcement, bounded enumeration,
   projection, lease collection, deadline, EONW ordering, retained launch claim,
   and exact residue; Orbit `ORB-C13` owns live identity, Ready, lease, terminal state,
   `ORB-C12` cleanup, tombstone, and endpoint cleanup.
-- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v9, and Venus `VEN-C14`.
+- **Consumes:** Orbit `ORB-C12`, `ORB-C13`, management v10, and Venus `VEN-C14`.
 - **Boundary:** Same boot and login only; no prior-topology persistence, Orbit or
   machine restart recovery, logout/reboot survival, remote authority, service
   manager, broker, or compatibility adapter. Tombstones grant no authority and
@@ -6705,7 +6719,10 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   typing protection. Help and usage plainly state that `focused` targets the
   person's focused terminal.
 
-- **Status:** Proven on x86_64 Linux Wayland. Approved by Lucca on 2026-10-30
+- **Status:** Partially proved on x86_64 Linux Wayland (named keys under
+  `eon-pane-send-key-vlgu0` and `eon-0um2b` are Planned until proved;
+  paste, `--enter`, typing refusal and `focused` keep their proof below).
+  Approved by Lucca on 2026-10-30
   in the merged text of `eon-agent-parity-a9g0.14`; its `terminal-unavailable`
   and exit 4 failures amended by Lucca on 2026-10-31 ("agreed", then "ok" for
   the narrowed exit 4, relayed by eon-overseer, `eon-agent-parity-a9g0.19`).
@@ -6724,12 +6741,32 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   by `eon-30skm` (S3): its prose says session for the product concept.
 - **Consumer:** An agent or script running as the person's user, in an Eon
   terminal or outside one.
-- **Trigger:** `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]`,
+- **Trigger:**
+  - Text/Enter form: `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]`;
+  - Named-key form: `eon pane send TARGET --key KEY [--key KEY ...] [--force] [--json]`,
   where:
-  - TARGET is a pane or popup ID as `eon session --json` names them;
+  - TARGET is a pane or popup ID as `eon session --json` names them, or the
+    literal `focused` (above);
   - TEXT is exactly one operand, or standard input with `--stdin`. TEXT is
-    required unless `--enter` is given, and `--enter` alone sends only Enter;
-    with neither `--stdin` nor TEXT, standard input that is a pipe, socket or
+    required unless `--enter` or `--key` is given, and `--enter` alone sends
+    only Enter; `--key` is repeatable (1 to 64 keys, submitted in order) and
+    is mutually exclusive with TEXT, `--stdin` and `--enter`; `--key` and its
+    operand stay paired across option parsing so a `--key` value (such as `-`
+    or `--window`) is never stripped or parsed as another option;
+  - each `KEY` uses Eon's fixed ASCII key grammar: optional `+`-separated
+    case-insensitive modifiers (`shift`, `ctrl`/`control`, `alt`, `super`, no
+    duplicates) plus one base key — a case-insensitive named key
+    (`escape`/`esc`, `enter`, `tab`, `backspace`, `space`, `up`, `down`,
+    `left`, `right`, `home`, `end`, `pageup`/`page_up`,
+    `pagedown`/`page_down`, `insert`, `delete`/`del`, `f1`–`f12`) or a single
+    printable non-space ASCII character (`0x21`–`0x7e`). Unmodified single
+    uppercase letters (`A`–`Z`) and shifted ASCII punctuation
+    (`!@#$%^&*()~_+{}|:"<>?`, including bare `+`) set `shift` on their base
+    key (so bare `+` equals `shift+=`); when modifiers are present, letters
+    are case-insensitive (modifiers come only from explicit prefixes, so
+    `Ctrl+C` equals `ctrl+c`) and shifted punctuation (such as `ctrl++` or
+    `ctrl+?`) is refused (use `shift+` with the unshifted key);
+  - with neither `--stdin` nor TEXT, standard input that is a pipe, socket or
     file already holding data fails before anything is sent, naming `--stdin`
     and empty input as the remedies; a terminal, an empty or ended input, or a
     pipe or socket with no data within 100 ms is not read;
@@ -6737,19 +6774,35 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
 - **Result:**
   - The supervisor that EON-C10 selects (validating `EON_TERMINAL` when set)
     resolves TARGET in any session of its window, shown or hidden, and
-    pastes TEXT into the target's terminal through ORB-C5's lease input.
-    Orbit brackets the paste when the program enabled bracketed paste.
+    delivers TEXT or each `--key` in order into the target's terminal through
+    ORB-C5's lease input (management v10). Orbit brackets pastes when the
+    program enabled bracketed paste, and encodes each named key (press, plus
+    release when reported) against authoritative terminal state (legacy,
+    application cursor keys, modifyOtherKeys and Kitty keyboard protocol).
   - With `--enter`, Eon then sends one Enter key after
     `[agents] send_enter_delay_ms`
     ([Configuration](CONFIGURATION.md#configuration-behavior)). A line feed or
-    carriage return in TEXT never submits.
-  - Before each paste or Enter, Orbit refuses the input with `person-typing`
-    if an attached client's typing is still queued or occurred within
-    `[agents] send_typing_quiet_ms` (default 2000 ms, range 0 through 60000).
-    Zero disables this check. `--force` bypasses only this typing check, for
-    both the paste and Enter; all other validation and authorization still
-    apply. Lease input never extends the typing interval. ORB-C5 defines
-    which attached-client input counts as typing.
+    carriage return in TEXT never submits. No delay is inserted between
+    `--key` requests.
+  - For `focused` with multiple `--key` flags, the first key resolves
+    `focused` once and each subsequent key verifies native focus and the same
+    exact terminal, preserving all three refusal codes (`window-unfocused`
+    when native focus is absent or unknown, `terminal-unfocused` when no
+    verified terminal has keyboard focus, and `focus-changed` specifically
+    when a different verified terminal has keyboard focus) and stopping
+    without submitting remaining keys.
+  - Before any PTY write for each paste, Enter or key, Orbit refuses the
+    input with `person-typing` if an attached client's typing is still queued
+    or occurred within `[agents] send_typing_quiet_ms` (default 2000 ms, range
+    0 through 60000). Zero disables this check. `--force` bypasses only this
+    typing check, for paste, Enter and keys; all other validation, `focused`
+    checks and authorization still apply. Lease input never extends the
+    typing interval. ORB-C5 defines which attached-client input counts as
+    typing.
+  - When EON-C11 Routing executes a reachable older window's recorded
+    EONW v50 launcher for a `--key` command, that older parser rejects the
+    unknown `--key` flag with usage exit 2 on stderr (no JSON, even with
+    `--json`) and sends nothing.
   - Sending changes no session, tab, pane or popup selection, shown
     session or popup, scroll position or desktop focus. A hidden popup
     receives the input and stays hidden. The send leaves no trace beyond what
@@ -6757,47 +6810,146 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
   - On success the command exits 0. JSON carries:
     - the target: `session`, `tab`, `pane` or `popup`, and `terminal`;
     - `caller`, `generation` and `window`, as EON-C35;
-    - `bytes`: TEXT's length, 0 for Enter only;
-    - `bracketed`: a bool, null when only Enter was sent;
-    - `enter`: true when the Enter was sent.
+    - `bytes`: TEXT's length, 0 when no TEXT was sent;
+    - `bracketed`: a bool, null when no TEXT was sent;
+    - `enter`: true when `--enter` was acknowledged, false when `--enter`
+      was not given or was not acknowledged (including a post-dispatch
+      uncertain failure);
+    - `keys`: count of acknowledged `--key` requests, 0 when no `--key` was
+      given. An acknowledged key request means Orbit accepted it into its
+      ordered PTY write path (its encoding may be empty in the active
+      keyboard mode, and its bytes may still wait in Orbit's PTY write
+      queue, which discards queued bytes if the PTY closes).
   - `[agents] terminal_access`
     ([Configuration](CONFIGURATION.md#configuration-behavior)) governs it:
-    `"window"` allows it; `"none"` refuses every send with
-    `terminal-access-off` and sends nothing.
+    `"window"` allows it; `"none"` refuses every send (including `--key`)
+    with `terminal-access-off` and sends nothing.
   - Documentation advises keeping a send short and pointing at a file for long
     material. Some agents treat long pastes as outside material: Claude Code
     marks pastes over 800 characters or 3 lines that way.
 - **Important failures:**
-  - Exit 2, with nothing sent:
+  - Structured command failures before any request is acknowledged (exit 2
+    codes `invalid-text`, `invalid-key`, `input-too-large`, `unread-stdin`
+    and `malformed-action`, plus exit 1, 3, 4 and 5 failures) emit the
+    existing error-only JSON object `{"error":{"code":...,"detail":...}}` on
+    stdout when `--json` is given (without `keys: 0`). CLI parser usage errors
+    (none of TEXT, `--enter` or `--key`, missing `--key` operand, combining
+    `--key` with TEXT, `--stdin` or `--enter`, other invalid arguments, or a
+    reachable EONW v50 launcher rejecting `--key` after EON-C11 Routing) exit
+    2 with plain-text usage on stderr and write no JSON, even with `--json`.
+  - Exit 2, with nothing submitted:
     - `invalid-text`: TEXT is not UTF-8, or contains ESC, another C0 control
       except tab, line feed and carriage return, DEL, or a C1 control. Eon
       refuses rather than rewrites it;
-    - `input-too-large`: TEXT exceeds 64 KiB;
+    - `invalid-key`: any `--key` operand is non-UTF-8, empty, whitespace,
+      non-ASCII, a control character, repeats or names an unknown modifier,
+      uses shifted punctuation with modifiers (`ctrl++`, `ctrl+?`, etc.), or
+      names an unknown key. All `--key` operands are validated before any key
+      is submitted;
+    - `input-too-large`: TEXT exceeds 64 KiB, or more than 64 `--key` flags
+      are given;
     - `unread-stdin`: neither `--stdin` nor TEXT, and standard input holds
       data, as the Trigger says;
-    - no TEXT and no `--enter`, or other invalid arguments.
-  - Exit 1:
-    - `terminal-access-off`, with nothing sent;
+    - usage errors (plain-text stderr, no JSON): none of TEXT, `--enter` or
+      `--key`, missing `--key` operand, combining `--key` with TEXT, `--stdin`
+      or `--enter`, other invalid arguments, or a reachable EONW v50 launcher
+      rejecting `--key` after EON-C11 Routing.
+  - Exit 1 (first-operation structured failure, zero requests acknowledged):
+    - `terminal-access-off`: refused before Orbit, writing nothing;
     - `unbracketed-newline`: TEXT has a line feed or carriage return and the
-      program has not enabled bracketed paste. Nothing is sent;
-    - `terminal-ended`: the terminal has exited. The input is rejected, never
-      queued;
-    - `terminal-unavailable`: Orbit refused, or timed out after 2 s.
-  - Exit 5: `person-typing`, with nothing sent. This applies to a refused
-    paste or to Enter alone.
-  - Exit 1 also when the paste succeeds and the Enter then fails, including
-    `person-typing`. The reply names the failure with `enter: false`, and the
-    text stays in the program; retrying the paste would duplicate it.
+      program has not enabled bracketed paste. Refused by Orbit before any
+      PTY write (writes nothing);
+    - `window-unfocused` or `terminal-unfocused` for `focused`: refused
+      before Orbit, writing nothing;
+    - `terminal-ended`: the terminal has exited, its PTY has closed (even
+      while the child and Orbit management lease remain live), or its Orbit
+      management lease closed. When refused before sending or by Orbit's
+      stopped reply, nothing is queued or written. When Orbit returns an
+      explicit closed-PTY refusal (`Refusal::Closed`), nothing is queued or
+      written, and `detail` reports that the terminal's PTY is closed without
+      claiming child exit or lease closure. When the lease closes before the
+      complete ORBM request frame is written (while draining a prior request
+      or with drainer remaining bytes nonempty), nothing is queued or written
+      and `detail` describes the lease closing without claiming child exit.
+      When the lease closes after the complete request frame is written
+      (whether the child exited or Orbit dropped an expired lease while the
+      PTY remains live), `detail` describes the lease closing without claiming
+      child exit and reports that delivery is uncertain;
+    - `terminal-unavailable`: Orbit refused before any PTY write (`InputFull`,
+      `Busy` or another refusal) or Runtime could not start or drain a prior
+      request before sending (nothing written), timed out after 2 s while the
+      request remained in flight (`detail` reports that the input may still
+      arrive), returned an invalid or wrong reply after a complete request
+      frame was sent (`detail` reports that delivery is uncertain), or
+      Runtime's local lease drainer failed before returning a usable reply
+      (`detail` reports uncertain delivery without attributing a lease closure
+      to Orbit);
+    - `unrepresentable-state`: a complete EONW request received a valid but
+      unexpected response (`detail` reports that the request was sent to the
+      supervisor and delivery is uncertain).
+  - Exit 5: `person-typing`, refused by Orbit before any PTY write (writes
+    nothing). This applies to a refused paste, to Enter alone, or to the
+    first `--key` (error-only JSON when `--json` is given).
+  - Exit 1 also when the paste succeeds and the Enter then fails, or when
+    `k >= 1` `--key` requests have been acknowledged and key `k + 1` fails
+    (including `person-typing`, `window-unfocused`, `terminal-unfocused`,
+    `focus-changed`, `terminal-ended`, `terminal-unavailable`,
+    `supervisor-unavailable` or `unrepresentable-state`). The CLI stops
+    immediately and never submits keys after key `k + 1`. The JSON reply
+    carries `enter: false` (meaning Enter was not acknowledged, not a
+    guarantee that Enter never arrived on a post-dispatch uncertain failure)
+    or `keys: k` (count of acknowledged key requests, for `--key`) plus
+    `error`. A confirmed refusal or incomplete send on Enter or key `k + 1`
+    (Supervisor refusal before Orbit, pre-dispatch `terminal-ended`,
+    pre-connect or incomplete-write `supervisor-unavailable`, incompatible
+    EONW version, pre-send drainer-start or prior-request drain failure,
+    incomplete ORBM request write before lease close, or an explicit Orbit
+    refusal or stopped reply before any PTY write such as `person-typing`,
+    `InputFull`, `Busy` or closed-PTY refusal, which reports that the PTY is
+    closed without claiming child exit or lease closure) confirms that
+    operation wrote nothing; human stderr keeps `the text was pasted; Enter
+    was not sent` for paste+Enter and reports key `k + 1` was not sent for
+    `--key`. A post-dispatch failure where an in-flight or complete request
+    lacked a usable reply across either reply boundary — ORBM 2 s timeout,
+    invalid/wrong reply or local lease-drainer failure (`terminal-unavailable`,
+    without attributing a lease closure to Orbit on drainer failure), ORBM
+    lease close after the complete request frame was written
+    (`terminal-ended`, describing the lease closing without claiming child
+    exit), lost, corrupt or timed-out EONW reply after a complete request
+    write (`supervisor-unavailable`), or a valid but unexpected EONW response
+    (`unrepresentable-state`) — leaves that operation's delivery uncertain
+    (`enter: false` for paste+Enter, not
+    counted in `keys` for `--key`), carrying dispatch uncertainty in JSON
+    `error.detail` and reporting uncertain delivery on stderr (never
+    claiming `Enter was not sent` or `was not sent`), guaranteeing only that
+    keys strictly after key `k + 1` were never submitted. Earlier
+    acknowledged input may already have reached the program (or wait in
+    Orbit's PTY write queue, which discards queued bytes on close, or have
+    had an empty key encoding); retrying the whole command may duplicate
+    earlier input.
   - Exit 3: a missing or stale target, generation or window.
-  - Exit 4: a missing or unreachable supervisor, including one that speaks
-    another EONW version (`supervisor-unavailable`).
+  - Exit 4: a missing supervisor (`missing-supervisor`, nothing submitted) or
+    an unreachable supervisor, including one that speaks another EONW version
+    when EON-C11 Routing cannot execute its recorded build, an incomplete
+    EONW request write (nothing dispatched), or a lost, corrupt or timed-out
+    EONW reply after a complete request frame was written
+    (`supervisor-unavailable`; only once the complete request frame is
+    written does `detail` report that delivery is uncertain).
   - No failure changes focus or session state.
 - **Owner:**
-  - Eon Runtime: policy, TEXT validation, target resolution, the Enter delay,
-    the EONW v32 request and the CLI projection;
-  - Orbit: ORB-C5 lease input.
+  - Eon Runtime: policy, TEXT and `--key` validation, target resolution, the
+    Enter delay, the EONW v51 request and the CLI projection;
+  - Orbit: ORB-C5 lease input (management v10), owning terminal-state-aware
+    key encoding.
 - **Boundary:** None of the following:
-  - other keys, chords or raw bytes, or a typed (keystroke) mode;
+  - arbitrary raw byte injection, keys outside the 74-key set, lock or side
+    modifier bits, mouse events, key hold/repeat timing, or recording and
+    replaying input;
+  - authorization to grant folder trust or bypass human approval (key
+    transport is not trust authorization);
+  - automatic interrupt-key selection (`eon pane interrupt` is deferred from
+    `eon-0um2b`; callers send `--key escape` or `--key ctrl+c` explicitly)
+    or `--if-idle` / `--if-blocked` status gating;
   - waiting for the program to consume or answer the input; reading back is
     EON-C35;
   - per-agent tokens, grants, expiry or audit log;
@@ -6842,6 +6994,31 @@ A source-version preflight failure is `start`; an invalid reset timestamp is
       `terminal-access-off`, and its picker stayed pending.
     - Older generation: `eon pane send` exited 4 with
       `supervisor-unavailable`, as recorded under EON-C35.
+- **Open proof:** Named keys (`eon-pane-send-key-vlgu0`, EONW v51 / Orbit
+  management v10): automated unit, codec, parity, Orbit real-PTY
+  (`orbit-lease-input`), mixed-version `ORBR` recovery and live-update
+  preflight refusal, and CLI integration tests covering legacy, DECCKM,
+  modifyOtherKeys mode 2 and Kitty keyboard modes, pass-1/pass-2 `--key`
+  pairing, structured JSON vs plain-text stderr usage errors (including
+  missing `--key` operand and routed EONW v50 rejection), 64 vs 65 keys,
+  typing refusal, all three `focused` refusal codes, normal-admission
+  `terminal_access = "none"` with `--force`, explicit closed-PTY refusal
+  (`Refusal::Closed`, confirmed-no-write wording without claiming child exit
+  or lease closure), incomplete-write vs post-write lease close
+  (`terminal-ended` without claiming child exit), local lease-drainer failure
+  (`terminal-unavailable`, uncertain delivery without attributing a lease
+  closure to Orbit), incomplete vs complete EONW request write
+  (`supervisor-unavailable`) and valid-but-unexpected EONW response
+  (`unrepresentable-state`), paste acknowledged with Enter reply lost
+  (`enter: false`, exit 1, uncertain JSON `detail` and stderr without
+  `Enter was not sent`, alongside confirmed `typing-enter`/`busy-enter`
+  keeping `Enter was not sent`), and key-2 post-dispatch uncertainty across
+  both reply boundaries (ORBM 2 s timeout, local lease-drainer failure,
+  post-write ORBM lease close, post-write EONW disconnect, and unexpected
+  EONW response), plus an isolated installed observation opening a pending
+  Codex question in a real pane with `eon pane send PANE --key shift+left`
+  and delivering `--key escape`, `--key ctrl+c` and menu arrows (`--key down
+  --key enter`) to real TUI prompts in both legacy and Kitty keyboard modes.
 
 ## EON-C37 — Upgrades within 0.x
 

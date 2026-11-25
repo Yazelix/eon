@@ -6,7 +6,7 @@
 mod helpers;
 
 use super::sessions::{self, ProgramStatusRead, RunningSession};
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     self as eonw, Action, AttentionKind, AttentionRecord, AttentionState as State, Sidebar,
     Snapshot,
 };
@@ -1223,7 +1223,7 @@ pub(crate) mod checkpoint;
 mod tests {
     use super::*;
     use ProgramState::{Blocked, Done, Error, Idle, Working};
-    use eon_workspace_protocol::v50::{Column, Pane, Popup, PopupGeometry, Tab};
+    use eon_workspace_protocol::v51::{Column, Pane, Popup, PopupGeometry, Tab};
     use rustix::process::{Pid, Signal, kill_process};
     use std::{fs, slice, thread};
 
@@ -1314,7 +1314,7 @@ mod tests {
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v50::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -2898,7 +2898,7 @@ mod tests {
             managed_environment::{PopupCatalog, PopupCommand, PopupDefinition},
             workspace::{Session, WorkspaceSet},
         };
-        use eon_workspace_protocol::v50::{PopupKey, WorkspaceAction};
+        use eon_workspace_protocol::v51::{PopupKey, WorkspaceAction};
         let mut window = WorkspaceSet::with_recovered_sessions(
             "/runtime".into(),
             "/".into(),
@@ -3108,7 +3108,7 @@ mod tests {
         // carries its own rollup.
         let mut reply = before[1].clone();
         reply.workspaces = ["s1", "s2"]
-            .map(|id| eon_workspace_protocol::v50::WorkspaceInfo {
+            .map(|id| eon_workspace_protocol::v51::WorkspaceInfo {
                 id: id.into(),
                 persistent_id: Some(id.into()),
                 registration_error: None,
@@ -3358,7 +3358,7 @@ mod tests {
     #[test]
     fn a_subscriber_reads_attention_in_the_turn_that_applies_it() {
         use crate::{events::Projection, subscriptions::Subscribers};
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             Change, EventKind, Filter, HEADER_BYTES, SubscriptionMessage, declared_message_len,
             decode_subscription_message,
         };
@@ -3546,7 +3546,7 @@ mod tests {
 
     #[test]
     fn busy_needs_the_default_shell_a_child_foreground_and_a_fresh_reply() {
-        use eon_workspace_protocol::v50::{PopupEntry, PopupKey, TargetId};
+        use eon_workspace_protocol::v51::{PopupEntry, PopupKey, TargetId};
         let root = crate::supervisor::temporary_directory();
         let mut sessions: Vec<_> = (1..=12)
             .map(|number| {

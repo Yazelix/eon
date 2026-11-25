@@ -1,7 +1,7 @@
 use super::*;
 use crate::application::tests::busy_window_snapshot;
 use crate::rune_candidate::fixture_messages;
-use eon_workspace_protocol::v50::Response;
+use eon_workspace_protocol::v51::Response;
 use std::{
     ffi::OsString,
     io::Read,
@@ -541,7 +541,7 @@ fn a_workspace_wake_projects_the_last_snapshot_and_recovers_focus_in_one_build()
 
 #[test]
 fn unrelated_snapshots_preserve_warm_dialogs_and_the_next_sidebar_scroll() {
-    use eon_workspace_protocol::v50::{
+    use eon_workspace_protocol::v51::{
         Attention, AttentionState, QuotaFailure, QuotaFailureReason,
     };
     let mut host = busy_host(|| {});
@@ -624,7 +624,7 @@ fn rune_inbox_updates_and_resize_do_not_build_the_legacy_dialog() {
 
 #[test]
 fn quota_clock_changes_settle_without_the_clock_chip() {
-    use eon_workspace_protocol::v50::{CodexQuota, CodexQuotaState, QuotaWindow};
+    use eon_workspace_protocol::v51::{CodexQuota, CodexQuotaState, QuotaWindow};
     let mut host = busy_host(|| {});
     let app = &mut host.app;
     app.bar_items = vec![BarItem::CodexQuota5h];

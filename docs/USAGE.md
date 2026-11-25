@@ -1285,6 +1285,7 @@ line points agents to `eon --skill`.
 | `eon pane history TARGET [--json]` | Print pane or popup TARGET's retained history followed by its visible text, in any session of the window, without changing anything; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane history TARGET --edit [--json]` | Open that text in the configured editor in a Scrollback popup over TARGET's tab, as Alt+Shift+E does, when the tab is the shown session's active tab; see [Reading a terminal](#reading-a-terminal) |
 | `eon pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` | Paste TEXT, or standard input with `--stdin`, into pane or popup TARGET in any session of the window, then with `--enter` press Enter; see [Sending to a terminal](#sending-to-a-terminal) |
+| `eon pane send TARGET --key KEY [--key KEY ...] [--force] [--json]` | Press up to 64 named keys in order, such as `shift+left`, `escape` or `ctrl+c`; see [Sending keys](#sending-keys) |
 | `eon popup show ENTRY [--tab TAB] [--json]` | Start an enabled catalog entry only when its tab has no instance; --tab may name a background tab, and omission uses the addressed session's active tab; active tab and shown session stay as they are |
 | `eon popup hide POPUP [--json]` | Hide popup `uN` of the session as its window's dismissal would: a keep-alive popup keeps running, a transient one stops, and a pending tab's Files starts the tab's first terminal at its starting directory |
 | `eon files reveal PATH [--tab TAB] [--json]` | Select Files in the caller's tab, or the addressed session's active tab without a caller. `--tab` targets any tab in that session |
@@ -1733,6 +1734,41 @@ the Enter then fails, the command exits 1, the text stays in the program, and
 the JSON reply carries `enter: false` and the Enter's `error`, including
 `person-typing`. Do not retry the paste: it would duplicate the text. An unknown
 target exits 3 (`unknown-target`).
+
+### Sending keys
+
+`eon pane send TARGET --key KEY` presses one key in the target, as if you had
+pressed it there; repeat `--key` to press up to 64 keys in order, with no
+delay between them. It answers prompts that paste cannot, such as menus that
+need arrows: `eon pane send p1 --key down --key enter`. `--key` cannot be
+combined with TEXT, `--stdin` or `--enter`.
+
+KEY is optional `shift+`, `ctrl+` (or `control+`), `alt+` and `super+`
+modifiers, in any case and each at most once, then one key: `escape` (`esc`),
+`enter`, `tab`, `backspace`, `space`, `up`, `down`, `left`, `right`, `home`,
+`end`, `pageup` (`page_up`), `pagedown` (`page_down`), `insert`, `delete`
+(`del`), `f1` to `f12`, or one printable ASCII character on a US keyboard. A
+bare uppercase letter or shifted character presses Shift too, so `R` is
+`shift+r` and `?` is `shift+/`; after a modifier, letters ignore case
+(`Ctrl+C` is `ctrl+c`) and shifted characters are refused, so write
+`ctrl+shift+/` rather than `ctrl+?`. Orbit encodes each key for the program's
+current keyboard mode (legacy, application cursor keys, modifyOtherKeys or
+the Kitty keyboard protocol), as your own key press would be. In the
+legacy mode most shells use, two modifiers differ by platform. On macOS, Orbit
+encodes Alt as a Mac's Option key, so `alt+x` types `x` and readline's
+`alt+b` and `alt+d` type letters; send `--key escape --key b` for those.
+`super+a` sends `a` on Linux and nothing on macOS. Each of these still
+counts in `keys`.
+
+Every KEY is checked before the first is sent: an invalid one exits 2 with
+`invalid-key`, and more than 64 exit 2 with `input-too-large`. Typing refusal,
+`--force`, `focused`, `terminal_access` and the exit codes work as for text;
+for `focused`, every key after the first needs the same focused terminal. The
+JSON reply adds `keys`, the number of keys Orbit accepted. If a later key
+fails, the command stops, sends no further key and exits 1 with `keys` and the
+`error`; when the failure left that key's delivery uncertain, `error.detail`
+says so. Key transport is not trust: never use it to accept a folder-trust or
+approval prompt on a person's behalf.
 
 A loop that presses Enter in several panes can hand `eon` its own input: a
 Nushell closure passes its element to the first external command, and in a

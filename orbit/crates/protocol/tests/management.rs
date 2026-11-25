@@ -209,6 +209,17 @@ fn management_messages_and_records_round_trip_canonically() {
         let bytes = management::encode_record(&record).unwrap();
         assert!(bytes.len() <= management::MAX_RECORD_BYTES);
         assert_eq!(management::decode_record(&bytes).unwrap(), record);
+        // A record framed by management v9 is refused, though its record
+        // generation is unchanged.
+        let mut older = bytes;
+        older[4..6].copy_from_slice(&9u16.to_le_bytes());
+        assert!(
+            matches!(
+                management::decode_record(&older),
+                Err(Error::UnsupportedVersion { version: 9 })
+            ),
+            "{record:?}"
+        );
     }
 }
 
@@ -394,16 +405,16 @@ fn program_status_replies_keep_their_bounds() {
     ));
 }
 
-/// Management v4's new messages keep their exact bytes under generation 9,
+/// Management v4's new messages keep their exact bytes under generation 10,
 /// except lease input, which carries its quiet window after its kind (since
 /// v6); v7 added ReadHistory and History; v8 adds the process census; v9
-/// adds the lease key (kind 3: quiet window, key, modifiers): the header's
-/// generation, each kind's tag, and its payload.
+/// adds the lease key (kind 3: quiet window, key, modifiers), whose key set
+/// v10 widens: the header's generation, each kind's tag, and its payload.
 #[test]
-fn management_v9_messages_have_canonical_bytes() {
-    assert_eq!(management::VERSION, 9);
+fn management_v10_messages_have_canonical_bytes() {
+    assert_eq!(management::VERSION, 10);
     let framed = |kind: u8, payload: &[u8]| {
-        let mut bytes = b"ORBM\x09\x00".to_vec();
+        let mut bytes = b"ORBM\x0a\x00".to_vec();
         bytes.extend([kind, 0]);
         bytes.extend((payload.len() as u32).to_le_bytes());
         bytes.extend(payload);
@@ -615,7 +626,7 @@ fn program_status_carries_the_foreground() {
     payload.push(b't');
     payload.extend(1u16.to_le_bytes());
     payload.extend(4u64.to_le_bytes());
-    let mut golden = b"ORBM\x09\x00".to_vec();
+    let mut golden = b"ORBM\x0a\x00".to_vec();
     golden.extend([71, 0]);
     golden.extend((payload.len() as u32).to_le_bytes());
     golden.extend(&payload);
@@ -1040,21 +1051,47 @@ fn management_v4_decoders_reject_invalid_values() {
         management::decode_client_message(&key_with_text),
         Err(Error::TrailingBytes { count: 1 })
     ));
-    // Only keys that produce no text, with Shift, Ctrl, Alt and Super.
-    for key in LeaseInput::KEYS {
-        let modifiers = LeaseInput::KEY_MODIFIERS;
-        assert_eq!(
-            LeaseInput::allowed_key(key.raw(), modifiers.bits()),
-            Some((key, modifiers))
-        );
+    // Only the 74 lease keys, with any of Shift, Ctrl, Alt and Super, out of
+    // every physical key.
+    let named = [
+        PhysicalKey::BACKSPACE,
+        PhysicalKey::ENTER,
+        PhysicalKey::SPACE,
+        PhysicalKey::TAB,
+        PhysicalKey::DELETE,
+        PhysicalKey::END,
+        PhysicalKey::HOME,
+        PhysicalKey::INSERT,
+        PhysicalKey::PAGE_DOWN,
+        PhysicalKey::PAGE_UP,
+        PhysicalKey::ARROW_DOWN,
+        PhysicalKey::ARROW_LEFT,
+        PhysicalKey::ARROW_RIGHT,
+        PhysicalKey::ARROW_UP,
+        PhysicalKey::ESCAPE,
+    ];
+    let lease_key = |key: PhysicalKey| {
+        (PhysicalKey::BACKQUOTE.raw()..=PhysicalKey::EQUAL.raw()).contains(&key.raw())
+            || (PhysicalKey::A.raw()..=PhysicalKey::SLASH.raw()).contains(&key.raw())
+            || (PhysicalKey::F1.raw()..=PhysicalKey::F12.raw()).contains(&key.raw())
+            || named.contains(&key)
+    };
+    let all = (0..=PhysicalKey::MAX_RAW).filter_map(PhysicalKey::from_raw);
+    assert_eq!(
+        all.clone()
+            .filter(|key| lease_key(*key))
+            .collect::<Vec<_>>(),
+        LeaseInput::KEYS
+    );
+    for key in all {
+        for bits in 0..16 {
+            let modifiers = Modifiers::from_bits(bits).unwrap();
+            let allowed = lease_key(key).then_some((key, modifiers));
+            assert_eq!(LeaseInput::allowed_key(key.raw(), bits), allowed, "{key:?}");
+        }
     }
     for (key, modifiers) in [
-        (PhysicalKey::ENTER, Modifiers::empty()),
-        (PhysicalKey::TAB, Modifiers::empty()),
-        (PhysicalKey::ESCAPE, Modifiers::empty()),
-        (PhysicalKey::BACKSPACE, Modifiers::empty()),
-        (PhysicalKey::SPACE, Modifiers::empty()),
-        (PhysicalKey::A, Modifiers::CTRL),
+        (PhysicalKey::A, Modifiers::CTRL.union(Modifiers::CAPS_LOCK)),
         (PhysicalKey::PAGE_DOWN, Modifiers::CAPS_LOCK),
         (PhysicalKey::PAGE_DOWN, Modifiers::NUM_LOCK),
         (

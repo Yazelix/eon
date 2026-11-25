@@ -1,4 +1,4 @@
-//! Eon-owned values and bounded EONW v50 codec for local workspace clients.
+//! Eon-owned values and bounded EONW v51 codec for local workspace clients.
 //!
 //! Every message is a 12-byte header (`EONW`, little-endian version, kind,
 //! zero flags, little-endian payload length) followed by its payload.
@@ -27,7 +27,7 @@ pub use subscription::{
     decode_subscription_message, encode_subscription_message,
 };
 
-pub const VERSION: u16 = 50;
+pub const VERSION: u16 = 51;
 pub const HEADER_BYTES: usize = 12;
 const MAGIC: &[u8; 4] = b"EONW";
 const MAX_MESSAGE_BYTES: usize = 2 * 1024 * 1024;
@@ -377,6 +377,70 @@ pub enum TerminalInput {
     /// Text that [`validate_paste`] accepts.
     Paste(String),
     Enter,
+    /// One key that [`TerminalKey::validate`] accepts.
+    Key(TerminalKey),
+}
+
+/// One canonical physical key for a terminal (EON-C36): KeyA..KeyZ,
+/// Digit0..Digit9, F1..F12 or a named key of [`Shortcut::validate`], with only
+/// Shift, Ctrl, Alt and Super among its modifiers, none required.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TerminalKey {
+    pub modifiers: u8,
+    pub key: String,
+}
+
+impl TerminalKey {
+    pub fn validate(&self) -> Result<()> {
+        if self.modifiers & !(SHIFT | CTRL | ALT | SUPER) != 0 || !canonical_key(&self.key, 12) {
+            return Err(Error::InvalidValue {
+                field: "terminal key",
+            });
+        }
+        Ok(())
+    }
+}
+
+/// Whether `key` names a canonical physical key, with function keys up to
+/// `F{max_function}`.
+fn canonical_key(key: &str, max_function: u8) -> bool {
+    match key.as_bytes() {
+        [b'K', b'e', b'y', b'A'..=b'Z'] | [b'D', b'i', b'g', b'i', b't', b'0'..=b'9'] => true,
+        _ => {
+            key.strip_prefix('F')
+                .and_then(|n| n.parse::<u8>().ok())
+                .is_some_and(|n| (1..=max_function).contains(&n) && key == format!("F{n}"))
+                || matches!(
+                    key,
+                    "Escape"
+                        | "Tab"
+                        | "Enter"
+                        | "Backspace"
+                        | "Space"
+                        | "Insert"
+                        | "Delete"
+                        | "Home"
+                        | "End"
+                        | "PageUp"
+                        | "PageDown"
+                        | "ArrowLeft"
+                        | "ArrowRight"
+                        | "ArrowUp"
+                        | "ArrowDown"
+                        | "Backquote"
+                        | "Backslash"
+                        | "BracketLeft"
+                        | "BracketRight"
+                        | "Comma"
+                        | "Equal"
+                        | "Minus"
+                        | "Period"
+                        | "Quote"
+                        | "Semicolon"
+                        | "Slash"
+                )
+        }
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -501,43 +565,7 @@ impl Shortcut {
     /// against fixed workspace/native bindings before publishing the catalog.
     pub fn validate(&self) -> Result<()> {
         let key = self.key.as_str();
-        let valid_key = match key.as_bytes() {
-            [b'K', b'e', b'y', b'A'..=b'Z'] | [b'D', b'i', b'g', b'i', b't', b'0'..=b'9'] => true,
-            _ => {
-                key.strip_prefix('F')
-                    .and_then(|n| n.parse::<u8>().ok())
-                    .is_some_and(|n| (1..=24).contains(&n) && key == format!("F{n}"))
-                    || matches!(
-                        key,
-                        "Escape"
-                            | "Tab"
-                            | "Enter"
-                            | "Backspace"
-                            | "Space"
-                            | "Insert"
-                            | "Delete"
-                            | "Home"
-                            | "End"
-                            | "PageUp"
-                            | "PageDown"
-                            | "ArrowLeft"
-                            | "ArrowRight"
-                            | "ArrowUp"
-                            | "ArrowDown"
-                            | "Backquote"
-                            | "Backslash"
-                            | "BracketLeft"
-                            | "BracketRight"
-                            | "Comma"
-                            | "Equal"
-                            | "Minus"
-                            | "Period"
-                            | "Quote"
-                            | "Semicolon"
-                            | "Slash"
-                    )
-            }
-        };
+        let valid_key = canonical_key(key, 24);
         if self.modifiers == 0
             || self.modifiers & !(SHIFT | CTRL | ALT | SUPER) != 0
             || !valid_key
@@ -1258,6 +1286,12 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
                     payload.long_raw(text.as_bytes());
                 }
                 TerminalInput::Enter => payload.byte(1),
+                TerminalInput::Key(key) => {
+                    key.validate()?;
+                    payload.byte(2);
+                    payload.byte(key.modifiers);
+                    payload.string(&key.key);
+                }
             }
         }
         Action::Subscribe { filter, after } => {
@@ -1498,6 +1532,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             input: match decoder.byte()? {
                 0 => TerminalInput::Paste(decoder.long_string("paste", MAX_PASTE_BYTES)?),
                 1 => TerminalInput::Enter,
+                2 => TerminalInput::Key(TerminalKey {
+                    modifiers: decoder.byte()?,
+                    key: decoder.string("terminal key", MAX_KEY_BYTES)?,
+                }),
                 value => {
                     return Err(Error::InvalidTag {
                         field: "terminal input",
@@ -1547,8 +1585,10 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             | Action::EditTerminalHistory { target } => identity("terminal target", target)?,
             Action::SendTerminal { target, input, .. } => {
                 validate_send_target(target)?;
-                if let TerminalInput::Paste(text) = input {
-                    validate_paste(text)?;
+                match input {
+                    TerminalInput::Paste(text) => validate_paste(text)?,
+                    TerminalInput::Key(key) => key.validate()?,
+                    TerminalInput::Enter => (),
                 }
             }
             Action::Subscribe { filter, after } => {
@@ -4577,18 +4617,18 @@ mod tests {
         for (action, golden) in [
             (
                 Action::SetSidebar { open: false },
-                "454f4e57320001000700000002007231002d00",
+                "454f4e57330001000700000002007231002d00",
             ),
             (
                 Action::SetSidebar { open: true },
-                "454f4e57320001000700000002007231002d01",
+                "454f4e57330001000700000002007231002d01",
             ),
             (
                 Action::CloseColumn {
                     pane: "p2".into(),
                     consent: None,
                 },
-                "454f4e57320001000b00000002007231002c0200703200",
+                "454f4e57330001000b00000002007231002c0200703200",
             ),
         ] {
             let request = Request {
@@ -4624,14 +4664,14 @@ mod tests {
         let bytes = encode_request(&valid).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57320001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
+            "454f4e57330001002000000002007231002c0200703201020067310200050072756e2d61050072756e2d6202"
         );
         assert_eq!(decode_request(&bytes).unwrap(), valid);
         let response = Response::Confirm(scope.clone());
         let bytes = encode_response(&response).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e5732008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
+            "454f4e5733008f004b000000020067310200703202020073310100020073310200743100020070320a007465726d696e616c2d32050072756e2d610400666973680001000a007465726d696e616c2d39050072756e2d62"
         );
         assert_eq!(decode_response(&bytes).unwrap(), response);
         // A second run replaced with the first is rejected at the wire boundary too.
@@ -5974,6 +6014,86 @@ mod tests {
         }
     }
 
+    /// A terminal key names one of the 74 canonical keys through F12, with
+    /// only Shift, Ctrl, Alt and Super (EON-C36), on both sides of the wire.
+    #[test]
+    fn terminal_key_codec_validates_and_round_trips() {
+        let request = |modifiers, key: &str| Request {
+            id: "r1".into(),
+            caller: None,
+            action: Action::SendTerminal {
+                target: "p1".into(),
+                force: false,
+                input: TerminalInput::Key(TerminalKey {
+                    modifiers,
+                    key: key.into(),
+                }),
+            },
+        };
+        let named = "Escape Tab Enter Backspace Space Insert Delete Home End PageUp PageDown \
+                     ArrowLeft ArrowRight ArrowUp ArrowDown Backquote Backslash BracketLeft \
+                     BracketRight Comma Equal Minus Period Quote Semicolon Slash";
+        let keys = (b'A'..=b'Z')
+            .map(|letter| format!("Key{}", char::from(letter)))
+            .chain((0..10).map(|digit| format!("Digit{digit}")))
+            .chain((1..=12).map(|n| format!("F{n}")))
+            .chain(named.split_whitespace().map(String::from))
+            .collect::<Vec<_>>();
+        assert_eq!(keys.len(), 74);
+        for key in &keys {
+            for modifiers in 0..16 {
+                let valid = request(modifiers, key);
+                assert_eq!(decode_request(&encode_request(&valid).unwrap()), Ok(valid));
+            }
+        }
+        let bytes = encode_request(&request(SHIFT | CTRL, "ArrowLeft")).unwrap();
+        assert!(bytes.ends_with(b"\x00\x02\x00p1\x00\x02\x03\x09\x00ArrowLeft"));
+        let invalid = Error::InvalidValue {
+            field: "terminal key",
+        };
+        for (modifiers, key) in [
+            (16, "KeyA"),
+            (CTRL | 64, "KeyA"),
+            (0, "F13"),
+            (CTRL, "F24"),
+            (0, "F01"),
+            (0, "Keya"),
+            (0, "Numpad0"),
+            (0, ""),
+        ] {
+            let forged = request(modifiers, key);
+            assert_eq!(
+                encode_request(&forged),
+                Err(invalid.clone()),
+                "{modifiers} {key}"
+            );
+            let mut payload = Encoder::default();
+            payload.string("r1");
+            payload.byte(0);
+            payload.byte(SEND_TERMINAL);
+            payload.byte(0);
+            payload.string("p1");
+            payload.byte(0);
+            payload.byte(2);
+            payload.byte(modifiers);
+            payload.string(key);
+            let forged = frame(REQUEST, payload.bytes).unwrap();
+            assert_eq!(
+                decode_request(&forged),
+                Err(invalid.clone()),
+                "{modifiers} {key}"
+            );
+        }
+        let long = "K".repeat(MAX_KEY_BYTES + 1);
+        assert!(encode_request(&request(0, &long)).is_err());
+        // A shortcut keeps F13 through F24.
+        let shortcut = Shortcut {
+            modifiers: CTRL,
+            key: "F24".into(),
+        };
+        assert_eq!(shortcut.validate(), Ok(()));
+    }
+
     #[test]
     fn terminal_requests_bound_their_paste_on_both_sides() {
         let request = |input| Request {
@@ -6031,12 +6151,12 @@ mod tests {
             Err(Error::InvalidUtf8 { field: "paste" })
         );
         let mut enter = encode_request(&request(TerminalInput::Enter)).unwrap();
-        *enter.last_mut().unwrap() = 2;
+        *enter.last_mut().unwrap() = 3;
         assert_eq!(
             decode_request(&enter),
             Err(Error::InvalidTag {
                 field: "terminal input",
-                value: 2,
+                value: 3,
             })
         );
         let mut invalid_force = encode_request(&request(TerminalInput::Enter)).unwrap();
@@ -6268,14 +6388,14 @@ mod tests {
         for (action, expected) in [
             (
                 Action::Workspace(WorkspaceAction::CloseTab { tab: "t1".into() }),
-                "454f4e57320001000a00000002007231001202007431",
+                "454f4e57330001000a00000002007231001202007431",
             ),
             (
                 Action::Workspace(WorkspaceAction::SetTabDirectory {
                     tab: "t1".into(),
                     directory: b"/tmp".to_vec(),
                 }),
-                "454f4e57320001001000000002007231000c0200743104002f746d70",
+                "454f4e57330001001000000002007231000c0200743104002f746d70",
             ),
             (
                 Action::InvokePopup {
@@ -6284,7 +6404,7 @@ mod tests {
                     expected_instance: Some("u1".into()),
                     intent: InvokeIntent::Focus,
                 },
-                "454f4e573200010015000000020072310013020074310300676974010200753101",
+                "454f4e573300010015000000020072310013020074310300676974010200753101",
             ),
             (
                 Action::InvokePopup {
@@ -6293,22 +6413,22 @@ mod tests {
                     expected_instance: None,
                     intent: InvokeIntent::Show,
                 },
-                "454f4e5732000100110000000200723100130200743103006769740002",
+                "454f4e5733000100110000000200723100130200743103006769740002",
             ),
-            (Action::CreateColumn, "454f4e573200010006000000020072310016"),
+            (Action::CreateColumn, "454f4e573300010006000000020072310016"),
             (
                 Action::ClosePane { pane: "p2".into() },
-                "454f4e57320001000a00000002007231001702007032",
+                "454f4e57330001000a00000002007231001702007032",
             ),
             (
                 Action::MovePaneSideways(Side::Right),
-                "454f4e573200010006000000020072310019",
+                "454f4e573300010006000000020072310019",
             ),
             (
                 Action::Edit {
                     file: b"/tmp/a".to_vec(),
                 },
-                "454f4e57320001000e00000002007231001a06002f746d702f61",
+                "454f4e57330001000e00000002007231001a06002f746d702f61",
             ),
             (
                 Action::CreatePane {
@@ -6316,7 +6436,7 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57320001001100000002007231001b0000020002006878010061",
+                "454f4e57330001001100000002007231001b0000020002006878010061",
             ),
             (
                 Action::CreatePane {
@@ -6324,7 +6444,7 @@ mod tests {
                     argv: vec![b"hx".to_vec()],
                     focus: true,
                 },
-                "454f4e57320001001200000002007231001b010102007433010002006878",
+                "454f4e57330001001200000002007231001b010102007433010002006878",
             ),
             (
                 Action::CreatePane {
@@ -6332,7 +6452,7 @@ mod tests {
                     argv: vec![],
                     focus: false,
                 },
-                "454f4e57320001000e00000002007231001b0001020074330000",
+                "454f4e57330001000e00000002007231001b0001020074330000",
             ),
             (
                 Action::LaunchTab {
@@ -6340,7 +6460,7 @@ mod tests {
                     argv: vec![],
                     focus: true,
                 },
-                "454f4e57320001000f00000002007231002504002f746d70000001",
+                "454f4e57330001000f00000002007231002504002f746d70000001",
             ),
             (
                 Action::LaunchTab {
@@ -6348,44 +6468,44 @@ mod tests {
                     argv: vec![b"hx".to_vec(), b"a".to_vec()],
                     focus: false,
                 },
-                "454f4e57320001001600000002007231002504002f746d7002000200687801006100",
+                "454f4e57330001001600000002007231002504002f746d7002000200687801006100",
             ),
             (
                 Action::ToggleSidebar,
-                "454f4e57320001000600000002007231001c",
+                "454f4e57330001000600000002007231001c",
             ),
             (
                 Action::FocusAttention {
                     tab: "t1".into(),
                     target: "p2".into(),
                 },
-                "454f4e57320001000e00000002007231001d0200743102007032",
+                "454f4e57330001000e00000002007231001d0200743102007032",
             ),
             (
                 Action::NextAttention,
-                "454f4e57320001000600000002007231001e",
+                "454f4e57330001000600000002007231001e",
             ),
             (
                 Action::PreviousAttention,
-                "454f4e57320001000600000002007231001f",
+                "454f4e57330001000600000002007231001f",
             ),
             (
                 Action::ReadTerminal {
                     target: "p2".into(),
                 },
-                "454f4e57320001000a00000002007231002602007032",
+                "454f4e57330001000a00000002007231002602007032",
             ),
             (
                 Action::ReadTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57320001000a00000002007231002902007032",
+                "454f4e57330001000a00000002007231002902007032",
             ),
             (
                 Action::EditTerminalHistory {
                     target: "p2".into(),
                 },
-                "454f4e57320001000a00000002007231002a02007032",
+                "454f4e57330001000a00000002007231002a02007032",
             ),
             (
                 Action::SendTerminal {
@@ -6394,7 +6514,7 @@ mod tests {
                     input: TerminalInput::Paste("hi".into()),
                 },
                 // v27's u32-length paste.
-                "454f4e57320001001300000002007231002700020070320000020000006869",
+                "454f4e57330001001300000002007231002700020070320000020000006869",
             ),
             (
                 Action::SendTerminal {
@@ -6402,7 +6522,7 @@ mod tests {
                     force: true,
                     input: TerminalInput::Enter,
                 },
-                "454f4e57320001000d00000002007231002700020075310101",
+                "454f4e57330001000d00000002007231002700020075310101",
             ),
         ] {
             let request = Request {
@@ -6426,7 +6546,7 @@ mod tests {
         let bytes = encode_request(&request).unwrap();
         assert_eq!(
             hex(&bytes),
-            "454f4e57320001001a00000002007231010e007465726d696e616c2d322e392d311b01000000",
+            "454f4e57330001001a00000002007231010e007465726d696e616c2d322e392d311b01000000",
         );
         assert_eq!(decode_request(&bytes).unwrap(), request);
         for caller in ["", "session 2"] {
@@ -6552,7 +6672,7 @@ mod tests {
             (
                 snapshot,
                 concat!(
-                    "454f4e5732008100ce01000001000200020001000100000002007431000000410000804001000300",
+                    "454f4e5733008100ce01000001000200020001000100000002007431000000410000804001000300",
                     "6769740300476974000404004b65794701000200743104002f746d70000102007033010200753103",
                     "0002007031030073703103002f7031010200703100000002007032030073703203002f7032010200",
                     "703200000002007033030073703303002f7033010200703300000102ff0500636f6465780600656f",
@@ -6566,7 +6686,7 @@ mod tests {
                     "3030303030303030303030303030303030303030303030310000000504004b657949",
                 ),
             ),
-            (failure, "454f4e57320082000a00000004006275737902006e6f"),
+            (failure, "454f4e57330082000a00000004006275737902006e6f"),
             (
                 Response::Text(TerminalText {
                     target: terminal_target(TargetId::Pane("p2".into()), "terminal-2"),
@@ -6581,7 +6701,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e573200860038000000",
+                    "454f4e573300860038000000",
                     // Workspace, tab, pane p2 and its terminal; no caller.
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, alternate screen, 24x80, title, directory,
@@ -6604,7 +6724,7 @@ mod tests {
                     text: "a\nb".into(),
                 }),
                 concat!(
-                    "454f4e5732008d003c000000",
+                    "454f4e5733008d003c000000",
                     "020073310200743100020070320a007465726d696e616c2d3200",
                     // Revision, primary screen, 24x80, title, directory,
                     // omitted lines, cut bytes, then the u32-length text.
@@ -6620,7 +6740,7 @@ mod tests {
                     enter_delay_ms: 300,
                 }),
                 concat!(
-                    "454f4e573200870036000000020073310200743100020070320a007465726d696e616c2d32010200",
+                    "454f4e573300870036000000020073310200743100020070320a007465726d696e616c2d32010200",
                     "73310200743101020075310a007465726d696e616c2d33012c01",
                 ),
             ),
@@ -6631,7 +6751,7 @@ mod tests {
                     popup: terminal_target(TargetId::Popup("u1".into()), "terminal-3"),
                 }),
                 concat!(
-                    "454f4e5732008e0033000000",
+                    "454f4e5733008e0033000000",
                     // Pane p2 and its terminal, no caller, then popup u1 and
                     // its terminal.
                     "020073310200743100020070320a007465726d696e616c2d3200",
@@ -6642,7 +6762,7 @@ mod tests {
                 Response::Ended(Ended {
                     generation: "g1".into(),
                 }),
-                "454f4e57320085000400000002006731",
+                "454f4e57330085000400000002006731",
             ),
         ] {
             let bytes = encode_response(&response).unwrap();
@@ -6682,8 +6802,8 @@ mod tests {
                 busy: None,
             }),
             concat!(
-                "454f4e5732008300b6000000230067312d3030303030303030303030303030303030303030303030",
-                "3030303030303030310500302e392e30320002006f6b010002007331010500726561647900040062",
+                "454f4e5733008300b6000000230067312d3030303030303030303030303030303030303030303030",
+                "3030303030303030310500302e392e30330002006f6b010002007331010500726561647900040062",
                 "7573790000000000000000000000230067312d303030303030303030303030303030303030303030",
                 "3030303030303030303031230067312d303030303030303030303030303030303030303030303030",
                 "30303030303030310100020073310b00666978747572652d72756e00080001000000",
@@ -6786,7 +6906,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e57320081003a01000001000100010000000100740000000000000000000001000100740100",
+                "454f4e57330081003a01000001000100010000000100740000000000000000000001000100740100",
                 "2f00010100700001000100700200737002002f700101007000000101280000000000000000010000",
                 "00000000000000000000010000000000000202007331020073310100020073310130003031323334",
                 "35363738396162636465663031323334353637383961626364656630303030303030303030303030",
@@ -6830,7 +6950,7 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5732008100f901000001000100010000000100740000000000000000000001000100740100",
+                "454f4e5733008100f901000001000100010000000100740000000000000000000001000100740100",
                 "2f00010100700001000100700200737002002f700101007000000101280000000000000000010000",
                 "00000000000000000000010000000000000202007331020073310100020073310130003031323334",
                 "35363738396162636465663031323334353637383961626364656630303030303030303030303030",
@@ -6915,8 +7035,8 @@ mod tests {
         assert_eq!(
             hex(&bytes),
             concat!(
-                "454f4e5732008300d1000000230067312d3030303030303030303030303030303030303030303030",
-                "3030303030303030310500302e392e30320002006f6b000001050072656164790105007265616479",
+                "454f4e5733008300d1000000230067312d3030303030303030303030303030303030303030303030",
+                "3030303030303030310500302e392e30330002006f6b000001050072656164790105007265616479",
                 "000000000000000000",
             )
             .to_owned()

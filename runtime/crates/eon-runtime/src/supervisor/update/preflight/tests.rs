@@ -258,7 +258,7 @@ exec "$EON_TEST_EXE" --exact supervisor::update::preflight::tests::target_proces
     fn protected(
         &self,
     ) -> (
-        eon_workspace_protocol::v50::Snapshot,
+        eon_workspace_protocol::v51::Snapshot,
         Vec<u8>,
         Vec<(OsString, u64, u64)>,
     ) {
@@ -433,7 +433,7 @@ fn admission_and_lost_reply_leave_a_live_window_untouched() {
         wrong.with_extension("verdict"),
         TargetVerdict {
             target_build: OTHER.into(),
-            eonw: eon_workspace_protocol::v50::VERSION,
+            eonw: eon_workspace_protocol::v51::VERSION,
             update_schema: 1,
         }
         .encode()
@@ -495,7 +495,7 @@ fn admission_and_lost_reply_leave_a_live_window_untouched() {
     assert_eq!(last.refusal, None, "{last:?}");
     assert_eq!(
         last.detail,
-        format!("target EONW {}", eon_workspace_protocol::v50::VERSION)
+        format!("target EONW {}", eon_workspace_protocol::v51::VERSION)
     );
     assert_eq!(
         sockets,
@@ -546,6 +546,14 @@ fn retained_hosts_require_each_exact_orbit_version() {
     let inputs = target_inputs();
     check.target_build = current_generation(&inputs).unwrap();
     for (field, host) in [
+        // A host from before management v10, then one from after it.
+        (
+            "management",
+            eonu::Host {
+                management: 9,
+                ..expected.clone()
+            },
+        ),
         (
             "management",
             eonu::Host {

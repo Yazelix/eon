@@ -6,7 +6,7 @@ Both crates build and test without the Eon crates.
 | Package | Owns | Version |
 |---|---|---|
 | `eon-runtime` | Invocation, terminal lifecycle, session state, configuration parsing and generation identity | `0.1.0` |
-| `eon-workspace-protocol` | EONW v50 types, the Reserved Stop and bounded codecs | `0.1.0` |
+| `eon-workspace-protocol` | EONW v51 types, the Reserved Stop and bounded codecs | `0.1.0` |
 
 ## Consumer boundary
 
@@ -14,7 +14,7 @@ Eon's actual executable calls `eon_runtime::run(inputs)`. The concrete root
 exports construct `Inputs`, defaults and managed-program inputs; the ten
 mechanism modules remain private. `run` returns the product label and exit
 result. Eon retains process exit/error handling.
-Agent attention consumes management v9's neutral background-process census.
+Agent attention consumes management v10's neutral background-process census.
 On Linux one bounded worker validates the four measured Codex/ChatGPT helper
 roles before excluding those processes from background interpretation. A
 separate job, unknown identity or deadline miss keeps background. EONW stays
@@ -97,6 +97,7 @@ EONW v40 adds the `ReloadPresentation` lifecycle action and the presenting
 Venus path in `Runtime`. EON-C11 owns its exact-version, focused-window
 replacement and rollback rules.
 
+EONW v51 adds named keys to the terminal send request (EON-C36).
 EONW v50 adds the Files reveal request (EON-C10).
 EONW v49 carries window input-lock actions, the accepted toggle chord and live
 input-lock state.

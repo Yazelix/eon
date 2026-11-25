@@ -8,7 +8,7 @@ use super::{
         validate_private_directory,
     },
 };
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     Failure, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, MAX_SESSIONS, MAX_TERMINAL_METADATA_BYTES,
     MAX_TERMINAL_TEXT_BYTES,
 };
@@ -1069,8 +1069,19 @@ struct LeaseRequest {
     unsent: Vec<u8>,
     reply: Vec<u8>,
     deadline: Instant,
-    /// Set while a drainer finishes the request, which then owns its bytes.
-    drainer: Option<Drainer>,
+    reader: Reader,
+}
+
+/// Who finishes a request's bytes.
+enum Reader {
+    /// The supervisor, on the lease.
+    Lease,
+    /// A drainer, which owns the request's bytes until it returns.
+    Drainer(Drainer),
+    /// A drainer that failed or saw the lease close. Its outcome stands for
+    /// the request's life: the lease, which it may have left mid-reply, is
+    /// never read for the request again.
+    Ended(ReplyProgress),
 }
 
 /// A thread that writes a read or send and reads its reply on a clone of the
@@ -1140,10 +1151,13 @@ const _: () = assert!(MAX_TERMINAL_TEXT_BYTES == management::MAX_VISIBLE_TEXT_BY
 const _: () = assert!(MAX_HISTORY_TEXT_BYTES == management::MAX_HISTORY_TEXT_BYTES);
 const _: () = assert!(MAX_TERMINAL_METADATA_BYTES == orbit_protocol::session::MAX_METADATA_BYTES);
 
+#[derive(Clone, Copy)]
 enum ReplyProgress {
     Complete,
     WouldBlock,
     Closed,
+    /// The local drainer thread failed, so no usable reply came.
+    DrainerFailed,
 }
 
 /// Writes what remains of the request, then reads the reply without reading
@@ -1152,19 +1166,27 @@ enum ReplyProgress {
 /// probe owns. A request with a drainer waits for it and then continues from
 /// the bytes it returns.
 fn advance_request(lease: &mut UnixStream, request: &mut LeaseRequest) -> ReplyProgress {
-    if let Some(drainer) = request.drainer.take() {
-        if !drainer.thread.is_finished() {
-            request.drainer = Some(drainer);
+    match std::mem::replace(&mut request.reader, Reader::Lease) {
+        Reader::Lease => {}
+        Reader::Ended(progress) => {
+            request.reader = Reader::Ended(progress);
+            return progress;
+        }
+        Reader::Drainer(drainer) if !drainer.thread.is_finished() => {
+            request.reader = Reader::Drainer(drainer);
             return ReplyProgress::WouldBlock;
         }
-        let Ok((unsent, reply, closed)) = drainer.thread.join() else {
-            return ReplyProgress::Closed;
-        };
-        request.unsent = unsent;
-        request.reply = reply;
-        // The drainer's outcome stands: the lease is not read again for it.
-        if closed {
-            return ReplyProgress::Closed;
+        Reader::Drainer(drainer) => {
+            let Ok((unsent, reply, closed)) = drainer.thread.join() else {
+                request.reader = Reader::Ended(ReplyProgress::DrainerFailed);
+                return ReplyProgress::DrainerFailed;
+            };
+            request.unsent = unsent;
+            request.reply = reply;
+            if closed {
+                request.reader = Reader::Ended(ReplyProgress::Closed);
+                return ReplyProgress::Closed;
+            }
         }
     }
     while !request.unsent.is_empty() {
@@ -1219,7 +1241,7 @@ fn send_request(
         unsent,
         reply: Vec::new(),
         deadline,
-        drainer: None,
+        reader: Reader::Lease,
     });
     advance_request(&mut session.lease, request);
     Ok(())
@@ -1238,7 +1260,7 @@ fn send_drained_request(
             .map_err(|error| format!("cannot encode terminal management request: {error}"))?,
         reply: Vec::new(),
         deadline,
-        drainer: None,
+        reader: Reader::Lease,
     };
     let mut lease = session
         .lease
@@ -1256,7 +1278,7 @@ fn send_drained_request(
                 match advance_request(&mut lease, &mut detached) {
                     ReplyProgress::WouldBlock => {}
                     ReplyProgress::Complete => break false,
-                    ReplyProgress::Closed => break true,
+                    ReplyProgress::Closed | ReplyProgress::DrainerFailed => break true,
                 }
                 // Wakes when the lease is ready, or every 50 ms to see
                 // whether the request was dropped.
@@ -1280,7 +1302,7 @@ fn send_drained_request(
         unsent: Vec::new(),
         reply: Vec::new(),
         deadline,
-        drainer: Some(Drainer {
+        reader: Reader::Drainer(Drainer {
             thread,
             _request: alive,
         }),
@@ -1358,7 +1380,7 @@ pub(super) fn read_program_status(
         ReplyProgress::WouldBlock if Instant::now() < request.deadline => {
             return Ok(ProgramStatusRead::Pending);
         }
-        ReplyProgress::WouldBlock | ReplyProgress::Closed => {
+        ReplyProgress::WouldBlock | ReplyProgress::Closed | ReplyProgress::DrainerFailed => {
             return Ok(ProgramStatusRead::Missed);
         }
     }
@@ -1390,7 +1412,9 @@ fn drain_request(session: &mut RunningSession) -> Result<bool, String> {
             Ok(true)
         }
         ReplyProgress::WouldBlock => Ok(false),
-        ReplyProgress::Closed => Err("terminal ended before answering its request".into()),
+        ReplyProgress::Closed | ReplyProgress::DrainerFailed => {
+            Err("terminal ended before answering its request".into())
+        }
     }
 }
 
@@ -1496,7 +1520,7 @@ fn name_lease(
                     naming_failed(session, name, "Orbit did not answer in time", now, log);
                     return false;
                 }
-                ReplyProgress::Closed => return false,
+                ReplyProgress::Closed | ReplyProgress::DrainerFailed => return false,
             }
         }
         Some(LeaseRequest {
@@ -1556,7 +1580,7 @@ pub(super) fn read_history(
     }
 }
 
-/// Writes one paste, Enter or non-text key through ORB-C5's lease input
+/// Writes one paste, Enter or lease key through ORB-C5's lease input
 /// (EON-C36). Returns whether Orbit bracketed the paste.
 pub(super) fn send_input(
     session: &mut RunningSession,
@@ -1567,7 +1591,10 @@ pub(super) fn send_input(
     let request = ManagementClientMessage::Input { input, quiet_ms };
     match terminal_request(session, &request, log)? {
         ManagementServerMessage::Input { bracketed } => Ok(bracketed),
-        _ => Err(unavailable(session, "Orbit returned the wrong result")),
+        _ => Err(unavailable(
+            session,
+            &format!("Orbit returned the wrong result; {MAY_BE_DELIVERED}"),
+        )),
     }
 }
 
@@ -1609,13 +1636,15 @@ fn terminal_request(
                     session.request = None;
                 }
                 ReplyProgress::WouldBlock => {}
-                ReplyProgress::Closed => return Err(ended(session)),
+                ReplyProgress::Closed => return Err(lease_closed(session, PREVIOUS_CLOSED)),
+                ReplyProgress::DrainerFailed => return Err(unavailable(session, DRAIN_FAILED)),
             },
-            Some(_) => {
-                if drain_request(session).is_err() {
-                    return Err(ended(session));
-                }
-            }
+            Some(request) => match advance_request(&mut session.lease, request) {
+                ReplyProgress::Complete => session.request = None,
+                ReplyProgress::WouldBlock => {}
+                ReplyProgress::Closed => return Err(lease_closed(session, PREVIOUS_CLOSED)),
+                ReplyProgress::DrainerFailed => return Err(unavailable(session, DRAIN_FAILED)),
+            },
         }
         if session.request.is_none() {
             break;
@@ -1638,37 +1667,16 @@ fn terminal_request(
     }
     send_drained_request(session, message, deadline)
         .map_err(|error| unavailable(session, &error))?;
-    let reply = loop {
-        let Some(request) = &mut session.request else {
-            unreachable!("the request was just sent");
-        };
-        match advance_request(&mut session.lease, request) {
-            ReplyProgress::Complete => {
-                let reply = std::mem::take(&mut request.reply);
-                session.request = None;
-                break reply;
-            }
-            ReplyProgress::WouldBlock if Instant::now() < deadline => {
-                thread::sleep(Duration::from_millis(1));
-            }
-            ReplyProgress::WouldBlock => {
-                let detail = match message {
-                    ManagementClientMessage::Input { .. } => {
-                        "Orbit did not answer within 2 s; the input may still arrive"
-                    }
-                    _ => "Orbit did not answer within 2 s",
-                };
-                return Err(unavailable(session, detail));
-            }
-            ReplyProgress::Closed => return Err(ended(session)),
-        }
-    };
+    let input = matches!(message, ManagementClientMessage::Input { .. });
+    let reply = await_reply(session, input, deadline)?;
     match management::decode_server_message(&reply) {
         // A stopped Orbit's unsolicited result (ORB-C12) came in the reply's
         // place; the EOF probe finds the lease closed after it.
-        Ok(
-            ManagementServerMessage::Stopped(_) | ManagementServerMessage::Refused(Refusal::Closed),
-        ) => Err(ended(session)),
+        Ok(ManagementServerMessage::Stopped(_)) => Err(ended(session)),
+        Ok(ManagementServerMessage::Refused(Refusal::Closed)) => Err(failure(
+            "terminal-ended",
+            format!("terminal {}'s PTY is closed; nothing was sent", session.id),
+        )),
         Ok(ManagementServerMessage::Refused(Refusal::UnbracketedNewline)) => Err(failure(
             "unbracketed-newline",
             "the text holds a line break and the program has not enabled bracketed paste",
@@ -1677,14 +1685,14 @@ fn terminal_request(
             "person-typing",
             "a person is typing in the target terminal; wait for a quiet interval or use --force",
         )),
-        // Only a paste reaches the CLI; a key is Runtime's own (EON-C36).
+        // Eon validates keys first, so Orbit refuses only a key it does not share.
         Ok(ManagementServerMessage::Refused(Refusal::InvalidInput)) => Err(match message {
             ManagementClientMessage::Input {
                 input: LeaseInput::Key { .. },
                 ..
             } => failure(
                 "invalid-key",
-                "Orbit refused the key: a lease sends only a key that produces no text, \
+                "Orbit refused the key: a lease sends only one of its 74 keys, \
                  with no modifier but Shift, Ctrl, Alt and Super",
             ),
             _ => failure(
@@ -1701,7 +1709,10 @@ fn terminal_request(
         )),
         Ok(ManagementServerMessage::Busy) => Err(unavailable(session, "Orbit answered Busy")),
         Ok(reply) => Ok(reply),
-        Err(error) => Err(unavailable(session, &format!("invalid result: {error}"))),
+        Err(error) => Err(unavailable(
+            session,
+            &uncertain(input, &format!("invalid result: {error}")),
+        )),
     }
 }
 
@@ -1712,10 +1723,89 @@ fn ended(session: &RunningSession) -> Failure {
     )
 }
 
+/// Waits for the reply to the request just sent. Once Orbit may have the
+/// whole request, a failure says the input may have been delivered (EON-C36).
+fn await_reply(
+    session: &mut RunningSession,
+    input: bool,
+    deadline: Instant,
+) -> Result<Vec<u8>, Failure> {
+    loop {
+        let Some(request) = &mut session.request else {
+            unreachable!("the request was just sent");
+        };
+        match advance_request(&mut session.lease, request) {
+            ReplyProgress::Complete => {
+                let reply = std::mem::take(&mut request.reply);
+                session.request = None;
+                return Ok(reply);
+            }
+            ReplyProgress::WouldBlock if Instant::now() < deadline => {
+                thread::sleep(Duration::from_millis(1));
+            }
+            ReplyProgress::WouldBlock => {
+                let detail = match input {
+                    true => "Orbit did not answer within 2 s; the input may still arrive",
+                    false => "Orbit did not answer within 2 s",
+                };
+                return Err(unavailable(session, detail));
+            }
+            ReplyProgress::Closed if !request.unsent.is_empty() => {
+                return Err(lease_closed(session, NOT_SENT));
+            }
+            ReplyProgress::Closed => {
+                return Err(lease_closed(session, &uncertain(input, "before replying")));
+            }
+            ReplyProgress::DrainerFailed => {
+                let detail = uncertain(
+                    input,
+                    "the local lease reader failed before returning a reply",
+                );
+                return Err(unavailable(session, &detail));
+            }
+        }
+    }
+}
+
+/// `detail`, saying an input may have been delivered.
+fn uncertain(input: bool, detail: &str) -> String {
+    match input {
+        true => format!("{detail}; {MAY_BE_DELIVERED}"),
+        false => detail.to_owned(),
+    }
+}
+
+/// Orbit closed the management lease, which says nothing of the child.
+fn lease_closed(session: &RunningSession, detail: &str) -> Failure {
+    failure(
+        "terminal-ended",
+        format!(
+            "Orbit closed the management lease for terminal {} {detail}",
+            session.id
+        ),
+    )
+}
+
+/// How a lease failure says the request never reached Orbit whole.
+const NOT_SENT: &str = "before the request finished sending; nothing was sent";
+/// How a lease failure says it closed under a prior request, before ours.
+const PREVIOUS_CLOSED: &str = "while a previous request was in flight; nothing was sent";
+/// How a failure says a prior request's local reader failed before ours.
+const DRAIN_FAILED: &str =
+    "the local lease reader failed while draining a previous request; nothing was sent";
+/// How a failure says Orbit may have taken input that it did not answer.
+const MAY_BE_DELIVERED: &str = "the input may have been delivered";
+
 /// Whether `send_input` failed only for now: a person is typing in the
 /// terminal, or its input queue is full. Nothing was written.
 pub(super) fn input_refused_for_now(failure: &Failure) -> bool {
     failure.code == "person-typing" || failure.detail.ends_with(INPUT_FULL)
+}
+
+/// Whether a failed send may still have delivered its input: Orbit took the
+/// whole request but no usable reply came (EON-C36).
+pub(super) fn delivery_uncertain(failure: &Failure) -> bool {
+    failure.detail.ends_with(MAY_BE_DELIVERED) || failure.detail.ends_with("may still arrive")
 }
 
 /// How a failure says Orbit refused input because the PTY input queue is full.
@@ -1766,7 +1856,9 @@ pub(super) fn drain_for_update(
         match advance_request(&mut session.lease, request) {
             ReplyProgress::Complete => {}
             ReplyProgress::WouldBlock => return Ok(false),
-            ReplyProgress::Closed => return Err("a terminal ended before answering its request"),
+            ReplyProgress::Closed | ReplyProgress::DrainerFailed => {
+                return Err("a terminal ended before answering its request");
+            }
         }
         use ManagementServerMessage::{Allowed, Busy, History, Input, Refused, Visible};
         let answers = match (
@@ -1964,8 +2056,8 @@ pub(super) fn validate_carried_lease(
 }
 
 impl RunningSession {
-    pub(super) fn inventory(&self) -> eon_workspace_protocol::v50::TerminalInventory {
-        eon_workspace_protocol::v50::TerminalInventory {
+    pub(super) fn inventory(&self) -> eon_workspace_protocol::v51::TerminalInventory {
+        eon_workspace_protocol::v51::TerminalInventory {
             terminal: self.id.clone(),
             run: self.identity.run_id.clone(),
             origin_build: self.origin_build.clone(),
@@ -2402,7 +2494,7 @@ fn orbit_command(
     managed_environment::remove_agent_session(&mut orbit_command)
         .arg("serve")
         .arg(socket)
-        .arg("--management-v9")
+        .arg("--management-v10")
         .arg(session_id)
         .arg(run_id)
         .arg(component_generation)
@@ -2673,7 +2765,9 @@ pub(super) fn session_finished_within(
             None => ReplyProgress::Complete,
         };
         match progress {
-            ReplyProgress::Complete => match session
+            // A failed local reader says nothing of Orbit: the lease's own EOF
+            // does, without waiting.
+            ReplyProgress::Complete | ReplyProgress::DrainerFailed => match session
                 .lease
                 .read(&mut [0; management::MAX_MESSAGE_BYTES])
             {
@@ -3921,6 +4015,29 @@ pub(crate) mod tests {
         assert!(!super::recorded_process_is_dead(&host.identity).unwrap());
     }
 
+    /// A host from before management v10 leaves a v9-framed record, which
+    /// recovery refuses without adopting or removing it (EON-C15).
+    #[test]
+    fn discovery_fails_closed_on_a_management_v9_record() {
+        let host = untracked_host(true);
+        let mut older = fs::read(&host.record).unwrap();
+        older[4..6].copy_from_slice(&9u16.to_le_bytes());
+        fs::write(&host.record, &older).unwrap();
+        let error = super::discover_untracked_runs(
+            &host.root,
+            super::LaunchMode::Workspace,
+            "g1-00000000000000000000000000000001",
+            &[],
+            Instant::now() + Duration::from_secs(5),
+            |_| panic!("a v9 record reached its endpoint check"),
+        )
+        .err()
+        .expect("discovery adopted a v9 record");
+        assert!(error.starts_with("invalid terminal record"), "{error}");
+        assert_eq!(fs::read(&host.record).unwrap(), older);
+        assert!(host.management.exists());
+    }
+
     #[test]
     fn discovery_preserves_a_replacement_endpoint_after_a_tombstone() {
         let mut host = untracked_host(true);
@@ -4935,7 +5052,7 @@ pub(crate) mod tests {
             unsent: Vec::new(),
             reply: Vec::new(),
             deadline: Instant::now() + Duration::from_secs(2),
-            drainer: None,
+            reader: super::Reader::Lease,
         });
         let mut readable = [rustix::event::PollFd::new(
             &session.lease,
@@ -5054,8 +5171,8 @@ pub(crate) mod tests {
         let (mut session, peer, tombstone) =
             tombstoned_session(&root, 1, TerminationReason::NaturalExit);
         let code =
-            |result: Result<bool, eon_workspace_protocol::v50::Failure>| result.unwrap_err().code;
-        let paste = || LeaseInput::Paste("hi".into());
+            |result: Result<bool, eon_workspace_protocol::v51::Failure>| result.unwrap_err().code;
+        let paste = || LeaseInput::Paste("zq7".into());
 
         let orbit = answer(
             &peer,
@@ -5146,7 +5263,7 @@ pub(crate) mod tests {
                 for_now,
                 "{failure:?}"
             );
-            assert!(!failure.detail.contains("hi"), "{failure:?}");
+            assert!(!failure.detail.contains("zq7"), "{failure:?}");
             orbit.join().unwrap();
             assert!(session.request.is_none());
         }
@@ -5293,6 +5410,125 @@ pub(crate) mod tests {
             super::read_visible(&mut session, &log).unwrap_err().code,
             "terminal-ended"
         );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    /// EON-C36: a failed send says whether Orbit may have taken the input. A
+    /// refusal, a closed PTY, an unsent request or a reader that failed on an
+    /// earlier request sent nothing; a wrong reply or a lease that closes
+    /// after the whole request leaves it uncertain. None claims the child
+    /// exited.
+    #[test]
+    fn lease_failures_say_whether_the_input_was_sent() {
+        let root = temporary_directory();
+        let log = DiagnosticLog::open_in(Ok(root.join("logs")), "g1-test", "eon");
+        let (mut session, peer, _) = tombstoned_session(&root, 1, TerminationReason::NaturalExit);
+        let key = || LeaseInput::key(orbs::PhysicalKey::ARROW_LEFT, orbs::Modifiers::SHIFT);
+        let expect = |failure: eon_workspace_protocol::v51::Failure, code, detail, uncertain| {
+            assert_eq!(failure.code, code, "{failure:?}");
+            assert!(failure.detail.ends_with(detail), "{failure:?}");
+            assert_eq!(
+                super::delivery_uncertain(&failure),
+                uncertain,
+                "{failure:?}"
+            );
+            assert!(!failure.detail.contains("has ended"), "{failure:?}");
+        };
+        let lease_closed = "Orbit closed the management lease for terminal terminal-1 ";
+        for (reply, code, detail, uncertain) in [
+            (
+                ManagementServerMessage::Refused(Refusal::Closed),
+                "terminal-ended",
+                "terminal terminal-1's PTY is closed; nothing was sent",
+                false,
+            ),
+            (
+                ManagementServerMessage::Refused(Refusal::Typing),
+                "person-typing",
+                "use --force",
+                false,
+            ),
+            (
+                ManagementServerMessage::Allowed,
+                "terminal-unavailable",
+                "Orbit returned the wrong result; the input may have been delivered",
+                true,
+            ),
+        ] {
+            let orbit = answer(&peer, vec![reply]);
+            let failure = super::send_input(&mut session, key(), 0, &log).unwrap_err();
+            expect(failure, code, detail, uncertain);
+            orbit.join().unwrap();
+        }
+        // Orbit reads the whole request, then the lease closes.
+        let orbit = {
+            let mut peer = peer;
+            thread::spawn(move || read_request(&mut peer))
+        };
+        let failure = super::send_input(&mut session, key(), 0, &log).unwrap_err();
+        let detail = format!("{lease_closed}before replying; the input may have been delivered");
+        expect(failure, "terminal-ended", &detail, true);
+        assert_eq!(
+            orbit.join().unwrap(),
+            ManagementClientMessage::Input {
+                input: key(),
+                quiet_ms: 0,
+            }
+        );
+        // The next request finds that request's lease closed, so it is never
+        // sent; nor is one whose own write fails.
+        let unsent = [
+            "while a previous request was in flight; nothing was sent",
+            "before the request finished sending; nothing was sent",
+        ]
+        .map(|detail| format!("{lease_closed}{detail}"));
+        for detail in &unsent {
+            let failure = super::send_input(&mut session, key(), 0, &log).unwrap_err();
+            expect(failure, "terminal-ended", detail, false);
+            session.request = None;
+        }
+        // A request whose local reader failed.
+        let failed = || {
+            let thread = thread::spawn(|| -> (Vec<u8>, Vec<u8>, bool) { panic!("reader failed") });
+            while !thread.is_finished() {
+                thread::sleep(Duration::from_millis(1));
+            }
+            Some(super::LeaseRequest {
+                kind: RequestKind::Terminal,
+                unsent: Vec::new(),
+                reply: Vec::new(),
+                deadline: Instant::now(),
+                reader: super::Reader::Drainer(super::Drainer {
+                    thread,
+                    _request: std::sync::Arc::new(()),
+                }),
+            })
+        };
+        // That of the request just sent leaves its input uncertain, on a
+        // lease that is still open.
+        let (mut live, orbit, _) = tombstoned_session(&root, 2, TerminationReason::NaturalExit);
+        live.request = failed();
+        let deadline = Instant::now() + Duration::from_secs(2);
+        let failure = super::await_reply(&mut live, true, deadline).unwrap_err();
+        let detail = "the local lease reader failed before returning a reply; the input may \
+                      have been delivered";
+        expect(failure, "terminal-unavailable", detail, true);
+        // The failure stands for that request: no later request is sent or
+        // reads the lease it may have left mid-reply.
+        for _ in 0..2 {
+            let failure = super::send_input(&mut live, key(), 0, &log).unwrap_err();
+            let detail = "the local lease reader failed while draining a previous request; \
+                          nothing was sent";
+            expect(failure, "terminal-unavailable", detail, false);
+        }
+        // Only the lease's EOF ends the run, and an open lease is seen at once.
+        let started = Instant::now();
+        assert_eq!(
+            super::session_finished_within(&mut live, Duration::from_secs(5)),
+            Ok(None)
+        );
+        assert!(started.elapsed() < Duration::from_secs(1));
+        drop(orbit);
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -5763,7 +5999,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v9",
+                "--management-v10",
                 "terminal-1",
                 "run-1",
                 "g1-00000000000000000000000000000001",
@@ -5862,7 +6098,7 @@ pub(crate) mod tests {
             [
                 "serve",
                 "/runtime/orbit.sock",
-                "--management-v9",
+                "--management-v10",
                 "terminal-2",
                 "run-2",
                 "component-2",

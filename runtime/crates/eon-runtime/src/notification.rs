@@ -12,7 +12,7 @@ use super::{
     running::window_label,
     windows::durable_window_id,
 };
-use eon_workspace_protocol::v50::WindowEntry;
+use eon_workspace_protocol::v51::WindowEntry;
 use std::sync::mpsc;
 
 /// Dropping the supervisor's request wakes the command worker even if it
@@ -2025,7 +2025,7 @@ mod tests {
             generation: "g1-0123456789abcdef0123456789abcdef".into(),
             started_at: None,
             live_terminals: Some(terminals),
-            state: eon_workspace_protocol::v50::WindowState::Live,
+            state: eon_workspace_protocol::v51::WindowState::Live,
         })
     }
 

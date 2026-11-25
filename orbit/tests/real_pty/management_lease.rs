@@ -18,7 +18,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-const MANAGED: [&str; 4] = ["--management-v9", "session-2", "run-2", "component-2"];
+const MANAGED: [&str; 4] = ["--management-v10", "session-2", "run-2", "component-2"];
 
 /// What a management connection reads next.
 #[derive(Debug, PartialEq)]

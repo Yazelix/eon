@@ -5,7 +5,28 @@
 //! `eon window stop` and `eon quit`.
 
 use super::*;
-use eon_workspace_protocol::v50::{Filter, InvokeIntent, TerminalInput};
+use eon_workspace_protocol::v51::{Filter, InvokeIntent, TerminalInput, TerminalKey};
+
+/// How `--key` spells `key`, from the tables the parser reads.
+pub(super) fn cli_spelling(key: &TerminalKey) -> String {
+    use eon_workspace_protocol::v51::{ALT, CTRL, SUPER};
+    let names = [
+        (SHIFT, "shift+"),
+        (CTRL, "ctrl+"),
+        (ALT, "alt+"),
+        (SUPER, "super+"),
+    ];
+    let modifiers = names.iter().filter(|(bit, _)| key.modifiers & bit != 0);
+    let named = named_keys().find(|(_, named)| *named == key.key);
+    let character = (0..UNSHIFTED_KEYS.len()).find(|index| character_key(*index) == key.key);
+    let base = match (named, character, key.key.strip_prefix("Key")) {
+        (Some((name, _)), ..) => name.to_owned(),
+        (None, Some(index), _) => UNSHIFTED_KEYS[index..=index].to_owned(),
+        (None, None, Some(letter)) => letter.to_ascii_lowercase(),
+        (None, None, None) => key.key.to_ascii_lowercase(),
+    };
+    modifiers.map(|(_, name)| *name).collect::<String>() + &base
+}
 
 enum CliPath {
     /// These arguments parse to exactly this action.
@@ -147,8 +168,8 @@ fn cli_path(action: &Action) -> CliPath {
             force,
         } => {
             let target = match target {
-                eon_workspace_protocol::v50::SendTarget::Id(id) => id.as_str(),
-                eon_workspace_protocol::v50::SendTarget::Focused { .. } => "focused",
+                eon_workspace_protocol::v51::SendTarget::Id(id) => id.as_str(),
+                eon_workspace_protocol::v51::SendTarget::Focused { .. } => "focused",
             };
             let mut arguments = words(&["pane", "send", target]);
             if *force {
@@ -157,6 +178,7 @@ fn cli_path(action: &Action) -> CliPath {
             arguments.extend(match input {
                 TerminalInput::Paste(text) => words(&["--", text]),
                 TerminalInput::Enter => words(&["--enter"]),
+                TerminalInput::Key(key) => words(&["--key", &cli_spelling(key)]),
             });
             return Send(arguments);
         }
@@ -258,7 +280,7 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         WorkspaceAction::Present { workspace: true },
         WorkspaceAction::ReloadPresentation {
             venus: "/nix/store/fixture/bin/venus".into(),
-            eonw: eon_workspace_protocol::v50::VERSION,
+            eonw: eon_workspace_protocol::v51::VERSION,
             orbs: 14,
             orbf: 3,
         },
@@ -396,22 +418,30 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
         Action::ReadTerminalHistory { target: text("u1") },
         Action::EditTerminalHistory { target: text("p1") },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v50::SendTarget::Id(text("u1")),
+            target: eon_workspace_protocol::v51::SendTarget::Id(text("u1")),
             force: false,
             input: TerminalInput::Paste(text("echo hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v50::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v51::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Enter,
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v50::SendTarget::Id(text("p1")),
+            target: eon_workspace_protocol::v51::SendTarget::Id(text("p1")),
+            force: true,
+            input: TerminalInput::Key(TerminalKey {
+                modifiers: eon_workspace_protocol::v51::SHIFT,
+                key: text("ArrowLeft"),
+            }),
+        },
+        Action::SendTerminal {
+            target: eon_workspace_protocol::v51::SendTarget::Id(text("p1")),
             force: true,
             input: TerminalInput::Paste(text("hi")),
         },
         Action::SendTerminal {
-            target: eon_workspace_protocol::v50::SendTarget::Focused {
+            target: eon_workspace_protocol::v51::SendTarget::Focused {
                 expected_terminal: None,
             },
             force: false,
@@ -477,22 +507,25 @@ fn every_eonw_action_has_a_cli_path_or_a_named_exception() {
                     .map_err(|error| error.message)
                     .unwrap()
                     .unwrap();
-                let input = match (send.text, send.enter) {
-                    (SendText::Operand(text), false) => {
+                let keys = send.keys.iter().map(|key| key.to_str().unwrap());
+                let mut keys = keys.map(|key| super::parse_terminal_key(key).unwrap());
+                let input = match (send.text, send.enter, keys.next(), keys.next()) {
+                    (SendText::Operand(text), false, None, _) => {
                         TerminalInput::Paste(text.into_string().unwrap())
                     }
-                    (SendText::None, true) => TerminalInput::Enter,
+                    (SendText::None, true, None, _) => TerminalInput::Enter,
+                    (SendText::None, false, Some(key), None) => TerminalInput::Key(key),
                     other => panic!("{arguments:?} is not one request: {other:?}"),
                 };
                 assert!(!send.json, "{arguments:?}");
                 assert_eq!(
                     Action::SendTerminal {
                         target: if send.target == "focused" {
-                            eon_workspace_protocol::v50::SendTarget::Focused {
+                            eon_workspace_protocol::v51::SendTarget::Focused {
                                 expected_terminal: None,
                             }
                         } else {
-                            eon_workspace_protocol::v50::SendTarget::Id(send.target)
+                            eon_workspace_protocol::v51::SendTarget::Id(send.target)
                         },
                         force: send.force,
                         input

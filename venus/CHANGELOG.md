@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Consume canonical EONW v51, which adds named terminal keys for
+  `eon pane send --key`; Venus behavior is unchanged, and a running Eon
+  window needs a restart to move to v51 (`eon-pane-send-key-vlgu0`).
+
 - Visible quota chips update their reset text at the next local date boundary
   or reset time, including when the clock chip is hidden (`eon-vtby5`).
 

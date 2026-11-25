@@ -15,7 +15,7 @@ use super::windows::{
 };
 use super::workspace::{json_escape, terminal_text};
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     Action, Availability, BusyTerminals, Failure, MAX_RUNNING_WINDOWS, Response, WindowEntry,
     WindowState, WorkspaceAction,
 };
@@ -55,7 +55,7 @@ fn generation_id(input: &[u8]) -> String {
 }
 
 pub(super) fn valid_generation(value: &str) -> bool {
-    eon_workspace_protocol::v50::valid_generation(value)
+    eon_workspace_protocol::v51::valid_generation(value)
 }
 
 pub(super) fn generation_directory(root: &Path, generation: &str) -> PathBuf {
@@ -702,7 +702,7 @@ pub(super) fn probe_workspace_generation(
 fn validate_recorded_runtime(
     root: &Path,
     generation: &str,
-    info: &eon_workspace_protocol::v50::Runtime,
+    info: &eon_workspace_protocol::v51::Runtime,
 ) -> Result<(), EndpointFailure> {
     let record = Identity::read(&generation_directory(root, generation))
         .map_err(|detail| EndpointFailure::new(EndpointFailureKind::Corrupt, detail))?;
@@ -828,7 +828,7 @@ pub(super) struct GenerationRecord {
     pub(super) id: String,
     created_build: Option<String>,
     active_build: Option<String>,
-    terminal_inventory: Vec<eon_workspace_protocol::v50::TerminalInventory>,
+    terminal_inventory: Vec<eon_workspace_protocol::v51::TerminalInventory>,
     kind: &'static str,
     pub(super) state: &'static str,
     runtime: PathBuf,
@@ -2378,7 +2378,7 @@ mod tests {
 
     #[test]
     fn read_only_inventory_preserves_build_roles_and_excludes_eonbase() {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             Availability, HEADER_BYTES, LifecycleResponse, Runtime, declared_message_len,
             encode_lifecycle_response,
         };
@@ -2429,7 +2429,7 @@ mod tests {
                         id
                     }
                     .into(),
-                    terminal_inventory: vec![eon_workspace_protocol::v50::TerminalInventory {
+                    terminal_inventory: vec![eon_workspace_protocol::v51::TerminalInventory {
                         terminal: "terminal-1".into(),
                         run: "fixture-run".into(),
                         origin_build: None,
@@ -2443,7 +2443,7 @@ mod tests {
                     name: full.then(|| "peer".into()),
                     started_at: 123,
                     eon_version: "fixture".into(),
-                    workspace_protocol: eon_workspace_protocol::v50::VERSION,
+                    workspace_protocol: eon_workspace_protocol::v51::VERSION,
                     component_report: "fixture".into(),
                     sessions: vec!["terminal-1".into()],
                     attach: available.clone(),
@@ -2574,7 +2574,7 @@ mod tests {
 
     #[test]
     fn quit_asks_only_while_busy_in_window_language() {
-        use eon_workspace_protocol::v50::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v51::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         let sessions = ["terminal-1".to_owned(), "terminal-2".to_owned()];
         let busy = |names: &[&str], omitted| BusyTerminals {
@@ -2637,7 +2637,7 @@ mod tests {
 
     #[test]
     fn window_json_leaves_out_labels_only_when_asked() {
-        use eon_workspace_protocol::v50::{BusyTerminal, TargetId, TerminalTarget};
+        use eon_workspace_protocol::v51::{BusyTerminal, TargetId, TerminalTarget};
         let mut record = super::dead_generation("g1", "current", "/runtime".into(), "ended");
         record.name = Some("client-acme-window".into());
         record.busy = Some(BusyTerminals {

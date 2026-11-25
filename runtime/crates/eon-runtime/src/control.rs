@@ -5,7 +5,7 @@ use super::{
     workspace,
 };
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     Action, Error as ProtocolError, Failure, HEADER_BYTES, LifecycleResponse, MAX_DETAIL_BYTES,
     Request, Response, Runtime, VERSION, WorkspaceAction, declared_message_len,
     declared_response_len, decode_lifecycle_response, decode_request, decode_response,
@@ -49,6 +49,9 @@ pub(super) struct EndpointFailure {
     pub(super) detail: String,
     /// The EONW version an incompatible supervisor reported, when it did.
     pub(super) protocol: Option<u16>,
+    /// Whether the whole request was written before the failure, so the
+    /// supervisor may have carried it out.
+    pub(super) dispatched: bool,
 }
 
 impl EndpointFailure {
@@ -57,6 +60,7 @@ impl EndpointFailure {
             kind,
             detail: detail.into(),
             protocol: None,
+            dispatched: false,
         }
     }
 
@@ -281,6 +285,19 @@ fn send_prepared_action(
 ) -> Result<ControlResponse, EndpointFailure> {
     let deadline = deadline.unwrap_or_else(|| Instant::now() + timeout);
     write_until(&mut stream, &request, deadline)?;
+    // A supervisor carries out only a whole frame of its own version, so a
+    // failure from here on may follow the request's effect.
+    read_response(stream, lifecycle, deadline).map_err(|mut error| {
+        error.dispatched = error.kind != EndpointFailureKind::Incompatible;
+        error
+    })
+}
+
+fn read_response(
+    mut stream: UnixStream,
+    lifecycle: bool,
+    deadline: Instant,
+) -> Result<ControlResponse, EndpointFailure> {
     let mut response = vec![0; HEADER_BYTES];
     read_until(&mut stream, &mut response, deadline)?;
     let length = declared_response_len(&response).map_err(protocol_endpoint_failure)?;
@@ -999,7 +1016,7 @@ const TYPING: u8 = 5;
 
 pub(super) fn failure_status(code: &str) -> u8 {
     match code {
-        "invalid-tab" | "malformed-action" | "invalid-text" | "input-too-large"
+        "invalid-tab" | "malformed-action" | "invalid-text" | "invalid-key" | "input-too-large"
         | "unread-stdin" => USAGE,
         "unknown-tab" | "unknown-pane" | "unknown-id" | "unknown-terminal" | "unknown-popup"
         | "stale-popup" | "stale-target" | "unknown-generation" | "unknown-caller"
@@ -1263,6 +1280,53 @@ mod tests {
         }
     }
 
+    /// EON-C36: only a failure after the whole request was written may follow
+    /// its effect; an unwritten request or a refused version never does.
+    #[test]
+    fn a_failure_is_dispatched_only_after_the_whole_request_is_written() {
+        let request = || {
+            let action = super::Action::Workspace(super::WorkspaceAction::InspectRuntime);
+            super::prepare_action(None, action).unwrap()
+        };
+        let deadline = || Some(Instant::now() + Duration::from_secs(5));
+        // The supervisor is gone before the request is written.
+        let (stream, peer) = UnixStream::pair().unwrap();
+        drop(peer);
+        let failure = super::send_prepared_action(stream, request(), deadline()).unwrap_err();
+        assert!(!failure.dispatched, "{}", failure.detail);
+        // It reads the whole request, then answers in another EONW version.
+        for answer in [None, Some(super::VERSION + 1), Some(super::VERSION)] {
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            let written = request().1.len();
+            let server = thread::spawn(move || {
+                let mut bytes = vec![0; written];
+                peer.read_exact(&mut bytes).unwrap();
+                let Some(version) = answer else { return };
+                let mut reply =
+                    super::encode_response(&super::Response::Failure(super::failure("busy", "x")))
+                        .unwrap();
+                reply[4..6].copy_from_slice(&version.to_le_bytes());
+                // A truncated reply of this version fails after dispatch.
+                reply.truncate(if version == super::VERSION {
+                    14
+                } else {
+                    reply.len()
+                });
+                peer.write_all(&reply).unwrap();
+            });
+            let failure = super::send_prepared_action(stream, request(), deadline()).unwrap_err();
+            server.join().unwrap();
+            let incompatible = failure.kind == super::EndpointFailureKind::Incompatible;
+            assert_eq!(
+                incompatible,
+                answer == Some(super::VERSION + 1),
+                "{}",
+                failure.detail
+            );
+            assert_eq!(failure.dispatched, !incompatible, "{}", failure.detail);
+        }
+    }
+
     #[test]
     fn handle_client_dispatches_buffered_request_after_peer_closes() {
         let (stream, mut peer) = UnixStream::pair().unwrap();
@@ -1468,16 +1532,16 @@ mod tests {
     #[test]
     fn a_slow_reader_holds_the_supervisor_no_longer_than_the_reply_deadline() {
         let history = |text: String| {
-            super::Response::History(eon_workspace_protocol::v50::TerminalHistory {
-                target: eon_workspace_protocol::v50::TerminalTarget {
+            super::Response::History(eon_workspace_protocol::v51::TerminalHistory {
+                target: eon_workspace_protocol::v51::TerminalTarget {
                     workspace: "s1".into(),
                     tab: "t1".into(),
-                    id: eon_workspace_protocol::v50::TargetId::Pane("p1".into()),
+                    id: eon_workspace_protocol::v51::TargetId::Pane("p1".into()),
                     terminal: "terminal-1".into(),
                 },
                 caller: None,
                 revision: 1,
-                screen: eon_workspace_protocol::v50::Screen::Primary,
+                screen: eon_workspace_protocol::v51::Screen::Primary,
                 rows: 24,
                 columns: 80,
                 title: String::new(),

@@ -845,7 +845,7 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
     let mut application = Application::new(arguments, events);
     if application.startup_admission && application.workspace_socket.is_some() {
         let response = crate::read_workspace_response(&mut io::stdin().lock())?;
-        if !matches!(response, eon_workspace_protocol::v50::Response::Snapshot(_)) {
+        if !matches!(response, eon_workspace_protocol::v51::Response::Snapshot(_)) {
             return Err("Venus startup admission requires an Eon workspace snapshot".into());
         }
         application.workspace_model.apply(response);

@@ -6,13 +6,13 @@ fn focus_report(window_focused: bool) -> FocusReport {
 }
 
 fn focus_frame(window_focused: bool) -> Vec<u8> {
-    eon_workspace_protocol::v50::encode_focus_report(&focus_report(window_focused)).unwrap()
+    eon_workspace_protocol::v51::encode_focus_report(&focus_report(window_focused)).unwrap()
 }
 
 use super::*;
 use crate::launch;
 #[cfg(target_os = "linux")]
-use eon_workspace_protocol::v50::{Pane, Tab};
+use eon_workspace_protocol::v51::{Pane, Tab};
 
 #[test]
 #[cfg(target_os = "linux")]
@@ -94,7 +94,7 @@ fn window_menu_application_routes_input_and_lifecycle() {
             let action = WindowMenuAction::peer(&peer);
             snapshot.running.as_mut().unwrap().others = Some(vec![peer]);
             app.workspace_model
-                .apply(eon_workspace_protocol::v50::Response::Snapshot(snapshot));
+                .apply(eon_workspace_protocol::v51::Response::Snapshot(snapshot));
             app.set_window_menu(true);
             app.handle_window_menu_button(
                 MouseButton::Left,
@@ -190,7 +190,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
             assert!(self.0.window.is_none(), "wait for workspace geometry");
             self.0
                 .workspace_model
-                .apply(eon_workspace_protocol::v50::Response::Snapshot(Snapshot {
+                .apply(eon_workspace_protocol::v51::Response::Snapshot(Snapshot {
                     focus: None,
                     released_shortcuts: Default::default(),
                     input_locked: false,
@@ -200,7 +200,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                     active_build: "g1-00000000000000000000000000000001".into(),
                     workspace: "s1".into(),
                     active_workspace: "s1".into(),
-                    workspaces: vec![eon_workspace_protocol::v50::WorkspaceInfo {
+                    workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
                         id: "s1".into(),
                         persistent_id: Some("s1".into()),
                         registration_error: None,
@@ -210,7 +210,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                         recency: 0,
                     }],
                     active_tab: "t1".into(),
-                    geometry: eon_workspace_protocol::v50::PopupGeometry {
+                    geometry: eon_workspace_protocol::v51::PopupGeometry {
                         side_margin: 8.0,
                         vertical_margin: 4.0,
                     },
@@ -222,7 +222,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                         id: "t1".into(),
                         directory: b"/tmp".to_vec(),
                         selected_pane: Some("p1".into()),
-                        columns: vec![eon_workspace_protocol::v50::Column {
+                        columns: vec![eon_workspace_protocol::v51::Column {
                             panes: vec![Pane {
                                 label: "p1".into(),
                                 pinned_name: None,
@@ -245,7 +245,7 @@ fn typography_without_grid_waits_for_and_validates_workspace_geometry() {
                     claude_quota_failure: None,
                     running: None,
                     busy: None,
-                    sidebar: eon_workspace_protocol::v50::Sidebar::Open,
+                    sidebar: eon_workspace_protocol::v51::Sidebar::Open,
                     attention_queue: Vec::new(),
                 }));
             self.0.resumed(event_loop);
@@ -449,7 +449,7 @@ fn native_startup(explicit_grid: bool) {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn live_output_keeps_application_input_admitted_before_repaint() {
-    use eon_workspace_protocol::v50 as workspace;
+    use eon_workspace_protocol::v51 as workspace;
     use orbit_protocol::{Dimensions, Screen};
     use std::{
         os::unix::net::{UnixListener, UnixStream},
@@ -1952,7 +1952,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         active_build: "g1-00000000000000000000000000000001".into(),
         workspace: "s1".into(),
         active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v50::WorkspaceInfo {
+        workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
             id: "s1".into(),
             persistent_id: Some("s1".into()),
             registration_error: None,
@@ -1962,7 +1962,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             recency: 0,
         }],
         active_tab: "t1".into(),
-        geometry: eon_workspace_protocol::v50::PopupGeometry {
+        geometry: eon_workspace_protocol::v51::PopupGeometry {
             side_margin: 8.0,
             vertical_margin: 4.0,
         },
@@ -1975,7 +1975,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 id: format!("t{index}"),
                 directory: b"/tmp".to_vec(),
                 selected_pane: Some(format!("p{index}")),
-                columns: vec![eon_workspace_protocol::v50::Column {
+                columns: vec![eon_workspace_protocol::v51::Column {
                     panes: vec![Pane {
                         label: format!("p{index}"),
                         pinned_name: None,
@@ -2002,7 +2002,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
         claude_quota_failure: None,
         running: None,
         busy: None,
-        sidebar: eon_workspace_protocol::v50::Sidebar::Open,
+        sidebar: eon_workspace_protocol::v51::Sidebar::Open,
         attention_queue: Vec::new(),
     };
     let response = workspace::Response::Snapshot(snapshot.clone());
@@ -2235,7 +2235,7 @@ impl Write for GatedWriter {
 fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
     let mut snapshot = super::chrome::stack_snapshot(&[&["p1", "p2"]]);
     let mut workspace = WorkspaceModel::default();
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
     let mut view = TerminalView::new(None);
@@ -2285,7 +2285,7 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
     );
     view.active_endpoint = Some(b"/tmp/p1.sock".to_vec());
     snapshot.tabs[0].columns[0].panes[0].live = false;
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
     assert!(
@@ -2293,7 +2293,7 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
         "offline pane"
     );
     snapshot.tabs[0].columns[0].panes[0].live = true;
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
     workspace.mark_unavailable("supervisor unavailable", false);
@@ -2301,13 +2301,13 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
         project(&workspace, &view).terminal.is_none(),
         "unavailable workspace"
     );
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
 
     snapshot.tabs[0].selected_pane = Some("p2".into());
     snapshot.tabs[0].columns[0].expanded = "p2".into();
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
     assert!(
@@ -2320,7 +2320,7 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
     reporter.report(pane);
 
     super::show_test_popup(&mut snapshot);
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
     assert!(
@@ -2332,7 +2332,7 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
     assert_eq!(popup.terminal.as_deref(), Some("popup-session"));
     reporter.report(popup);
     snapshot.tabs[0].selected_popup = None;
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(
         snapshot.clone(),
     ));
     assert!(
@@ -2349,7 +2349,7 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
     second.id = "t2".into();
     snapshot.tabs.push(second);
     snapshot.active_tab = "t2".into();
-    workspace.apply(eon_workspace_protocol::v50::Response::Snapshot(snapshot));
+    workspace.apply(eon_workspace_protocol::v51::Response::Snapshot(snapshot));
     assert!(
         project(&workspace, &view).terminal.is_none(),
         "stale tab attachment"
@@ -2373,7 +2373,7 @@ fn keyboard_focus_projection_tracks_ownership_attachments_and_coalesces() {
     });
     let bytes = frames.recv_timeout(Duration::from_secs(10)).unwrap();
     assert_eq!(
-        eon_workspace_protocol::v50::decode_focus_report(&bytes).unwrap(),
+        eon_workspace_protocol::v51::decode_focus_report(&bytes).unwrap(),
         latest
     );
     drop(reporter);
@@ -2440,7 +2440,7 @@ fn focus_writer_keeps_latest_without_blocking_native_reporting() {
     };
     reporter.report(terminal_focus.clone());
     assert_eq!(
-        eon_workspace_protocol::v50::decode_focus_report(&frame()).unwrap(),
+        eon_workspace_protocol::v51::decode_focus_report(&frame()).unwrap(),
         terminal_focus
     );
     release.send(()).unwrap();
@@ -2764,7 +2764,7 @@ fn orbit_focus_requires_window_and_terminal_focus() {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
-    use eon_workspace_protocol::v50::{self as workspace, BusyTerminals};
+    use eon_workspace_protocol::v51::{self as workspace, BusyTerminals};
     use winit::keyboard::ModifiersState;
 
     run_quit_probe("quit", |app, event_loop, busy, actions, _| {
@@ -2826,7 +2826,7 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn a_close_request_quits_as_alt_shift_q_does() {
-    use eon_workspace_protocol::v50::{self as workspace, BusyTerminals};
+    use eon_workspace_protocol::v51::{self as workspace, BusyTerminals};
 
     run_quit_probe("close", |app, event_loop, busy, actions, terminal| {
         let id = app.window.as_ref().unwrap().native.id().unwrap();
@@ -3090,7 +3090,7 @@ fn a_close_request_detaches_while_the_workspace_is_unavailable() {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn a_close_request_detaches_after_a_failed_stop() {
-    use eon_workspace_protocol::v50::{self as workspace, BusyTerminals};
+    use eon_workspace_protocol::v51::{self as workspace, BusyTerminals};
 
     run_quit_probe("failed-stop", |app, event_loop, busy, actions, _| {
         let id = app.window.as_ref().unwrap().native.id().unwrap();
@@ -3212,7 +3212,7 @@ fn release_shortcut(app: &mut Application, event_loop: &ActiveEventLoop, code: K
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn a_quick_popup_hide_and_show_keeps_the_popup_attached() {
     run_quit_probe("popup-toggle", |app, event_loop, busy, _, _| {
-        use eon_workspace_protocol::v50 as workspace;
+        use eon_workspace_protocol::v51 as workspace;
         use orbit_protocol::{
             Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, Dimensions,
             Frame, Rgb, Row, Screen, StyleColor, Underline,
@@ -3411,7 +3411,7 @@ fn a_quick_popup_hide_and_show_keeps_the_popup_attached() {
 type QuitCheck = fn(
     &mut Application,
     &ActiveEventLoop,
-    eon_workspace_protocol::v50::Snapshot,
+    eon_workspace_protocol::v51::Snapshot,
     &std::sync::mpsc::Receiver<Outgoing>,
     &std::sync::mpsc::Receiver<ClientMessage>,
 );
@@ -3420,7 +3420,7 @@ type QuitCheck = fn(
 /// p1 busy, and runs `check` once the window is presented. The check must end the event loop.
 #[cfg(target_os = "linux")]
 fn run_quit_probe(name: &str, check: QuitCheck) {
-    use eon_workspace_protocol::v50 as workspace;
+    use eon_workspace_protocol::v51 as workspace;
     use std::{os::unix::net::UnixListener, sync::mpsc};
     use winit::platform::wayland::EventLoopBuilderExtWayland;
 
@@ -3599,7 +3599,7 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
 fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
     use AccessibilityTarget as Target;
     use WorkspaceFocus as Focus;
-    use eon_workspace_protocol::v50 as workspace;
+    use eon_workspace_protocol::v51 as workspace;
     use std::{fs, os::unix::net::UnixListener, sync::mpsc};
     use winit::{
         event::DeviceId, keyboard::ModifiersState, platform::wayland::EventLoopBuilderExtWayland,
