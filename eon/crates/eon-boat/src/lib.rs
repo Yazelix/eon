@@ -1291,18 +1291,23 @@ fn dev_command(argv: &[String]) -> Option<Shape> {
         ("eon-test", rest) if rest.first().is_none_or(|arg| arg != "list") => {
             (Shape::EonTest, rest)
         }
+        // The flake wrapper adds the Darwin target, `--locked`, `--all-targets` and
+        // `-- -D warnings`; only its package selection may follow.
+        ("eon-darwin-clippy", rest) => (Shape::EonDarwinClippy, rest),
         _ => return None,
     };
     let cargo = matches!(shape, Shape::CargoBuild | Shape::CargoClippy);
+    let packages = cargo || shape == Shape::EonDarwinClippy;
     let mut words = rest.iter();
     while let Some(word) = words.next() {
         match word.as_str() {
             "--workspace" | "--locked" | "--offline" if cargo => (),
             "--release" | "--all-targets" if cargo => (),
             "--no-capture" | "--no-fail-fast" | "--doc" if shape == Shape::EonTest => (),
-            "-p" if cargo => {
+            "-p" if packages => {
                 let package = words.next()?;
                 if package.is_empty()
+                    || package.starts_with('-')
                     || !package
                         .bytes()
                         .all(|b| b.is_ascii_alphanumeric() || b"_-".contains(&b))
@@ -2022,6 +2027,60 @@ mod tests {
             &BoatConfig::default(),
             &words(&["nix", "build", ".#default"])
         ));
+    }
+
+    #[test]
+    fn darwin_clippy_wrapper_qualifies_bare_or_with_packages_only_when_listed() {
+        const DARWIN: [&str; 4] = ["nix", "develop", "-c", "eon-darwin-clippy"];
+        let config = BoatConfig {
+            allow_shapes: vec![Shape::EonDarwinClippy],
+            timeout_seconds: 7200,
+            ..BoatConfig::default()
+        };
+        let darwin = |tail: &[&str]| shape(&config, &words(&[&DARWIN[..], tail].concat()));
+        let packages = ["-p", "eon-boat", "-p", "rota_cli"];
+        for tail in [&[][..], &packages[..2], &packages] {
+            assert_eq!(darwin(tail), Some(Shape::EonDarwinClippy), "{tail:?}");
+        }
+        let wrapped = |duration| {
+            let prefix = ["timeout", duration, "env", "LC_ALL=C"];
+            shape(&config, &words(&[&prefix[..], &DARWIN].concat()))
+        };
+        assert_eq!(wrapped("60m"), Some(Shape::EonDarwinClippy));
+        assert_eq!(wrapped("90m"), None);
+        for tail in [
+            &["--"][..],
+            &["--", "-D", "warnings"],
+            &["--target", "x86_64-unknown-linux-gnu"],
+            &["--release"],
+            &["--workspace"],
+            &["--features", "x"],
+            &["--package", "eon-boat"],
+            &["--manifest-path", "/x/Cargo.toml"],
+            &["-p"],
+            &["-p", ""],
+            &["-p", "a/b"],
+            &["-p", "--"],
+            &["-p", "--fix"],
+            &["eon-boat"],
+        ] {
+            assert_eq!(darwin(tail), None, "{tail:?}");
+        }
+        assert!(!allowed(&config, &words(&DARWIN[3..])));
+        let clippy = |package| words(&["nix", "develop", "-c", "cargo", "clippy", "-p", package]);
+        assert!(!allowed(&config, &clippy("eon-boat")));
+        let others = BoatConfig {
+            allow_shapes: vec![
+                Shape::NixGate,
+                Shape::CargoBuild,
+                Shape::CargoClippy,
+                Shape::EonTest,
+            ],
+            ..BoatConfig::default()
+        };
+        assert!(allowed(&others, &clippy("eon-boat")));
+        assert!(!allowed(&others, &clippy("--fix")));
+        assert!(!allowed(&others, &words(&DARWIN)));
     }
 
     #[test]

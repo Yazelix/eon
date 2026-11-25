@@ -412,13 +412,18 @@ queue instead. A configured class does not make an unsafe command remote.
 `--out-link` stays local because Boat outputs never become host paths; keep host
 GC roots in a separate local step.
 
-The other supported `allow_shapes` values are `cargo-build`, `cargo-clippy` and
-`eon-test`. They permit `nix develop -c cargo build` (workspace/locked/offline/
-release/all-targets and `-p NAME`), `nix develop -c cargo clippy` with the same
-flags and an optional trailing `-- -D warnings`, and the pinned
-`nix develop -c eon-test` harness (ordinary filters, doctests and 1–4 test
-threads). `eon-test -p NAME` and ignored, live, visual and benchmark selectors
-stay local. Use `eon-test` to run tests in Eon's test sandbox.
+The other supported `allow_shapes` values are `cargo-build`, `cargo-clippy`,
+`eon-test` and `eon-darwin-clippy`. They permit `nix develop -c cargo build`
+(workspace/locked/offline/release/all-targets and `-p NAME`),
+`nix develop -c cargo clippy` with the same flags and an optional trailing
+`-- -D warnings`, the pinned `nix develop -c eon-test` harness (ordinary
+filters, doctests and 1–4 test threads), and the Darwin cross-Clippy check
+`nix develop -c eon-darwin-clippy`, bare or with `-p NAME`. A package name may
+not start with `-`. `eon-test -p NAME`, ignored, live, visual and benchmark
+selectors, and any other `eon-darwin-clippy` argument stay local. Use
+`eon-test` to run tests in Eon's test sandbox. Eon builds that predate
+`eon-darwin-clippy` reject it in `allow_shapes`; update every Eon that reads
+this file before listing it.
 
 A permitted command may have one `timeout` and one `env` prefix in either
 order. The original argv runs unchanged. `env` accepts an optional leading

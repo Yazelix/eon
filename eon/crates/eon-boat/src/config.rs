@@ -13,6 +13,7 @@ pub enum Shape {
     CargoBuild,
     CargoClippy,
     EonTest,
+    EonDarwinClippy,
 }
 
 #[derive(Debug, Deserialize)]
@@ -131,7 +132,7 @@ mod tests {
     fn boat_shapes_accept_each_known_name_once_and_refuse_unknown_or_repeated_names() {
         let with = |shapes: &str| format!("[slots.boat]\nallow_shapes = {shapes}\n");
         let config = BoatConfig::from_text(&with(
-            "['nix-gate', 'cargo-build', 'cargo-clippy', 'eon-test']",
+            "['nix-gate', 'cargo-build', 'cargo-clippy', 'eon-test', 'eon-darwin-clippy']",
         ))
         .unwrap();
         assert_eq!(
@@ -140,7 +141,8 @@ mod tests {
                 Shape::NixGate,
                 Shape::CargoBuild,
                 Shape::CargoClippy,
-                Shape::EonTest
+                Shape::EonTest,
+                Shape::EonDarwinClippy
             ]
         );
         let error = BoatConfig::from_text(&with("['bogus']")).unwrap_err();
