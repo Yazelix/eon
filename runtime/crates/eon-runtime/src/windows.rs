@@ -39,6 +39,27 @@ pub(super) const DEFAULT_WINDOW: &str = "default";
 pub(super) const DEFAULT_NOT_RUNNING: &str =
     "the default Eon window is not running; run `eon` to open it";
 
+/// The empty file in an independent window's root that makes the window present
+/// with the Rune preview client: `eon window new --rune-preview` writes it, and
+/// its presence is the whole record (eon-yp6vg.7.4, removed by eon-yp6vg.54).
+const RUNE_PREVIEW: &str = "rune-preview";
+
+/// Whether the window rooted at `root` is an independent window that presents
+/// with the Rune preview client.
+pub(super) fn rune_preview(root: &Path) -> bool {
+    runtime_window(root).is_some()
+        && fs::symlink_metadata(root.join(RUNE_PREVIEW)).is_ok_and(|entry| entry.is_file())
+}
+
+/// The client a running window presents with, by its window ID (none for the
+/// default namespace), for `eon session --json`'s `running` entries.
+pub(crate) fn client(window: Option<&str>) -> &'static str {
+    match window {
+        Some(id) if valid_window_id(id) && rune_preview(&windows_root().join(id)) => "rune-preview",
+        _ => "shipping",
+    }
+}
+
 pub(super) fn valid_window_id(id: &str) -> bool {
     id.len() == 8
         && id
@@ -751,6 +772,9 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
     if let Some(directory) = &options.directory {
         validate_initial_directory(directory)?;
     }
+    if options.rune_preview && inputs.venus_rune_preview.is_none() {
+        return Err("this build has no Rune preview client".into());
+    }
     let generation = current_generation(inputs)?;
     let base = base_runtime_directory("eon");
     prepare_runtime(&base)?;
@@ -780,6 +804,15 @@ pub(super) fn new_window(inputs: &Inputs, options: &LaunchOptions) -> Result<i32
         .mode(0o600)
         .open(&log)
         .map_err(|error| format!("cannot create {}: {error}", log.display()))?;
+    if options.rune_preview {
+        let marker = root.join(RUNE_PREVIEW);
+        OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .mode(0o600)
+            .open(&marker)
+            .map_err(|error| format!("cannot create {}: {error}", marker.display()))?;
+    }
     let mut command = window_command(inputs, &root)?;
     command.arg("run");
     if let Some(directory) = &options.directory {
@@ -943,8 +976,11 @@ pub(super) fn reload_window(
         .presentation_protocols
         .as_ref()
         .map_err(Clone::clone)?;
-    let venus = inputs
-        .venus
+    let venus = match inputs.window_venus(&root) {
+        Ok(venus) => venus,
+        Err(detail) => return Ok(report_failure(&failure("reload-refused", detail), json)?),
+    };
+    let venus = venus
         .to_str()
         .ok_or_else(|| Error::usage("Venus path is not UTF-8"))?
         .to_owned();

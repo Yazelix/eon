@@ -704,6 +704,36 @@
                 ln -s ${lib.concatStringsSep " " venusFonts} "$HOME/Library/Fonts/"
               '';
             });
+          # The Rune candidate behind `eon window new --rune-preview` (eon-yp6vg.7.4), with
+          # shipping Venus's libraries and fonts. Linux only until eon-yp6vg.57; eon-yp6vg.54
+          # removes it. Shipping Venus keeps the feature off.
+          venusRunePreviewPackage = buildWorkspacePackage {
+            pname = "venus-rune-preview";
+            inherit (venusIdentity) version;
+            inherit (venusPackage) src;
+            cargoLock = workspaceCargoLock;
+            cargoBuildFlags = [
+              "--package"
+              workspacePackages.venus
+              "--bin"
+              "venus-rune-candidate"
+            ];
+            buildFeatures = [ "candidate-rune" ];
+            # The candidate's tests run on their own proof routes, not in this package build.
+            doCheck = false;
+            nativeBuildInputs = [
+              pkgs.makeWrapper
+              pkgs.pkg-config
+            ];
+            buildInputs = venusBuildInputs;
+            postInstall = ''
+              install -Dm444 ${./venus/LICENSE} "$out/share/licenses/venus-rune-preview/LICENSE"
+              install -Dm444 ${./venus/THIRD_PARTY_NOTICES.md} "$out/share/licenses/venus-rune-preview/THIRD_PARTY_NOTICES.md"
+            '';
+            postFixup = ''
+              wrapProgram "$out/bin/venus-rune-candidate" ${wrapperArgs venusEnvironment}
+            '';
+          };
 
           yaziPackage =
             assert yazi.rev == yaziIdentity.revision;
@@ -764,17 +794,8 @@
             ${pkgs.gnutar}/bin/tar -xOf ${bashPackage.src} bash-5.3/COPYING > "$out"
           '';
 
-          desktopItem = pkgs.makeDesktopItem {
-            name = "eon";
-            desktopName = "Open Eon";
-            comment = "Open an Eon window with persistent terminals";
-            exec = "eon";
-            actions.NewWindow = {
-              name = "New Eon Window";
-              exec = "eon window new";
-            };
+          desktopEntry = {
             icon = "eon";
-            startupWMClass = "yazelix-venus";
             terminal = false;
             categories = [
               "System"
@@ -787,6 +808,25 @@
               "workspace"
             ];
           };
+          desktopItem = pkgs.makeDesktopItem (desktopEntry // {
+            name = "eon";
+            startupWMClass = "yazelix-venus";
+            desktopName = "Open Eon";
+            comment = "Open an Eon window with persistent terminals";
+            exec = "eon";
+            actions.NewWindow = {
+              name = "New Eon Window";
+              exec = "eon window new";
+            };
+          });
+          # Linux only, with the preview client (eon-yp6vg.7.4). No StartupWMClass: windows
+          # of both clients share one app ID, so shells keep grouping them under eon.desktop.
+          runePreviewDesktopItem = pkgs.makeDesktopItem (desktopEntry // {
+            name = "eon-rune-preview";
+            desktopName = "Eon (Rune preview)";
+            comment = "Open the Rune preview client in a new Eon window";
+            exec = "eon window new --rune-preview";
+          });
 
           # The real fzf, Yazi, Zoxide and Files configuration that Eon Runtime's quick
           # search tests compose under a real Orbit (EON-C18): the Linux eon-tests check and
@@ -1234,6 +1274,8 @@
               EON_FILES_CONFIG = "${filesPopupConfig}";
               EON_YA = "${yaziPackage}/bin/ya";
               EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
+            } // lib.optionalAttrs pkgs.stdenv.isLinux {
+              EON_VENUS_RUNE_PREVIEW = "${venusRunePreviewPackage}/bin/venus-rune-candidate";
             };
             terminfo = "${orbitPackage}/share/terminfo";
           };
@@ -1273,7 +1315,7 @@
                 pkgs.copyDesktopItems
                 pkgs.makeWrapper
               ];
-              desktopItems = [ desktopItem ];
+              desktopItems = [ desktopItem ] ++ lib.optional pkgs.stdenv.isLinux runePreviewDesktopItem;
               installPhase = ''
                 runHook preInstall
                 install -Dm755 ${eonRust}/bin/eon "$out/bin/eon"
@@ -1340,6 +1382,9 @@
               '';
               postFixup = ''
                 substituteInPlace "$out/share/applications/eon.desktop" \
+                  --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
+              '' + lib.optionalString pkgs.stdenv.isLinux ''
+                substituteInPlace "$out/share/applications/eon-rune-preview.desktop" \
                   --replace-fail 'Exec=eon' "Exec=$out/bin/eon"
               '' + eonWrapperFragment tools;
             };
@@ -1437,6 +1482,28 @@
                 ${venusPackage}/bin/yazelix-venus || fail "Venus does not use the checked fonts"
               ${package}/libexec/eon/bin/anima --help | grep -qxE '[[:space:]]*accelerando' \
                 || fail "anima --help lists no accelerando style"
+            '' + lib.optionalString pkgs.stdenv.isLinux ''
+              # Each entry is its desktop item with only Exec pointed at this eon.
+              for entry in ${desktopItem} ${runePreviewDesktopItem}; do
+                for file in "$entry"/share/applications/*.desktop; do
+                  sed 's|Exec=eon|Exec=${package}/bin/eon|g' "$file" \
+                    | cmp - ${package}/share/applications/"''${file##*/}" \
+                    || fail "''${file##*/} is not its desktop item"
+                done
+              done
+              grep -qxF 'Name=Open Eon' ${package}/share/applications/eon.desktop \
+                || fail "eon.desktop is not the Open Eon entry"
+              grep -qxF 'Name=Eon (Rune preview)' ${package}/share/applications/eon-rune-preview.desktop \
+                || fail "eon-rune-preview.desktop is not the Rune preview entry"
+              grep -qxF 'Exec=${package}/bin/eon window new --rune-preview' \
+                ${package}/share/applications/eon-rune-preview.desktop \
+                || fail "eon-rune-preview.desktop does not open the Rune preview"
+              preview=$(sed -n "s/^export EON_VENUS_RUNE_PREVIEW='\(.*\)'$/\1/p" ${package}/bin/eon)
+              test "$preview" = ${venusRunePreviewPackage}/bin/venus-rune-candidate && test -x "$preview" \
+                || fail "eon does not launch the checked Rune preview"
+              # The preview's wrapper sets exactly shipping Venus's environment.
+              cmp <(grep -v '^exec ' ${venusPackage}/bin/yazelix-venus) <(grep -v '^exec ' "$preview") \
+                || fail "the Rune preview does not use Venus's libraries and fonts"
             '' + lib.optionalString pkgs.stdenv.isDarwin ''
               test "$(cat ${package}/Applications/Eon.app/Contents/Resources/eon-command)" \
                 = ${package}/bin/eon || fail "Eon.app does not launch the checked eon"
@@ -1541,7 +1608,8 @@
               ${animaPackage} \
               ${nushellPackage} ${bashPackage} \
               ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
-              ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage}; do
+              ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage} \
+              ${lib.optionalString pkgs.stdenv.isLinux "${venusRunePreviewPackage}"}; do
               if ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonbaseClosure}/store-paths; then
                 exit 1
               elif test $? != 1; then
@@ -1678,17 +1746,20 @@
                 relocated.prefix.TERMINFO_DIRS = [ "${pkgs.ncurses}/share/terminfo" ];
                 relocated.set.EON_INSTALLER = "${installerPackage}/bin/eon-install";
               }
-              {
-                program = "${venusPackage}/bin/yazelix-venus";
-                environment = venusEnvironment;
-                # libxkbcommon's keymap and Compose data.
-                relocated.setDefault = {
-                  XKB_CONFIG_ROOT = "${pkgs.xkeyboard_config}/etc/X11/xkb";
-                  XLOCALEDIR = "${pkgs.libx11}/share/X11/locale";
-                };
-                # The host's GPU driver shares Venus's gcc runtime, so both come from the host.
-                hostRuntime = true;
-              }
+            ] ++ map (program: {
+              inherit program;
+              environment = venusEnvironment;
+              # libxkbcommon's keymap and Compose data.
+              relocated.setDefault = {
+                XKB_CONFIG_ROOT = "${pkgs.xkeyboard_config}/etc/X11/xkb";
+                XLOCALEDIR = "${pkgs.libx11}/share/X11/locale";
+              };
+              # The host's GPU driver shares Venus's gcc runtime, so both come from the host.
+              hostRuntime = true;
+            }) [
+              "${venusPackage}/bin/yazelix-venus"
+              "${venusRunePreviewPackage}/bin/venus-rune-candidate"
+            ] ++ [
               {
                 program = "${codexbarPackage}/bin/CodexBarCLI";
                 environment = codexbarEnvironment;
@@ -1708,7 +1779,8 @@
             inherit pkgs manifest noticeTool bundleRelink helix yazi ghostty ghosttyDeps bend anima
             zig rustToolchain system githubSource codexbarIdentity
             animaIdentity helixIdentity venusFonts venusBuildInputs venusRuntimeLibraries
-            venusFontsConf filesPopupConfig eonRust eonPackage orbitPackage venusPackage installerPackage
+            venusFontsConf filesPopupConfig eonRust eonPackage orbitPackage venusPackage
+            venusRunePreviewPackage installerPackage
             animaPackage nushellPackage bashPackage starshipPackage zoxidePackage fzfPackage
             atuinPackage carapacePackage helixPackage yaziPackage lazygitPackage codexbarPackage;
             nixpkgsSource = nixpkgs;

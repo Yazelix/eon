@@ -1,7 +1,8 @@
 { pkgs, manifest, noticeTool, bundleRelink, helix, yazi, ghostty, ghosttyDeps, bend, anima, nixpkgsSource
 , zig, rustToolchain, system, githubSource, codexbarIdentity
 , animaIdentity, helixIdentity, venusFonts, venusBuildInputs, venusRuntimeLibraries
-, venusFontsConf, filesPopupConfig, eonRust, eonPackage, orbitPackage, venusPackage, installerPackage
+, venusFontsConf, filesPopupConfig, eonRust, eonPackage, orbitPackage, venusPackage, venusRunePreviewPackage
+, installerPackage
 , animaPackage, nushellPackage, bashPackage, starshipPackage, zoxidePackage, fzfPackage
 , atuinPackage, carapacePackage, helixPackage, yaziPackage, lazygitPackage, codexbarPackage }:
 let
@@ -84,6 +85,49 @@ let
       { name = "LICENSE-MIT"; hash = "sha256-I/GOA9xJ35FiL+KnYXZJdATkbO2KcV2dK2enRGVxzKM="; }
       { name = "LICENSE-APACHE"; hash = "sha256-Yseh419WQGiW16p8pS0MwNJyrAIrXSeW59aQXbijY2o="; }
     ];
+  # eon-rune's crates ship no license file; its repository's MIT terms cover them.
+  runeSource = "git+https://github.com/Yazelix/eon-rune?rev=c22cc2d459cc6b80a3f4ecf45b136eed1d205507#c22cc2d459cc6b80a3f4ecf45b136eed1d205507";
+  runeLicense = pkgs.fetchurl {
+    url = "https://raw.githubusercontent.com/Yazelix/eon-rune/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/LICENSE";
+    hash = "sha256-sf5pr+L2/giE78iTbatpu986MZs4KKll7hME+9amACE=";
+  };
+  # Shipping Venus and the Rune preview build the same crate with different features.
+  venusProducer = {
+    roots = [ "yazelix-venus" ];
+    manifest = "venus/Cargo.toml";
+    crateNotices = {
+      accesskit = accesskitNotice "0.25.2";
+      accesskit_atspi_common = accesskitNotice "0.21.1";
+      accesskit_consumer = accesskitNotice "0.39.2";
+      accesskit_unix = accesskitNotice "0.24.1";
+      accesskit_winit = accesskitNotice "0.34.2";
+      harfrust = originalCrateNotice "harfbuzz/harfrust"
+        "efdae3142ab76a2f1524d72cff9e3dfdc5afd7ca" "0.5.2" [
+          { name = "LICENSE"; hash = "sha256-Onw/C4h6u3xjj68CLSkldBhFhhTGcksSDO7/snn5x9I="; }
+        ];
+      profiling = originalCrateNotice "aclysma/profiling"
+        "8271551172eb6fa4cba47369aedd93790c623df9" "1.0.18" [
+          { name = "LICENSE-MIT"; hash = "sha256-yBZ/3u7UbT8kTT+Fxb+ZjOiJNDaRwyvixhqLxLXAgzM="; }
+        ];
+      spirv = originalCrateNotice "gfx-rs/rspirv"
+        "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4" "0.4.0+sdk-1.4.341.0" [
+          { name = "LICENSE"; hash = "sha256-z8d0m5b2O9McPEK1xHG/dWgUBT6EfBDz6wA0F7xSPTA="; }
+        ];
+    };
+    sourceNotices = {
+      "orbit/LICENSE" = ../../orbit/LICENSE;
+      "runtime/LICENSE" = ../../runtime/LICENSE;
+    };
+  };
+  venusEmbedded = [
+    "system-linker-runtime" "rust-standard-library" "venus-shaders" "openai-logomark" "claude-logomark" "accesskit-chromium"
+    "claude-code-mark"
+    "codex-symbol"
+    "opencode-mark"
+    "antigravity-mark"
+    "gemini-mark"
+    "lucide-bot"
+  ];
   sourceBuildSupport = lib.fileset.toSource {
     root = ../..;
     fileset = lib.fileset.unions [
@@ -145,7 +189,7 @@ import ./default.nix {
   grammarSources = helix.packages.${system}.grammar-sources;
   helixSource = helix;
   packages = [
-    eonPackage eonRust orbitPackage venusPackage installerPackage launcher
+    eonPackage eonRust orbitPackage venusPackage venusRunePreviewPackage installerPackage launcher
     animaPackage nushellPackage bashPackage starshipPackage zoxidePackage fzfPackage
     atuinPackage carapacePackage helixPackage yaziPackage lazygitPackage codexbarPackage
     pkgs.bash pkgs.curlMinimal pkgs.cacert pkgs.bc pkgs.iana-etc pkgs.mailcap pkgs.tzdata
@@ -161,35 +205,18 @@ import ./default.nix {
   }) [
     { id = "eon"; package = eonRust; roots = [ "eon" ]; manifest = "eon/crates/eon/Cargo.toml"; }
     { id = "orbit"; package = orbitPackage; roots = [ "yazelix-orbit" ]; manifest = "orbit/Cargo.toml"; }
-    {
-      id = "venus";
-      package = venusPackage;
-      roots = [ "yazelix-venus" ];
-      manifest = "venus/Cargo.toml";
-      crateNotices = {
-        accesskit = accesskitNotice "0.25.2";
-        accesskit_atspi_common = accesskitNotice "0.21.1";
-        accesskit_consumer = accesskitNotice "0.39.2";
-        accesskit_unix = accesskitNotice "0.24.1";
-        accesskit_winit = accesskitNotice "0.34.2";
-        harfrust = originalCrateNotice "harfbuzz/harfrust"
-          "efdae3142ab76a2f1524d72cff9e3dfdc5afd7ca" "0.5.2" [
-            { name = "LICENSE"; hash = "sha256-Onw/C4h6u3xjj68CLSkldBhFhhTGcksSDO7/snn5x9I="; }
-          ];
-        profiling = originalCrateNotice "aclysma/profiling"
-          "8271551172eb6fa4cba47369aedd93790c623df9" "1.0.18" [
-            { name = "LICENSE-MIT"; hash = "sha256-yBZ/3u7UbT8kTT+Fxb+ZjOiJNDaRwyvixhqLxLXAgzM="; }
-          ];
-        spirv = originalCrateNotice "gfx-rs/rspirv"
-          "8afc3d0ac8e158128cd1410bb2e4b4c26ab11bb4" "0.4.0+sdk-1.4.341.0" [
-            { name = "LICENSE"; hash = "sha256-z8d0m5b2O9McPEK1xHG/dWgUBT6EfBDz6wA0F7xSPTA="; }
+    (venusProducer // { id = "venus"; package = venusPackage; })
+    (venusProducer // {
+      id = "venus-rune-preview";
+      package = venusRunePreviewPackage;
+      # Rune's layout engine ships no license file.
+      crateNotices = venusProducer.crateNotices // {
+        taffy = originalCrateNotice "DioxusLabs/taffy"
+          "eb6450694f33e2b7413e40677f230ff63f0fc194" "0.15.0" [
+            { name = "LICENSE"; hash = "sha256-+X2vGgEkQT3M85mk5mJrS3Ss0FKC+AttZKyCIlZQt3o="; }
           ];
       };
-      sourceNotices = {
-        "orbit/LICENSE" = ../../orbit/LICENSE;
-        "runtime/LICENSE" = ../../runtime/LICENSE;
-      };
-    }
+    })
     { id = "anima"; package = animaPackage; roots = [ "yazelix_screen" ]; }
     { id = "nushell"; package = nushellPackage; roots = [ "nu" ]; nixpkgs = true; }
     { id = "starship"; package = starshipPackage; roots = [ "starship" ]; nixpkgs = true; }
@@ -259,15 +286,14 @@ import ./default.nix {
       source = "Composition of ${eonRust.name} from ${eonRust.src}";
       embedded = [ eonRust.name "eon-icon" ] ++ eonStaticInputs;
     };
-    ${venusPackage.name}.embedded = [
-      "system-linker-runtime" "rust-standard-library" "venus-shaders" "openai-logomark" "claude-logomark" "accesskit-chromium"
-      "claude-code-mark"
-      "codex-symbol"
-      "opencode-mark"
-      "antigravity-mark"
-      "gemini-mark"
-      "lucide-bot"
-    ];
+    ${venusPackage.name}.embedded = venusEmbedded;
+    ${venusRunePreviewPackage.name} = {
+      embedded = venusEmbedded;
+      notice_files = map (notice: "${notice}") [
+        ../../venus/LICENSE ../../venus/THIRD_PARTY_NOTICES.md runeLicense
+      ];
+      cargo_source_licenses.${runeSource} = [ "MIT" ];
+    };
     ${pkgs.ncurses.name}.source = "${pkgs.ncurses.src} rebuilt with ${../../nix/ncurses-termios-speed.h}";
     ${pkgs.keyutils.name} = {
       # Only the shared library is in this closure, not the GPL utilities.

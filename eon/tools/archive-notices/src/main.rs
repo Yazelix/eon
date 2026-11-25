@@ -495,6 +495,26 @@ fn supplement_cargo_notice(
     Ok(())
 }
 
+// A supplement fills a crate that ships no notice; a notice-less crate whose version or
+// revision moves still fails the pin check.
+fn supplement_noticeless_crate(
+    package: &serde_json::Value,
+    root: &Path,
+    own_notices: &[PathBuf],
+    output: &Path,
+    supplements: &BTreeMap<String, CargoNotice>,
+) -> Result<()> {
+    match package["name"]
+        .as_str()
+        .and_then(|name| supplements.get(name))
+    {
+        Some(notice) if own_notices.is_empty() => {
+            supplement_cargo_notice(package, root, output, notice)
+        }
+        _ => Ok(()),
+    }
+}
+
 fn runtime_crates(tree: &str) -> Result<BTreeSet<(String, String)>> {
     tree.lines()
         .filter(|line| !line.trim().is_empty())
@@ -591,24 +611,21 @@ fn cargo_texts(
                 serde_json::from_slice(&fs::read(root.join(".cargo_vcs_info.json"))?)?;
             entry["source_revision"] = vcs["git"]["sha1"].clone();
         }
-        for file in notice_files(&root)? {
+        let notices = notice_files(&root)?;
+        for file in &notices {
             let target = output
                 .join(index.to_string())
                 .join(file.strip_prefix(&root)?);
             fs::create_dir_all(target.parent().ok_or("notice has no parent")?)?;
             fs::copy(file, target)?;
         }
-        if let Some(notice) = entry["package"]["name"]
-            .as_str()
-            .and_then(|name| supplements.get(name))
-        {
-            supplement_cargo_notice(
-                &entry["package"],
-                &root,
-                &output.join(index.to_string()),
-                notice,
-            )?;
-        }
+        supplement_noticeless_crate(
+            &entry["package"],
+            &root,
+            &notices,
+            &output.join(index.to_string()),
+            &supplements,
+        )?;
     }
     let licenses = report["licenses"]
         .as_array_mut()
@@ -1921,6 +1938,33 @@ mod tests {
         );
         notice.revision = "different".into();
         assert!(supplement_cargo_notice(&package, &fixture.0, &output, &notice).is_err());
+    }
+
+    #[test]
+    fn supplements_fill_only_crates_without_their_own_notice() {
+        let fixture = Fixture::new();
+        fs::write(
+            fixture.0.join(".cargo_vcs_info.json"),
+            br#"{"git":{"sha1":"revision"}}"#,
+        )
+        .unwrap();
+        let supplements = BTreeMap::from([(
+            "crate".to_owned(),
+            CargoNotice {
+                version: "0.5.2".into(),
+                revision: "revision".into(),
+                files: vec![fixture.0.join("LICENSE")],
+            },
+        )]);
+        let package = json!({"name":"crate", "version":"0.12.0"});
+        let output = fixture.0.join("supplement");
+        let own = notice_files(&fixture.0).unwrap();
+        assert!(!own.is_empty());
+        supplement_noticeless_crate(&package, &fixture.0, &own, &output, &supplements).unwrap();
+        assert!(!output.exists());
+        assert!(
+            supplement_noticeless_crate(&package, &fixture.0, &[], &output, &supplements).is_err()
+        );
     }
 
     #[test]

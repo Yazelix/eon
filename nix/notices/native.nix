@@ -37,7 +37,7 @@ let
   withoutFeatures = versions: forbidden_features: reason: { inherit versions forbidden_features reason; };
 in {
   entries = lib.mapAttrsToList noticeEntry catalogue;
-  bindings = lib.genAttrs [ "nushell" "atuin" "yazi" "helix" ] forHost // {
+  bindings = lib.genAttrs [ "nushell" "atuin" "yazi" "helix" "venus-rune-preview" ] forHost // {
     nushell = forHost "nushell" ++ [
       { name = "libz-sys"; version = "1.1.25"; notice = pkgs.zlib.name; }
     ];
@@ -49,6 +49,7 @@ in {
     dirs-sys = exclusion [ "0.4.1" "0.5.0" ] "Rust platform-directory queries; no bundled native library.";
     inotify-sys = exclusion [ "0.1.5" ] "Rust Linux syscall bindings; no bundled native library.";
     renderdoc-sys = exclusion [ "1.1.0" ] "Rust RenderDoc API declarations; no RenderDoc binary is shipped.";
+    yeslogic-fontconfig-sys = exclusion [ "6.0.1" ] "Rust declarations for fontconfig, which Rune's dlopen feature loads at run time; no bundled native code.";
     wayland-sys = exclusion [ "0.31.10" "0.31.11" ] "Rust bindings to the host Wayland library, excluded by the archive host boundary.";
     rayon-core = exclusion [ "1.13.0" ] "Pure Rust thread pool; links enforces a single Cargo runtime instance.";
     tree-sitter-language = exclusion [ "0.1.7" ] "Rust/C ABI declarations; compiled parsers and the C runtime have separate notice entries.";

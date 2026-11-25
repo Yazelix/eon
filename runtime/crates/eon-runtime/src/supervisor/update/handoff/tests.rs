@@ -229,6 +229,7 @@ fn fresh_source(root: &Path, mut inputs: Inputs) {
         &LaunchOptions {
             directory: Some(root.into()),
             no_anima: true,
+            ..LaunchOptions::default()
         },
     );
     assert_eq!(result, Ok(0));

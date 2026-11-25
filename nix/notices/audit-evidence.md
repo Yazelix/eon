@@ -183,7 +183,7 @@ binary observations. Restoring the base normalized lock in each candidate
 graph reproduces the base bytes. All producers keep the same runtime and
 native Cargo trees and audit exception sets. The exact vendors and build
 logs confirm the same host and unselected classifications on both sides
-(Eon 9/2, Orbit 6/1, Venus 15/4). The archive producers leave
+(Eon 9/2, Orbit 6/1, Venus 15/4). The archive producers then left
 `candidate-rune` disabled.
 
 The strict `propose-audit-renewal` output changes six graph fingerprints.
@@ -207,7 +207,7 @@ through the normalized workspace lock. The `eon-rune` revision moves from
 `caeb0472` to `52f6f6c9` in the source fields for `parley_engine`, `rune`,
 `rune-motion`, `rune-staging`, `rune-taffy` and `tiny-skia-path`. Reversing
 that substitution in each candidate graph reproduces the accepted graph
-byte for byte. The archive producers use default features and leave
+byte for byte. The archive producers then used default features and left
 `candidate-rune` disabled.
 
 Three `inspect-audit` replays against the actual binaries reproduce the saved
@@ -260,7 +260,7 @@ Historical (`eon-yp6vg.7.6`):
 
 For eon-yp6vg.7.6 over `f592d1ba`, the Eon, Orbit and Venus contexts change
 through the lock alone. The bead adds Venus's optional `rune` dependency
-behind the non-default `candidate-rune` feature, which no producer enables.
+behind the non-default `candidate-rune` feature, which no producer then enabled.
 The normalized lock gains 83 stanzas (390 → 473). 14 existing stanzas gain
 dependency-list entries and change nothing else: arboard, codespan-reporting,
 cosmic-text, fontconfig-parser, gpu-allocator, objc2-core-foundation,
@@ -1499,6 +1499,37 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 
 - SHA-256: `b5d848ceefe988b7282614c8a71732277e184dfa9d3fc8cf6c2334b90220fb8a`.
 - Result: 15 exact host exceptions; 4 exact unselected exceptions; zero unselected identities compiled in the build phase.
+
+## venus-rune-preview
+
+First recorded on 2026-11-25 for `eon-yp6vg.7.4`, which ships the Rune
+candidate entry as the Linux-only `venus-rune-preview` package. The producer
+builds `yazelix-venus` with `--features candidate-rune --bin
+venus-rune-candidate` from the same source and vendor as `venus`, at context
+`1f43ef16c583011373842575c20a228034de296865bdd981b39c110e341d1c33`. Shipping
+`venus` keeps its feature-off graph and exceptions.
+
+The 28 missing identities split into 20 host and 8 unselected. The host set is
+Venus's 15 plus five proc-macro paths that only the Rune graph selects:
+`displaydoc 0.2.7`, `synstructure 0.14.0` (a proc-macro helper library),
+`yoke-derive 0.8.4`, `zerofrom-derive 0.1.8` and `zerovec-derive 0.11.7`.
+Each appears in the producer's normal/build tree and not in its runtime tree.
+The unselected set is Venus's four plus `fax 0.2.7`, `termcolor 1.4.1`,
+`tiff 0.11.3` and `zlib-rs 0.6.8`. These appear in neither tree. The
+producer's build log prints no `Compiling` lines at all, so it adds no
+evidence either way. No missing target
+runtime dependency is waived. The strict `propose-audit-renewal` proposal
+over the candidate input, parsed, equals the checked-in file.
+
+- Source at `/nix/store/076w2mb5c1z3pxjlb7gaqi957v8mk29g-source`.
+- Vendor at `/nix/store/i7xa3wga3rky9rznwmkdz67lkq0wcsaa-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features plus `candidate-rune`.
+- Observation at `/nix/store/p010ny1h6975835c23rlv0p0q6snm4cm-venus-rune-preview-cargo-notices-0.1.0`.
+- Binary at `/nix/store/60fw2vkbiqz5m4a1gzhnsnjksbhsi34y-venus-rune-preview-0.1.0/bin/.venus-rune-candidate-wrapped`
+  with SHA-256 `4abf5d54b67c58c524b0e40aa5e7275dfb529d51f525524c7c5d77241ff446c2`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --features=candidate-rune --package yazelix-venus --bin venus-rune-candidate`.
+- Proposal input at `/nix/store/6402d28hs9la2jkj25m8ad6swnm6mmll-eon-archive-notice-input.json` (before this record's own edits).
 
 ## installer
 

@@ -42,9 +42,10 @@ const RECEIPT: &str = "share/eon-source-receipt.json";
 /// The words that select a package mode; bare `eon update` is live adoption's.
 const PACKAGE_WORDS: [&str; 5] = ["--check", "--install", "--profile", "--entry", "--prefix"];
 const HANDOFF_MARKER: &str = "EON_UPDATE_HANDOFF";
-const BUILD_LOCATORS: [&str; 18] = [
+const BUILD_LOCATORS: [&str; 19] = [
     "EON_ORBIT",
     "EON_VENUS",
+    "EON_VENUS_RUNE_PREVIEW",
     "EON_CODEXBAR",
     "EON_ANIMA",
     "EON_CURL",

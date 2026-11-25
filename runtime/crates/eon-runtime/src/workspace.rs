@@ -4065,6 +4065,11 @@ fn json_window(
             .live_terminals
             .map_or_else(|| "null".into(), |v| v.to_string())
     ));
+    // Read here from the window's own root, not from the EONW entry (eon-yp6vg.7.4).
+    output.push_str(&format!(
+        ",\"client\":\"{}\"",
+        super::windows::client(entry.window.as_deref())
+    ));
     if include_state {
         output.push_str(&format!(",\"state\":\"{}\"", window_state(entry.state)));
     }

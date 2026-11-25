@@ -361,9 +361,12 @@ dependency decision does not establish public-distribution proof.
 
 - **Selected shape:** an optional `rune` Git dependency behind the
   non-default `candidate-rune` feature (`eon-yp6vg.7.6`), with
-  `default-features = false` and `features = ["accessibility"]`. Shipping
-  packages, ordinary tests and archive producers use the feature-off graph.
-  The Nix graph check resolves the candidate separately. Its first user is the
+  `default-features = false` and `features = ["accessibility"]`. The
+  shipping `yazelix-venus` package, ordinary tests and the other archive
+  producers use the feature-off graph. On Linux, the `venus-rune-preview`
+  package builds the candidate entry with the feature for
+  `eon window new --rune-preview` (eon-yp6vg.7.4); Darwin waits for
+  eon-yp6vg.57. The Nix graph check resolves the candidate separately. Its first user is the
   private entry from eon-yp6vg.7.7: the `rune_candidate` module and the
   `venus-rune-candidate` binary and test, each behind the feature
   (`required-features` for the binary and test). The single switch
@@ -515,7 +518,9 @@ dependency decision does not establish public-distribution proof.
     vendor and the notice tooling's paths.
   - Copying Rune's other patches to the root: they change shipping
     identities.
-  - A default or packaged feature: the host is not qualified yet.
+  - A default feature, or the feature in shipping `yazelix-venus`: the host
+    is not qualified yet. The separate preview package leaves shipping Venus
+    unchanged.
 - **Exit:** the single switch (eon-yp6vg.54) replaces the feature with the
   shipping host, or removes the dependency if the Rune host is dropped. The
   `parley_engine` root patch goes with it.

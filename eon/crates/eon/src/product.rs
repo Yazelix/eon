@@ -244,6 +244,7 @@ pub(crate) fn inputs(launch: Result<eon_runtime::LaunchInputs, String>) -> Input
         },
         orbit: configured_program("EON_ORBIT", "yazelix-orbit"),
         venus: configured_program("EON_VENUS", "yazelix-venus"),
+        venus_rune_preview: nonempty_environment_path("EON_VENUS_RUNE_PREVIEW"),
         codexbar: configured_program("EON_CODEXBAR", "codexbar"),
         anima: configured_program("EON_ANIMA", "anima"),
         icon: eon_icon(std::env::var_os("EON_ICON")),

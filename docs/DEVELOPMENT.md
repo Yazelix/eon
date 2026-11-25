@@ -94,6 +94,11 @@ the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
 exercises the real Eon binary, aliases and self-launches.
 
 The package's wrapper supplies each component's path in an `EON_*` variable.
+On Linux, `EON_VENUS_RUNE_PREVIEW` names the `venus-rune-preview` client that
+`eon window new --rune-preview` and the "Eon (Rune preview)" desktop entry
+open (eon-yp6vg.7.4). The `accelerando` package check proves that wrapper value,
+both desktop entries, and that the preview's wrapper sets shipping Venus's
+environment.
 Full-Eon and no-Helix wrappers record their environment changes in
 `share/eon/launch-environment` and pass original values through private
 `EON_LAUNCH_*` entries. Eon consumes these at single-threaded process entry,

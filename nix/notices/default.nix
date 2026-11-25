@@ -164,6 +164,7 @@ let
   ownLicenses = {
     yazelix-orbit = [ "Apache-2.0" ];
     yazelix-venus = [ "Apache-2.0" ];
+    venus-rune-preview = [ "Apache-2.0" ];
     helix-term = [ "MPL-2.0" ];
   };
   ownNotices = {
