@@ -93,6 +93,10 @@ pub struct Inputs {
     pub slot_policy: super::slots::SlotPolicy,
     pub orbit: PathBuf,
     pub venus: PathBuf,
+    /// The packaged Rune preview client (`venus-rune-candidate`) that
+    /// `eon window new --rune-preview` opens; none when this build has none
+    /// (eon-yp6vg.7.4, removed by eon-yp6vg.54).
+    pub venus_rune_preview: Option<PathBuf>,
     pub anima: PathBuf,
     /// The Eon icon's image, passed to Venus unread; none when Eon has no icon.
     pub icon: Option<PathBuf>,
@@ -114,6 +118,21 @@ impl Inputs {
             command.env(display, value);
         }
         Ok(command)
+    }
+
+    /// The Venus that the window rooted at `root` presents with: the Rune
+    /// preview client for a window that `eon window new --rune-preview` opened,
+    /// else shipping Venus. Never substitutes one for the other.
+    pub(crate) fn window_venus(&self, root: &Path) -> Result<&Path, String> {
+        if !super::windows::rune_preview(root) {
+            return Ok(&self.venus);
+        }
+        self.venus_rune_preview.as_deref().ok_or_else(|| {
+            format!(
+                "{} is a Rune preview window, and this build has no Rune preview client",
+                root.display()
+            )
+        })
     }
 
     pub(crate) fn component_report(&self) -> Result<&str, String> {
@@ -815,10 +834,14 @@ fn launch_managed(
     Err(format!("cannot launch {program}: {error}"))
 }
 
-/// Splits a full-Eon launch's leading `--dir DIR` and `--no-anima`, in
-/// either order and each at most once, from what follows them (EON-C18). DIR
-/// is neither empty nor `--`, as for `tab create --dir`.
-fn parse_launch_options(arguments: &[OsString]) -> Result<(LaunchOptions, &[OsString]), Error> {
+/// Splits a full-Eon launch's leading `--dir DIR` and `--no-anima`, and for
+/// `window new` also `--rune-preview`, in any order and each at most once, from
+/// what follows them (EON-C18). DIR is neither empty nor `--`, as for
+/// `tab create --dir`.
+fn parse_launch_options(
+    arguments: &[OsString],
+    window_new: bool,
+) -> Result<(LaunchOptions, &[OsString]), Error> {
     let mut options = LaunchOptions::default();
     let mut rest = arguments;
     loop {
@@ -837,6 +860,12 @@ fn parse_launch_options(arguments: &[OsString]) -> Result<(LaunchOptions, &[OsSt
             }
             [flag, tail @ ..] if flag == "--no-anima" && !options.no_anima => {
                 options.no_anima = true;
+                rest = tail;
+            }
+            [flag, tail @ ..]
+                if window_new && flag == "--rune-preview" && !options.rune_preview =>
+            {
+                options.rune_preview = true;
                 rest = tail;
             }
             _ => return Ok((options, rest)),
@@ -910,7 +939,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             &LaunchOptions::default(),
         ),
         [flag, ..] if flag == "--dir" || flag == "--no-anima" => {
-            let (options, []) = parse_launch_options(&arguments)? else {
+            let (options, []) = parse_launch_options(&arguments, false)? else {
                 return Err(Error::usage(EON_USAGE));
             };
             launch_current(
@@ -924,7 +953,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             )
         }
         [command, action, rest @ ..] if command == "window" && action == "new" => {
-            let (options, []) = parse_launch_options(rest)? else {
+            let (options, []) = parse_launch_options(rest, true)? else {
                 return Err(Error::usage(EON_USAGE));
             };
             windows::new_window(inputs, &options)
@@ -981,7 +1010,7 @@ fn execute(inputs: &Inputs, arguments: Vec<OsString>) -> Result<i32, Error> {
             Err(format!("cannot launch Anima: {error}"))
         }
         [command, rest @ ..] if command == "run" => {
-            let (options, child) = match parse_launch_options(rest)? {
+            let (options, child) = match parse_launch_options(rest, false)? {
                 (options, []) => (options, &[][..]),
                 (options, [separator, child @ ..]) if separator == "--" && !child.is_empty() => {
                     (options, child)
@@ -1261,6 +1290,7 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "window new [--dir DIR] [--no-anima]",
                 "Open an independent window",
             ),
+            ("  [--rune-preview]", "Preview: on the Rune client"),
             ("window attach [ID]", "Reopen a window (no ID: default)"),
             (
                 "window reload ID [--json]",
@@ -5345,7 +5375,7 @@ mod tests {
     fn launch_flags_parse_once_in_either_order_and_fail_before_starting() {
         let arguments = |words: &[&str]| words.iter().map(OsString::from).collect::<Vec<_>>();
         let parsed = arguments(&["--no-anima", "--dir", "a b", "--", "x"]);
-        let (options, rest) = parse_launch_options(&parsed).unwrap();
+        let (options, rest) = parse_launch_options(&parsed, false).unwrap();
         assert_eq!(
             options.directory,
             Some(env::current_dir().unwrap().join("a b"))
@@ -5353,11 +5383,17 @@ mod tests {
         assert!(options.no_anima);
         assert_eq!(rest, arguments(&["--", "x"]));
         let parsed = arguments(&["--dir", "/d", "--no-anima", "--dir", "/e"]);
-        let (options, rest) = parse_launch_options(&parsed).unwrap();
+        let (options, rest) = parse_launch_options(&parsed, false).unwrap();
         assert_eq!(options.directory.as_deref(), Some(Path::new("/d")));
         assert_eq!(rest, arguments(&["--dir", "/e"]));
-        let (options, rest) = parse_launch_options(&[]).unwrap();
+        let (options, rest) = parse_launch_options(&[], false).unwrap();
         assert!(options.directory.is_none() && !options.no_anima && rest.is_empty());
+        // Only `window new` takes `--rune-preview`, in any order (eon-yp6vg.7.4).
+        let parsed = arguments(&["--dir", "/d", "--rune-preview", "--no-anima"]);
+        let (options, rest) = parse_launch_options(&parsed, true).unwrap();
+        assert!(options.rune_preview && options.no_anima && rest.is_empty());
+        let (options, rest) = parse_launch_options(&parsed, false).unwrap();
+        assert!(!options.rune_preview && rest == arguments(&["--rune-preview", "--no-anima"]));
 
         let inputs = crate::fixtures::inputs();
         for words in [
@@ -5377,6 +5413,10 @@ mod tests {
             &["run", "--dir", "/", "x"],
             &["window", "new", "--json"],
             &["window", "new", "--no-anima", "--", "x"],
+            &["--rune-preview"],
+            &["--no-anima", "--rune-preview"],
+            &["run", "--rune-preview"],
+            &["window", "new", "--rune-preview", "--rune-preview"],
         ] {
             let error = execute(&inputs, arguments(words)).unwrap_err();
             assert_eq!(error.status, 2, "{words:?}: {}", error.message);
@@ -5398,6 +5438,12 @@ mod tests {
                 error.message
             );
         }
+        // A build without the preview client refuses before it reserves a window.
+        let error = execute(&inputs, arguments(&["window", "new", "--rune-preview"])).unwrap_err();
+        assert_eq!(
+            (error.status, error.message.as_str()),
+            (1, "this build has no Rune preview client")
+        );
     }
 
     #[test]

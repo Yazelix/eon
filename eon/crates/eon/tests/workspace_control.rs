@@ -17071,6 +17071,140 @@ fn window_ls_lists_the_default_and_an_independent_window_and_one_stop_form_stops
     fs::remove_dir_all(root).unwrap();
 }
 
+/// Catches `eon window new --rune-preview` presenting with shipping Venus, plain
+/// `window new` presenting with the Rune preview client, reattach falling back to
+/// shipping Venus, and `eon session --json` naming the wrong client
+/// (eon-yp6vg.7.4).
+#[test]
+fn rune_preview_windows_launch_and_reattach_the_preview_client_and_session_json_names_it() {
+    // Short root: an independent window's terminal sockets must fit macOS's socket paths.
+    let root = (0_u32..)
+        .map(|n| std::env::temp_dir().join(format!("ew{n:x}")))
+        .find(|path| match fs::create_dir(path) {
+            Ok(()) => true,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => false,
+            Err(error) => panic!("{}: {error}", path.display()),
+        })
+        .unwrap();
+    let runtime = root.join("r");
+    let config = root.join("config");
+    configure_mock_desktop(&config);
+    let stop = root.join("stop");
+    let orbit = root.join("orbit");
+    managed_orbit_executable(&orbit);
+    // Each client records its name and presentation control, answers startup admission once
+    // the snapshot arrives (exiting earlier would break the supervisor's write), then exits
+    // as on detach.
+    let launches = root.join("launches");
+    let client = |name: &str| {
+        let path = root.join(name);
+        let source = format!(
+            "#!/bin/sh\necho \"{name} $EON_VENUS_PRESENTATION_CONTROL\" >> '{}'\n\
+             case \"$EON_VENUS_PRESENTATION_CONTROL\" in stdin-ready-focus-v2) head -c 1 >/dev/null; printf ready-v1;; esac\n",
+            launches.display()
+        );
+        executable(&path, source);
+        path
+    };
+    let (venus, preview) = (client("shipping"), client("rune-preview"));
+    let session_bin = root.join("bin");
+    fs::create_dir(&session_bin).unwrap();
+    executable(&session_bin.join("eon"), "#!/bin/sh\nexit 1\n");
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let command = || {
+        let mut command = eon_command(&binary);
+        command
+            .env("EON_RUNTIME_DIR", &runtime)
+            .env("EON_CONFIG_HOME", &config)
+            .env("EON_ORBIT", &orbit)
+            .env("EON_VENUS", &venus)
+            .env("EON_VENUS_RUNE_PREVIEW", &preview)
+            .env("EON_SESSION_BIN", &session_bin)
+            .env("EON_TEST_STOP", &stop);
+        command
+    };
+    let mut default = TestProcess {
+        child: command()
+            .arg("run")
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+        stop: stop.clone(),
+    };
+    wait_for_ready(&generation_runtime(&runtime).join("eon.sock"));
+    let run = |args: &[&str]| command().args(args).output().unwrap();
+    let open = |args: &[&str]| {
+        let output = run(args);
+        assert!(output.status.success(), "{output:?}");
+        let id = stdout(&output).trim().to_owned();
+        wait_for_ready(&generation_runtime(&runtime.join("w").join(&id)).join("eon.sock"));
+        id
+    };
+    let launched = || fs::read_to_string(&launches).unwrap_or_default();
+    let clients = || {
+        launched()
+            .lines()
+            .map(|line| line.split(' ').next().unwrap().to_owned())
+            .collect::<Vec<_>>()
+    };
+    // A client without admission may still be starting after the ready reply.
+    let wait_for_launches = |count: usize| {
+        let deadline = Instant::now() + Duration::from_secs(5);
+        while launched().lines().count() < count && Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(10));
+        }
+        assert_eq!(launched().lines().count(), count, "{}", launched());
+    };
+    wait_for_launches(1);
+    let plain = open(&["window", "new"]);
+    wait_for_launches(2);
+    let rune = open(&["window", "new", "--no-anima", "--rune-preview"]);
+    wait_for_launches(3);
+    assert_eq!(clients(), ["shipping", "shipping", "rune-preview"]);
+
+    // The client exited, as on detach. Until the supervisor reaps it, attach presents the
+    // exiting process instead, so attach again until a fresh client starts.
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let attached = run(&["window", "attach", &rune]);
+        if launched().lines().count() >= 4 {
+            assert!(attached.status.success(), "{attached:?}");
+            break;
+        }
+        assert!(Instant::now() < deadline, "no fresh client: {attached:?}");
+        thread::sleep(Duration::from_millis(50));
+    }
+    assert_eq!(
+        clients(),
+        ["shipping", "shipping", "rune-preview", "rune-preview"]
+    );
+    // The Rune client refuses a workspace launch without startup admission, which plain
+    // `--no-anima` launches and reattaches otherwise skip.
+    for line in launched()
+        .lines()
+        .filter(|line| line.starts_with("rune-preview"))
+    {
+        assert_eq!(line, "rune-preview stdin-ready-focus-v2");
+    }
+
+    for (window, client) in [
+        ("default", "shipping"),
+        (&plain, "shipping"),
+        (&rune, "rune-preview"),
+    ] {
+        let output = run(&["session", "--window", window, "--json"]);
+        assert!(output.status.success(), "{output:?}");
+        let session: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(session["running"]["this"]["client"], client, "{session}");
+    }
+
+    let stopped = run(&["window", "stop", "all", "--json"]);
+    assert_eq!(stopped.status.code(), Some(0), "{stopped:?}");
+    wait_for_successful_exit(&mut default.child);
+    fs::remove_dir_all(root).unwrap();
+}
+
 /// Catches a prefix that stops the wrong window, an ambiguous prefix that
 /// stops anything, and bad syntax that reaches a supervisor.
 #[test]
@@ -17956,13 +18090,16 @@ fn read_request(stream: &mut UnixStream) -> Vec<u8> {
 /// Reload distinguishes acceptance from unconfirmed effects and from refusal.
 #[test]
 fn window_reload_reports_acceptance_with_unconfirmed_effects_or_refusal() {
-    for (independent, json, refuse) in [
-        (false, true, false),
-        (false, false, false),
-        (true, false, false),
-        (true, true, false),
-        (false, true, true),
-        (false, false, true),
+    // `preview`: a `--rune-preview` window, which reloads its Rune preview client
+    // (eon-yp6vg.7.4), not `EON_VENUS`.
+    for (independent, json, refuse, preview) in [
+        (false, true, false, false),
+        (false, false, false, false),
+        (true, false, false, false),
+        (true, true, false, false),
+        (true, true, false, true),
+        (false, true, true, false),
+        (false, false, true, false),
     ] {
         let root = temporary_directory();
         let runtime = root.join("r");
@@ -17982,6 +18119,9 @@ fn window_reload_reports_acceptance_with_unconfirmed_effects_or_refusal() {
             )
         };
         let listener = generation_listener(&owner, &id);
+        if preview {
+            fs::write(owner.join("rune-preview"), "").unwrap();
+        }
         let target = root.join("new-venus");
         let requested = target.clone();
         let generation = id.clone();
@@ -18037,13 +18177,32 @@ fn window_reload_reports_acceptance_with_unconfirmed_effects_or_refusal() {
                 .env("EON_RUNTIME_DIR", &runtime)
                 .env_remove("EON_WINDOW_RUNTIME_DIR")
                 .env_remove("EON_TERMINAL")
-                .env("EON_VENUS", &target);
+                .env(
+                    "EON_VENUS",
+                    if preview {
+                        root.join("shipping")
+                    } else {
+                        target.clone()
+                    },
+                )
+                .env("EON_VENUS_RUNE_PREVIEW", &target);
             command
         };
         let listed = command().args(["window", "ls", "--json"]).output().unwrap();
         assert!(listed.status.success(), "{listed:?}");
         let listed: serde_json::Value = serde_json::from_slice(&listed.stdout).unwrap();
         assert_eq!(listed["windows"][0]["venus"], target.to_str().unwrap());
+        if preview {
+            // A build without the preview client refuses before it sends anything.
+            let output = command()
+                .env_remove("EON_VENUS_RUNE_PREVIEW")
+                .args(["window", "reload", prefix, "--json"])
+                .output()
+                .unwrap();
+            assert_eq!(output.status.code(), Some(4), "{output:?}");
+            let answer: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+            assert_eq!(answer["error"]["code"], "reload-refused", "{answer}");
+        }
         let mut reload = command();
         reload.args(["window", "reload", prefix]);
         if json {

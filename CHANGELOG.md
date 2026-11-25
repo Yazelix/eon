@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon window new --rune-preview` opens a window on the Rune preview client,
+  beside the shipping client, which stays the default. On Linux the profile
+  ships the client and an "Eon (Rune preview)" desktop entry that runs it.
+  On macOS the flag exits 1 until the client builds there (`eon-yp6vg.57`).
+  `eon session --json` names each running window's `client` (`shipping` or
+  `rune-preview`). The preview is temporary: `eon-yp6vg.54` removes the flag
+  and the entry when Rune becomes the client (`eon-yp6vg.7.4`).
 - `slots.boat.allow_shapes` accepts `eon-darwin-clippy`, so
   `nix develop -c eon-darwin-clippy` (bare or with `-p NAME`) can run on Boat.
   Older Eon builds reject the value; update them before listing it

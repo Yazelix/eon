@@ -189,6 +189,9 @@ pub(super) struct LaunchOptions {
     pub(super) directory: Option<PathBuf>,
     /// `--no-anima`: skip the startup Anima.
     pub(super) no_anima: bool,
+    /// `eon window new --rune-preview`: present with the Rune preview client (eon-yp6vg.7.4,
+    /// removed by eon-yp6vg.54).
+    pub(super) rune_preview: bool,
 }
 
 /// Full Eon's application ID and decorations: every full-Eon launch passes
@@ -1159,6 +1162,17 @@ pub(super) fn prepare_configuration(path: &Path) -> Result<(), String> {
         .map_err(|error| format!("cannot create {}: {error}", path.display()))
 }
 
+/// The client the window of generation directory `runtime` presents with when no
+/// reload chose one (`Inputs::window_venus`), and whether it is the Rune preview
+/// client, which always needs startup admission (eon-yp6vg.7.4).
+fn own_venus<'a>(inputs: &'a Inputs, runtime: &Path) -> Result<(&'a Path, bool), String> {
+    let root = runtime.parent().and_then(Path::parent).unwrap_or(runtime);
+    Ok((
+        inputs.window_venus(root)?,
+        super::windows::rune_preview(root),
+    ))
+}
+
 pub(super) fn runtime_directory(product: &str) -> PathBuf {
     if product == "eon"
         && let Some(root) = nonempty_environment_path("EON_WINDOW_RUNTIME_DIR")
@@ -1256,6 +1270,8 @@ fn supervise(
     #[cfg(test)]
     crate::fixtures::assert_not_update_validator("supervisor launch resources");
     let build = current_generation(inputs)?;
+    // Before any terminal starts, so a refusal ends nothing.
+    let (venus, preview) = own_venus(inputs, runtime)?;
     let retained_identity = if mode == LaunchMode::Workspace {
         let identity = Identity::read(runtime)?;
         if let Some(identity) = &identity {
@@ -1452,7 +1468,7 @@ fn supervise(
     let mut initial_venus = || {
         let mut command = venus_command(
             inputs,
-            &inputs.venus,
+            venus,
             config,
             &presentation_socket,
             mode,
@@ -1473,7 +1489,7 @@ fn supervise(
         }
         command
     };
-    let admitted = if terminal.requires_startup_admission() || fresh_animation {
+    let admitted = if terminal.requires_startup_admission() || fresh_animation || preview {
         let snapshot = if mode == LaunchMode::Workspace {
             let workspaces = if sessions.is_empty() && !recovered_pair {
                 WorkspaceSet::registered_pending(
@@ -3723,11 +3739,18 @@ fn reload_presentation(
     let mut rollback = venus_process_command(inputs, &previous, config, LaunchMode::Workspace);
     rollback.args(&accepted.arguments);
     // Both launch paths use flags resolved by this supervisor.
-    let fallback = (previous != inputs.venus).then(|| {
-        let mut command =
-            venus_process_command(inputs, &inputs.venus, config, LaunchMode::Workspace);
+    let (own, preview) =
+        own_venus(inputs, runtime).map_err(|detail| failure("reload-refused", detail))?;
+    if preview && target.file_name() != own.file_name() {
+        return Err(failure(
+            "reload-refused",
+            "this Rune preview window reloads only its Rune preview client; nothing replaced",
+        ));
+    }
+    let fallback = (previous != own).then(|| {
+        let mut command = venus_process_command(inputs, own, config, LaunchMode::Workspace);
         command.args(&accepted.arguments);
-        (inputs.venus.clone(), command)
+        (own.to_path_buf(), command)
     });
     if !focused(state) {
         return Err(failure(
@@ -4375,9 +4398,11 @@ fn dispatch_registered_request(
                     Some(&state.log),
                 )?;
                 let bar = window_bar(mode, config, inputs, Some(&state.log))?;
+                let (own, preview) = own_venus(inputs, runtime)?;
+                let venus = state.venus_path.as_deref().unwrap_or(own);
                 let command = venus_command(
                     inputs,
-                    state.venus_path.as_deref().unwrap_or(&inputs.venus),
+                    venus,
                     config,
                     &socket,
                     mode,
@@ -4403,7 +4428,7 @@ fn dispatch_registered_request(
                 state.venus = Some(
                     PresentationProcess::start(
                         command,
-                        terminal.requires_startup_admission(),
+                        terminal.requires_startup_admission() || preview,
                         state.workspace_snapshot(),
                         PRESENTATION_ADMISSION_TIMEOUT,
                         &mut state.sessions,

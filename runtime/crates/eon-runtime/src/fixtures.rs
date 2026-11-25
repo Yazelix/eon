@@ -254,6 +254,7 @@ pub(crate) fn inputs() -> Inputs {
         },
         orbit: "fixture-orbit".into(),
         venus: "fixture-venus".into(),
+        venus_rune_preview: None,
         anima: "fixture-animation".into(),
         icon: None,
         managed: ManagedPrograms {
