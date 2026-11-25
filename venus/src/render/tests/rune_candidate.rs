@@ -24,7 +24,7 @@ fn hosted_steps_prepare_images_and_text_in_painter_order() {
     let prepare = |renderer: &mut Renderer, entry: &mut Entry| {
         entry.sync_images(renderer);
         renderer
-            .prepare_hosted(entry.scene(), true, entry.generation)
+            .prepare_hosted(entry.scene(), true, entry.generation, "", "")
             .unwrap();
         assert!(
             matches!(renderer.hosted_backdrop, Some((_, 6))),
@@ -294,7 +294,7 @@ fn disallow_incompatible_passes(gpu: &rune::render::Gpu) {
     .unwrap();
     let entry = Entry::new().unwrap();
     renderer
-        .prepare_hosted(entry.scene(), true, entry.generation)
+        .prepare_hosted(entry.scene(), true, entry.generation, "", "")
         .unwrap();
     let mut ui = rune::render::Renderer::new(&gpu.device, format);
     for (view, blend, wrong_pass) in [

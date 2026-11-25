@@ -1739,6 +1739,8 @@ impl Renderer {
         scene: &Scene,
         blink_visible: bool,
         generation: u64,
+        status: &str,
+        preedit: &str,
     ) -> Result<(), RenderError> {
         #[cfg(feature = "candidate-rune")]
         self.prepare_hosted_backdrop(scene);
@@ -1750,9 +1752,9 @@ impl Renderer {
             &[],
             None,
             WorkspaceFocus::Terminal,
-            "",
+            status,
             blink_visible,
-            "",
+            preedit,
             generation,
         )
         .map(|_| ())

@@ -4,8 +4,7 @@
 //!
 //! It draws canonical fixtures (`fixtures`), never a live Orbit attachment. Limits kept for
 //! later children of eon-yp6vg.7:
-//! - no keyboard, pointer or IME input, and Rune's built-in window keys are not audited
-//!   (eon-yp6vg.7.2);
+//! - keyboard, pointer and IME are bound in the live entry (eon-yp6vg.7.2);
 //! - no supervisor, ready-v1 or Present/EOF here: the supervised entry runs Venus's own
 //!   `Application` on Rune (`application::rune_host`, eon-yp6vg.7.9);
 //! - a new GPU device or target format is terminal, not rebuilt (eon-yp6vg.7.10);
@@ -432,7 +431,9 @@ pub(crate) mod rune_host {
             }
             let entry = &mut f.rt.state.entry;
             entry.sync_images(renderer);
-            if let Err(error) = renderer.prepare_hosted(entry.scene(), true, entry.generation) {
+            if let Err(error) =
+                renderer.prepare_hosted(entry.scene(), true, entry.generation, "", "")
+            {
                 self.fail(error.to_string());
                 return None;
             }

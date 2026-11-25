@@ -66,7 +66,7 @@ fn blink_test_workspace(metrics: CellMetrics) -> WorkspaceScene {
 fn cursor_blink_reuses_grid_and_glyphon_preparation() {
     let mut renderer = blink_test_renderer();
     let scene = blink_test_scene();
-    renderer.prepare_hosted(&scene, true, 1).unwrap();
+    renderer.prepare_hosted(&scene, true, 1, "", "").unwrap();
     let before = (renderer.grid_rebuilds, renderer.glyphon_prepares);
     let text_buffers = renderer
         .text
@@ -125,7 +125,7 @@ fn sgr_blink_still_rebuilds_foregrounds_and_prepares_glyphs() {
     cell.text = "A".into();
     cell.style.blink = true;
     cell.style.underline = orbit_protocol::Underline::Single;
-    renderer.prepare_hosted(&scene, true, 1).unwrap();
+    renderer.prepare_hosted(&scene, true, 1, "", "").unwrap();
     let before = (renderer.grid_rebuilds, renderer.glyphon_prepares);
     let lit_vertices = renderer.vertex_count;
     for visible in [false, true, false, true, false, true] {
@@ -449,7 +449,7 @@ fn hosted_frames_prepare_draw_and_resize_without_a_surface() {
     .enumerate()
     {
         if frame == 0 {
-            renderer.prepare_hosted(&scene, true, 1).unwrap();
+            renderer.prepare_hosted(&scene, true, 1, "", "").unwrap();
         } else {
             renderer.resize(size, scale);
             let (content_changed, _, _) = renderer
