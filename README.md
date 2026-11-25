@@ -172,6 +172,33 @@ can avoid local builds for the `edge` and release builds it holds. It pins the
 newest Linux release's default package (and the Mac one while Mac publishing
 is on) plus the Helix grammar sources; Cachix may evict other builds.
 
+## Coming from Nova
+
+Eon is Yazelix Nova's successor, built as one program. Nova is a stack of
+layers: a Rio fork for the terminal, Zellij for the workspace, Zellij plugins
+for the bar, popups and sidebar, and Nova on top tying them together, each with
+its own configuration, releases and key handling. Eon is its own terminal. It
+draws its terminals and runs the workspace, bar, popups and sidebar itself, so
+keys reach Eon directly and one release and one config file cover everything.
+[eonterm.com](https://eonterm.com) has the overview.
+
+Most of what you know carries over. Each tab belongs to one project, picked
+with Zoxide quick search or Yazi, and Eon pins the same Nushell, Helix, Yazi,
+LazyGit and Anima. The movement grid is the same: `Alt+H/J/K/L` moves focus,
+`Ctrl+Alt+H/J/K/L` moves panes, `Alt+M` opens a pane and `Alt+Shift+T` a tab.
+`Alt+Shift+Y`, `J`, `L`, `M` and `A` open Files, Git, Agent, Commands and
+Anima; `Alt+Shift+H` toggles the sidebar and `Alt+Shift+B` the shortcut hints.
+
+Because Eon owns its terminals, they keep running apart from the window:
+`Alt+Shift+D` hides it and `eon window attach` brings back every tab and pane.
+Settings live in `~/.config/eon/config.toml`, and the command is `eon` where
+Nova had `yzx`.
+
+Still missing: SSH, full macOS support (today an early Nix preview on Apple
+Silicon), and a command to import your Nova settings.
+
+Nova stays fully supported while Eon moves toward beta.
+
 ## Status and limits
 
 Eon is in alpha. v0.2.0 is planned as the first beta and requires the release
