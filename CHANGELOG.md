@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Clicking tabs, pane titles and workspace buttons keeps keyboard focus on the
+  terminal. F6 and assistive-technology focus requests can focus workspace
+  controls (`eon-6xybm`).
+
 ## v0.1.29 (2026-11-24)
 
 ### Upgrading from v0.1.28

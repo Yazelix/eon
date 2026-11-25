@@ -415,8 +415,8 @@ select another pane and return focus to its title. Action focus uses a transient
 accent pill outline. Zoom first selects the named pane if necessary and then uses
 Alt+Shift+Z's local view behavior; another action or zoom toggle cancels a pending
 selection. Close targets its own pane exactly as Alt+W does, with the same
-final-pane confirmation. After a keyboard Close, focus returns to the selected
-pane's title. Escape cancels that prompt; Enter closes its held target.
+final-pane confirmation. When Close removes the focused button, keyboard focus
+returns to the terminal. Escape cancels the prompt. Enter closes its held target.
 Agents can use `eon pane close PANE`; zoom is window-local view state.
 AccessKit retains both actions on every laid-out pane header whose targets
 fit, including headers whose mouse buttons are hidden.
@@ -469,8 +469,8 @@ prompt was open (a pane joined or left it, or the close became a final one),
 Enter stops nothing and the prompt shows again from the new list, starting
 "This Stack changed.". Tab reaches the selected Stack's Close after the
 pane's own buttons; Enter or Space activates it and Up or Down returns to the
-pane title. After a confirmed close, keyboard focus returns to the pane
-title; Esc leaves it where it was. Screen readers list `Close Stack` or
+pane title. After a confirmed close, keyboard focus returns to the terminal.
+Esc leaves focus where it was. Screen readers list `Close Stack` or
 `Close Stack N` as a button on every visible Stack and can focus any of them.
 Agents read the same list with `eon column close PANE --json`, which stops
 nothing.
@@ -545,7 +545,7 @@ is named `Zoomed pane <label>`. Popups cover zoom and hide its marker until they
 A fresh session or tab can begin with its Files popup, on quick search, and no
 pane. Popups draw as one card over every column, with Eon's
 logical margins around their terminal. Tabs remain available. A tab with only hidden popups has an
-empty body and keeps focus on its tab until a catalog shortcut reopens work.
+empty body. Focus may rest on the tab until a terminal attaches there.
 Venus recovers retryable socket loss and detaches without ending Sessions.
 
 The cursor tail follows pane, column and tab switches and workspace layout

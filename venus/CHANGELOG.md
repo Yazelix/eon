@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C8, VEN-C18 and VEN-C30: Workspace controls keep terminal keyboard focus
+  on pointer activation. F6 and AccessKit Focus enter the controls. Losing the
+  focused control returns focus to the terminal (`eon-6xybm`).
+
 - Consume canonical EONW v50 for workspaces that support
   `eon files reveal` (`eon-b3i7g`).
 - VEN-C7: Hold a drag selection at or below the bottom visible row to

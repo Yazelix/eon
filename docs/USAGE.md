@@ -561,7 +561,12 @@ panes around its launch directory and shows them in one to four side-by-side
 **columns**. Each column stacks its panes and expands one. A **pane** is a view
 of a persistent **terminal**, whose process, PTY and terminal state outlive the
 window. Every column's expanded terminal stays live; keys go to the selected
-one, and clicking another column's terminal selects it.
+one, and clicking another column's terminal selects it. Clicking a tab, pane
+header, header control or heading button leaves keyboard focus on the terminal.
+Press F6 to move keyboard focus to the interface. Assistive technology
+can request that focus directly. Escape or the loss of the focused control
+returns focus to the terminal. If there is no attached terminal, focus may
+rest on the selected tab until a terminal attaches there.
 
 | Shortcut | Action |
 |---|---|
@@ -884,7 +889,8 @@ bounded label. Metadata and names are display text, never command input.
 
 The selected pane has a brighter label and a whole outline in
 its focus colour, at the configured focus border width. Hover fills a rounded
-title pill, and F6 keyboard focus colours the title's span of the header edge mint. Compact-gap
+title pill. Keyboard focus on the title colours its span of the header edge
+mint. Compact-gap
 and frameless titles retain their hover and focus pills. Turning pane frames off leaves labels and
 their interaction feedback. The hints sit bare in the margin below the cards. Hiding the footer returns its row to terminal content.
 
@@ -941,8 +947,8 @@ select another pane and return focus to its title. Action focus uses a transient
 accent pill outline. Zoom first selects the named pane if necessary and then uses
 Alt+Shift+Z's local view behavior; another action or zoom toggle cancels a pending
 selection. Close targets its own pane exactly as Alt+W does, with the same
-final-pane confirmation. After a keyboard Close, focus returns to the selected
-pane's title. Escape cancels that prompt; Enter closes its held target.
+final-pane confirmation. When Close removes the focused button, keyboard focus
+returns to the terminal. Escape cancels the prompt. Enter closes its held target.
 Agents can use `eon pane close PANE`; zoom is window-local view state.
 
 Panel headings default to `"connected"`, a straight rounded top enclosing the
@@ -981,8 +987,8 @@ prompt was open (a pane joined or left it, or the close became a final one),
 Enter stops nothing and the prompt shows again from the new list, starting
 "This Stack changed.". Tab reaches the selected Stack's Close after the
 pane's own buttons; Enter or Space activates it and Up or Down returns to the
-pane title. After a confirmed close, keyboard focus returns to the pane
-title; Esc leaves it where it was. Screen readers list `Close Stack` or
+pane title. After a confirmed close, keyboard focus returns to the terminal.
+Esc leaves focus where it was. Screen readers list `Close Stack` or
 `Close Stack N` as a button on every visible Stack and can focus any of them.
 
 The expanded pane's header uses the continuous band above; collapsed pane
@@ -1169,8 +1175,9 @@ reports, the sidebar says so.
 
 Click a row, or press Enter or Space on it, to jump to that agent: Eon selects
 its tab and shows its pane or popup, and keyboard focus moves to that terminal.
-If a transient popup covers the agent, the jump
-only selects the tab, and focus moves to the tabs. F6 moves keyboard focus from
+If a transient popup covers the agent, the jump only selects the tab and
+keyboard focus goes to the visible terminal in that tab. Clicking a row
+leaves keyboard focus on the terminal. F6 moves keyboard focus from
 the terminal into the sidebar, back to the row it last focused while that row
 remains, then to the tabs and panes. Up and Down move between rows, and Escape
 returns to the terminal. Tab moves from the rows to the heading's Hide button

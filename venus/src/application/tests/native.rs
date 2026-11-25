@@ -1842,30 +1842,38 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                     .is_none()
             );
             check_sidebar_wheel_bursts(app, event_loop, id);
-            let mut empty = app.workspace_model.snapshot().unwrap().clone();
+            let mut attached = app.workspace_model.snapshot().unwrap().clone();
+            let mut empty = attached.clone();
             empty.active_tab = empty.tabs[0].id.clone();
             show_test_popup(&mut empty);
             empty.tabs[0].columns.clear();
             empty.tabs[0].selected_pane = None;
             empty.tabs[0].selected_popup = None;
+            let snapshot_event =
+                |snapshot| WorkspaceEvent::Response(workspace::Response::Snapshot(snapshot));
             app.bar_items.clear();
             app.next_clock = None;
             app.next_reading = None;
             app.next_disk = None;
             app.next_gpu = None;
-            app.handle_workspace(WorkspaceEvent::Response(
-                eon_workspace_protocol::v50::Response::Snapshot(empty),
-            ));
+            app.handle_workspace(snapshot_event(empty.clone()));
             assert!(app.terminal.transport.is_none());
             assert!(app.terminal.model.scene().is_none());
             assert!(app.terminal_size().is_none());
-            assert_eq!(app.workspace_focus, WorkspaceFocus::Tabs);
-            app.set_workspace_focus(WorkspaceFocus::Terminal);
-            assert_eq!(app.workspace_focus, WorkspaceFocus::Tabs);
+            assert_eq!(app.workspace_focus, WorkspaceFocus::Terminal);
             assert!(
                 app.status().is_empty(),
                 "an empty body has no resize failure"
             );
+            app.set_workspace_focus(WorkspaceFocus::Tabs);
+            attached.active_tab.clone_from(&attached.tabs[1].id);
+            app.handle_workspace(snapshot_event(attached.clone()));
+            assert_eq!(app.workspace_focus, WorkspaceFocus::Tabs);
+            attached.active_tab.clone_from(&empty.active_tab);
+            app.handle_workspace(snapshot_event(empty));
+            app.handle_workspace(snapshot_event(attached));
+            assert!(app.workspace_model.active_attachment().is_some());
+            assert_eq!(app.workspace_focus, WorkspaceFocus::Terminal);
             self.checked = true;
             let proxy = self.app.events.clone();
             self.idle_timer = Some(thread::spawn(move || {
@@ -3580,6 +3588,8 @@ fn run_quit_probe(name: &str, check: QuitCheck) {
 #[cfg(target_os = "linux")]
 #[ignore = "requires an isolated native Wayland display and Vulkan renderer"]
 fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
+    use AccessibilityTarget as Target;
+    use WorkspaceFocus as Focus;
     use eon_workspace_protocol::v50 as workspace;
     use std::{fs, os::unix::net::UnixListener, sync::mpsc};
     use winit::{
@@ -3604,7 +3614,56 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
             self.checked = true;
             let app = &mut self.app;
             let device_id = DeviceId::dummy();
-            for focus in [WorkspaceFocus::Terminal, WorkspaceFocus::Sidebar] {
+            let mouse = |app: &mut Application, state| {
+                app.window_event(
+                    event_loop,
+                    id,
+                    WindowEvent::MouseInput {
+                        device_id,
+                        state,
+                        button: MouseButton::Left,
+                    },
+                );
+            };
+            let click = |app: &mut Application, rect: SceneRect| {
+                app.cursor = PhysicalPosition::new(
+                    f64::from(rect.left + rect.width / 2.0),
+                    f64::from(rect.top + rect.height / 2.0),
+                );
+                mouse(app, ElementState::Pressed);
+                mouse(app, ElementState::Released);
+            };
+            let accessible = |app: &mut Application, action, target: AccessibilityTarget| {
+                use accesskit::ActivationHandler;
+                let accessibility = &app.window.as_ref().unwrap().accessibility;
+                let tree = accessibility.activation().request_initial_tree().unwrap();
+                let target_node = tree
+                    .nodes
+                    .into_iter()
+                    .map(|(node, _)| node)
+                    .find(|&node| {
+                        accessibility
+                            .action_target(node, accesskit::Action::Focus)
+                            .as_ref()
+                            == Some(&target)
+                    })
+                    .unwrap();
+                app.user_event(
+                    event_loop,
+                    UserEvent::AccessKit(AccessKitEvent {
+                        window_id: id,
+                        window_event: AccessKitWindowEvent::ActionRequested(
+                            accesskit::ActionRequest {
+                                action,
+                                target_tree: tree.tree_id,
+                                target_node,
+                                data: None,
+                            },
+                        ),
+                    }),
+                );
+            };
+            for focus in [Focus::Terminal, Focus::Sidebar] {
                 app.set_workspace_focus(focus);
                 for focused in [false, true] {
                     app.window_event(event_loop, id, WindowEvent::Focused(focused));
@@ -3627,7 +3686,124 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                     }
                 }
             }
-            app.set_workspace_focus(WorkspaceFocus::Terminal);
+            app.set_workspace_focus(Focus::Terminal);
+            app.window_event(
+                event_loop,
+                id,
+                WindowEvent::Resized(PhysicalSize::new(1280, 800)),
+            );
+            app.render();
+            let scene = app.workspace_scene().unwrap();
+            let next_action = || self.actions.recv_timeout(Duration::from_secs(2)).unwrap();
+            let focus_id = |id: &str| WorkspaceAction::Workspace(CommonAction::FocusId(id.into()));
+            click(app, scene.tabs[0].rect);
+            assert_eq!(next_action(), focus_id("t1"));
+            assert_eq!(app.workspace_focus, Focus::Terminal);
+            app.set_workspace_focus(Focus::Sidebar);
+            app.render();
+            let stack = HeadingAction::CloseStack(0);
+            click(app, scene.heading_action(stack).unwrap());
+            assert_eq!(
+                next_action(),
+                heading_request(&self.snapshot, stack).unwrap()
+            );
+            assert!(app.pending_close.is_some());
+            assert_eq!(app.workspace_focus, Focus::Terminal);
+            let shortcuts = WorkspaceHeaderControl::Shortcuts;
+            let window_menu = WorkspaceHeaderControl::WindowMenu;
+            click(app, scene.window_menu.unwrap().rect);
+            assert!(app.window_menu.open);
+            assert!(press_shortcut(app, event_loop, KeyCode::Escape));
+            release_shortcut(app, event_loop, KeyCode::Escape);
+            assert_eq!(app.workspace_focus, Focus::Terminal);
+            for key in [KeyCode::F6, KeyCode::F6, KeyCode::Tab] {
+                assert!(press_shortcut(app, event_loop, key));
+                release_shortcut(app, event_loop, key);
+            }
+            assert_eq!(app.workspace_focus, Focus::Header(window_menu));
+            for key in [KeyCode::Enter, KeyCode::Escape] {
+                assert!(press_shortcut(app, event_loop, key));
+                release_shortcut(app, event_loop, key);
+            }
+            assert!(!app.window_menu.open);
+            assert_eq!(app.workspace_focus, Focus::Header(window_menu));
+            app.render();
+            for (target, focus, selected) in [
+                (Target::Tab("t1".into()), Focus::Tabs, "t1"),
+                (Target::Pane("p1".into()), Focus::Panes, "p1"),
+            ] {
+                for (action, expected) in [
+                    (accesskit::Action::Focus, focus),
+                    (accesskit::Action::Click, Focus::Terminal),
+                ] {
+                    accessible(app, action, target.clone());
+                    assert_eq!(next_action(), focus_id(selected));
+                    assert_eq!(app.workspace_focus, expected);
+                }
+            }
+            for (target, focus) in [
+                (
+                    Target::HeaderControl {
+                        control: shortcuts,
+                        activate: false,
+                    },
+                    Focus::Header(shortcuts),
+                ),
+                (
+                    Target::HeadingAction {
+                        action: stack,
+                        activate: false,
+                    },
+                    Focus::HeadingAction(stack),
+                ),
+                (
+                    Target::SidebarRow {
+                        target: "p1".into(),
+                        activate: false,
+                    },
+                    Focus::Sidebar,
+                ),
+                (
+                    Target::PaneAction {
+                        pane: "p1".into(),
+                        action: PaneHeaderAction::Zoom,
+                        activate: false,
+                    },
+                    Focus::PaneAction(PaneHeaderAction::Zoom),
+                ),
+            ] {
+                accessible(app, accesskit::Action::Focus, target.clone());
+                assert_eq!(app.workspace_focus, focus);
+                accessible(app, accesskit::Action::Click, target);
+                assert_eq!(app.workspace_focus, Focus::Terminal);
+                match focus {
+                    Focus::Header(_) => {
+                        assert!(app.shortcut_viewer.open);
+                        app.set_shortcut_viewer(false);
+                    }
+                    Focus::HeadingAction(_) => assert_eq!(
+                        next_action(),
+                        heading_request(&self.snapshot, stack).unwrap()
+                    ),
+                    Focus::Sidebar => assert_eq!(
+                        next_action(),
+                        WorkspaceAction::FocusAttention {
+                            tab: "t1".into(),
+                            target: "p1".into()
+                        }
+                    ),
+                    Focus::PaneAction(_) => {
+                        assert!(app.zoomed());
+                        app.toggle_zoom();
+                    }
+                    _ => unreachable!(),
+                }
+                app.render();
+            }
+            app.set_workspace_focus(Focus::HeadingAction(stack));
+            app.toggle_zoom();
+            assert_eq!(app.workspace_focus, Focus::Terminal);
+            app.toggle_zoom();
             app.render();
             let (button, _) = app
                 .workspace_scene()
@@ -3655,10 +3831,8 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 },
             );
             assert!(app.header_press.is_none());
-            assert_eq!(
-                self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
-                WorkspaceAction::Workspace(CommonAction::FocusId("p2".into()))
-            );
+            assert_eq!(app.workspace_focus, Focus::Terminal);
+            assert_eq!(next_action(), focus_id("p2"));
             let mut selected = self.snapshot.clone();
             selected.tabs[0].selected_pane = Some("p2".into());
             selected.tabs[0].columns[0].expanded = "p2".into();
@@ -3666,18 +3840,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 selected,
             )));
             app.render();
-            let click = |app: &mut Application, state| {
-                app.window_event(
-                    event_loop,
-                    id,
-                    WindowEvent::MouseInput {
-                        device_id,
-                        state,
-                        button: MouseButton::Left,
-                    },
-                );
-            };
-            click(app, ElementState::Released);
+            mouse(app, ElementState::Released);
             assert!(
                 self.actions.try_recv().is_err(),
                 "the first release cannot close"
@@ -3687,14 +3850,12 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 .unwrap()
                 .pane_action("p2", PaneHeaderAction::Close)
                 .unwrap();
-            app.cursor = PhysicalPosition::new(
-                f64::from(button.left + button.width / 2.0),
-                f64::from(button.top + button.height / 2.0),
-            );
-            click(app, ElementState::Pressed);
-            click(app, ElementState::Released);
+            app.set_workspace_focus(Focus::Sidebar);
+            app.render();
+            click(app, button);
+            assert_eq!(app.workspace_focus, Focus::Terminal);
             assert_eq!(
-                self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
+                next_action(),
                 WorkspaceAction::ClosePane { pane: "p2".into() }
             );
             // The real transport queues FocusId; replies are delivered explicitly in wire order.
@@ -3702,17 +3863,22 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 app.set_shortcut_viewer(false);
                 app.input.set_modifiers(ModifiersState::empty());
                 app.zoom = None;
-                app.set_workspace_focus(WorkspaceFocus::Terminal);
+                app.set_workspace_focus(Focus::Terminal);
                 app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                     self.snapshot.clone(),
                 )));
                 app.render();
                 // AccessKit can still activate Zoom on a pane whose mouse buttons are hidden.
-                app.pane_button("p2", PaneHeaderAction::Zoom, true);
-                assert_eq!(
-                    self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
-                    WorkspaceAction::Workspace(CommonAction::FocusId("p2".into()))
+                accessible(
+                    app,
+                    accesskit::Action::Click,
+                    Target::PaneAction {
+                        pane: "p2".into(),
+                        action: PaneHeaderAction::Zoom,
+                        activate: false,
+                    },
                 );
+                assert_eq!(next_action(), focus_id("p2"));
                 let ticket = app
                     .pending_pane
                     .as_ref()
@@ -3720,7 +3886,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                     .ticket;
                 assert!(!app.zoomed());
                 match cancel {
-                    1 => app.set_workspace_focus(WorkspaceFocus::Tabs),
+                    1 => app.set_workspace_focus(Focus::Tabs),
                     2 => {
                         app.input.set_modifiers(ModifiersState::ALT);
                         assert!(press_shortcut(app, event_loop, KeyCode::Slash));
@@ -3764,37 +3930,51 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 if cancel == 2 {
                     assert!(app.shortcut_viewer.open);
                 }
+                if cancel == 0 {
+                    assert_eq!(app.workspace_focus, Focus::Terminal);
+                }
             }
             app.set_shortcut_viewer(false);
             app.input.set_modifiers(ModifiersState::empty());
             app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                 self.snapshot.clone(),
             )));
-            app.set_workspace_focus(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+            app.set_workspace_focus(Focus::PaneAction(PaneHeaderAction::Close));
             app.render();
             assert!(press_shortcut(app, event_loop, KeyCode::Enter));
             release_shortcut(app, event_loop, KeyCode::Enter);
             assert_eq!(
-                self.actions.recv_timeout(Duration::from_secs(2)).unwrap(),
+                next_action(),
                 WorkspaceAction::ClosePane { pane: "p1".into() }
             );
             assert_eq!(
                 app.workspace_focus,
-                WorkspaceFocus::Panes,
+                Focus::Terminal,
                 "Close must not leave Enter aimed at the next pane's Close"
             );
             let mut closed = self.snapshot.clone();
             closed.tabs[0].columns[0].panes.remove(0);
             closed.tabs[0].columns[0].expanded = "p2".into();
             closed.tabs[0].selected_pane = Some("p2".into());
+            let close = Focus::PaneAction(PaneHeaderAction::Close);
+            app.set_workspace_focus(close);
             app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                 closed,
             )));
-            assert!(press_shortcut(app, event_loop, KeyCode::Enter));
-            assert_eq!(app.workspace_focus, WorkspaceFocus::Panes);
+            assert!(!press_shortcut(app, event_loop, KeyCode::Enter));
+            release_shortcut(app, event_loop, KeyCode::Enter);
+            assert_eq!(app.workspace_focus, Focus::Terminal);
+            app.set_workspace_focus(close);
+            app.render();
+            for key in [KeyCode::Enter, KeyCode::Escape] {
+                assert!(press_shortcut(app, event_loop, key));
+                release_shortcut(app, event_loop, key);
+            }
+            assert!(app.close_prompt.is_none());
+            assert_eq!(app.workspace_focus, close);
 
             let mut stacked = self.snapshot.clone();
-            for index in 3..=30 {
+            for index in 3..=50 {
                 let mut pane = stacked.tabs[0].columns[0].panes[0].clone();
                 pane.id = format!("p{index}");
                 pane.session = format!("s{index}");
@@ -3805,7 +3985,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
             app.handle_workspace(WorkspaceEvent::Response(workspace::Response::Snapshot(
                 stacked,
             )));
-            app.set_workspace_focus(WorkspaceFocus::PaneAction(PaneHeaderAction::Close));
+            app.set_workspace_focus(Focus::PaneAction(PaneHeaderAction::Close));
             app.render();
             let metrics = app.window.as_ref().unwrap().renderer.metrics();
             app.scroll_workspace(MouseScrollDelta::LineDelta(0.0, -1.0), false, metrics);
@@ -3818,8 +3998,8 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
             );
             assert_eq!(
                 app.workspace_focus,
-                WorkspaceFocus::Panes,
-                "scrolling a focused button away must return focus to its title"
+                Focus::Terminal,
+                "scrolling a focused button away must return focus to the terminal"
             );
             event_loop.exit();
         }
@@ -3829,14 +4009,18 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
     let socket = root.join("workspace.sock");
     let listener = UnixListener::bind(&socket).unwrap();
     let mut snapshot = super::chrome::quit_snapshot();
-    snapshot.running = None;
+    let running = &mut snapshot.running.as_mut().unwrap().this;
+    running.generation.clone_from(&snapshot.generation);
+    running.name = Some("Focus proof".into());
+    running.started_at = Some(1);
+    running.live_terminals = Some(2);
     snapshot.workspaces = vec![workspace::WorkspaceInfo {
         id: "s1".into(),
         persistent_id: Some("s1".into()),
         registration_error: None,
         name: None,
         tab_count: 1,
-        attention: None,
+        attention: Some(workspace::AttentionState::Unavailable),
         recency: 0,
     }];
     snapshot.tabs = vec![Tab {
@@ -3861,13 +4045,17 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 .collect(),
         }],
         popups: vec![],
-        attention_rollup: None,
+        attention_rollup: Some(workspace::AttentionState::Unavailable),
     }];
+    snapshot.tabs[0].columns[0].panes[0].attention = Some(workspace::Attention {
+        state: workspace::AttentionState::Unavailable,
+        record: None,
+    });
     let response =
         workspace::encode_response(&workspace::Response::Snapshot(snapshot.clone())).unwrap();
     let (sender, actions) = mpsc::channel();
     let server = thread::spawn(move || {
-        for _ in 0..8 {
+        for _ in 0..16 {
             loop {
                 let (mut stream, _) = listener.accept().unwrap();
                 let mut header = [0; workspace::HEADER_BYTES];
@@ -3897,6 +4085,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
     let arguments =
         launch::launch_arguments([root.join("unused-orbit.sock").into_os_string()], None).unwrap();
     let mut app = Application::new(arguments, EventSink::Winit(event_loop.create_proxy()));
+    app.eon_icon = Some(vec![0; 16 * 16 * 4].into());
     app.initial_scale_pending = false;
     app.workspace_model
         .apply(workspace::Response::Snapshot(snapshot.clone()));

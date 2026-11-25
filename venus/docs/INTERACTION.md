@@ -133,22 +133,24 @@ with ` · zoom` as the missing-font fallback. Its accessible name keeps `, zoome
 
 Eon decides which actions are available and owns popup lifetime and directory
 changes. A repeated press does not duplicate a structural action. Switching
-tabs retains each tab's popup selection. F6 cycles terminal, agent sidebar,
-tabs, and visible panes, skipping the sidebar while it is hidden or has no
-rows and returning to the row it last focused while that row remains. Up/Down
-traverse sidebar rows, and Enter or Space sends `FocusAttention` for the
-focused one, as a click does; keyboard focus stays on the row until a snapshot
-shows the exact target focused, then moves to the terminal, or to the tabs
-when the jump's own accepted answer only selected the target's tab. A rejected
-jump leaves focus on the row beside its notice. Keyboard focus returns to the
-terminal when the sidebar closes or hides for width, or loses the focused
-row. Arrow keys traverse focused tabs or panes, and Left/Right with tabs
-focused walks columns before tabs like Alt+H/L; Tab and Shift+Tab traverse
-header controls, the session label first while it opens the picker; Enter or
-Space activates one. Focus on the label moves to the tabs when it hides or
-turns inert. Escape returns chrome focus to
-the terminal. With terminal focus, Escape, Ctrl+C, Tab, and Enter reach Orbit as
-ordinary input.
+tabs retains each tab's popup selection. Pressing a tab, pane header, header
+control or heading action with the pointer leaves keyboard focus on the
+terminal. Workspace interface focus begins with F6 or an assistive-technology focus
+request. F6 cycles terminal, agent sidebar, tabs, and visible panes, skipping
+the sidebar while it is hidden or has no rows and returning to the row it
+last focused while that row remains. Up/Down traverse sidebar rows. Enter,
+Space or a click sends `FocusAttention` for the row. A click leaves focus on
+the terminal. With keyboard activation, focus stays on the row during the
+jump and on rejection while the row remains. On success, focus moves to the
+target terminal or the terminal still visible if a popup covers the target.
+Arrow keys traverse focused tabs or panes, and Left/Right with tabs focused
+walks columns before tabs like Alt+H/L. Tab and Shift+Tab traverse header
+controls, starting with the session label while it opens the picker. Enter
+or Space activates one. Escape and the disappearance of the focused interface
+item return focus to the terminal. Focus may rest on a tab with no attached
+terminal and returns to the terminal when one attaches in that same tab.
+With terminal focus, Escape, Ctrl+C, Tab and Enter reach Orbit as ordinary
+input.
 
 Shortcuts shows fixed bindings and enabled popup entries. Wheel, arrow keys,
 Page Up/Down, Home, and End scroll it. Closing with Escape, Alt+/ or a click

@@ -779,6 +779,22 @@ fn stack_close_first_asks_runtime_with_no_consent() {
     let only = stack_snapshot(&[&["p1"]]);
     assert_eq!(heading_request(&only, CloseStack(0)), Some(ask("p1")));
 
+    let replacement = stack_snapshot(&[&["p3"]]);
+    for focus in [
+        WorkspaceFocus::Panes,
+        WorkspaceFocus::PaneAction(PaneHeaderAction::Zoom),
+        WorkspaceFocus::HeadingAction(CloseStack(0)),
+    ] {
+        assert!(
+            !workspace_focus_lost(focus, &snapshot, &snapshot),
+            "{focus:?}"
+        );
+        assert!(
+            workspace_focus_lost(focus, &snapshot, &replacement),
+            "{focus:?}"
+        );
+    }
+
     // A held press closes nothing once that column's expanded pane changed.
     let pressed = ask("p2");
     assert_eq!(
@@ -792,6 +808,60 @@ fn stack_close_first_asks_runtime_with_no_consent() {
     // No Stack tab shows under a popup, so its button sends nothing there.
     show_test_popup(&mut snapshot);
     assert_eq!(heading_request(&snapshot, CloseStack(0)), None);
+}
+
+#[test]
+fn tab_focus_tracks_traversal_attachment_and_removal() {
+    let one = stack_snapshot(&[&["p1"]]);
+    let mut two = one.clone();
+    let mut other = stack_snapshot(&[&["p2"]]).tabs.remove(0);
+    other.id = "t2".into();
+    two.tabs.push(other);
+
+    let mut empty = two.clone();
+    empty.tabs[0].columns.clear();
+    empty.tabs[0].selected_pane = None;
+    let mut traversal = empty.clone();
+    traversal.active_tab = "t2".into();
+    let mut remaining = traversal.clone();
+    remaining.tabs.remove(0);
+
+    let focus = WorkspaceFocus::Tabs;
+    assert!(!workspace_focus_lost(focus, &empty, &traversal));
+    assert!(workspace_focus_lost(focus, &empty, &two));
+    assert!(!workspace_focus_lost(focus, &two, &one));
+    assert!(workspace_focus_lost(focus, &two, &remaining));
+    assert!(workspace_focus_lost(
+        WorkspaceFocus::Panes,
+        &two,
+        &traversal
+    ));
+}
+
+#[test]
+fn workspace_switch_retires_item_focus_even_when_ids_match() {
+    use WorkspaceFocus::*;
+    let mut before = stack_snapshot(&[&["p1"]]);
+    show_test_popup(&mut before);
+    let mut after = before.clone();
+    after.workspace = "s2".into();
+    for focus in [
+        Tabs,
+        Panes,
+        PaneAction(PaneHeaderAction::Close),
+        Sidebar,
+        HeadingAction(crate::HeadingAction::CloseStack(0)),
+        HeadingAction(crate::HeadingAction::HidePopup),
+    ] {
+        assert!(workspace_focus_lost(focus, &before, &after), "{focus:?}");
+    }
+    for focus in [
+        Terminal,
+        Header(WorkspaceHeaderControl::Shortcuts),
+        HeadingAction(crate::HeadingAction::HideSidebar),
+    ] {
+        assert!(!workspace_focus_lost(focus, &before, &after), "{focus:?}");
+    }
 }
 
 #[test]
@@ -818,10 +888,13 @@ fn held_popup_hide_never_dismisses_a_popup_shown_in_its_place() {
 
     // A shortcut shows another popup while the button is held: the release sends nothing, so
     // the replacement, which a dismissal could stop, stays.
+    let original = snapshot.clone();
     let mut replacement = snapshot.tabs[0].popups[0].clone();
     replacement.id = "u2".into();
     snapshot.tabs[0].popups.push(replacement);
     snapshot.tabs[0].selected_popup = Some("u2".into());
+    let focus = WorkspaceFocus::HeadingAction(hide);
+    assert!(workspace_focus_lost(focus, &original, &snapshot));
     assert_eq!(held_heading_request(&snapshot, hide, &pressed), None);
     // Nor does it once no popup shows.
     snapshot.tabs[0].selected_popup = None;
@@ -966,7 +1039,7 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
     assert_eq!(step_sidebar_row(rows, None, true), None);
 
     // A jump focuses the terminal on any snapshot that focuses its exact target; only its
-    // own answer moves focus to the tab strip, when that selected just the target's tab.
+    // own answer gives focus to the visible terminal when it selected just the target's tab.
     let jump = AttentionJump {
         tab: "t2".into(),
         target: "p3".into(),
@@ -974,14 +1047,11 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
     };
     assert_eq!(focused_terminal(&snapshot), Some("p1"));
     for answer in [false, true] {
-        assert_eq!(jump_focus(&jump, &snapshot, answer), None);
+        assert!(!attention_jump_reached(&jump, &snapshot, answer));
     }
     snapshot.active_tab = "t2".into();
     for answer in [false, true] {
-        assert_eq!(
-            jump_focus(&jump, &snapshot, answer),
-            Some(WorkspaceFocus::Terminal)
-        );
+        assert!(attention_jump_reached(&jump, &snapshot, answer));
     }
     show_test_popup(&mut snapshot);
     snapshot.tabs[1].popups.push(Popup {
@@ -993,11 +1063,8 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
     });
     snapshot.tabs[1].selected_popup = Some("u1".into());
     assert_eq!(focused_terminal(&snapshot), Some("u1"));
-    assert_eq!(jump_focus(&jump, &snapshot, false), None);
-    assert_eq!(
-        jump_focus(&jump, &snapshot, true),
-        Some(WorkspaceFocus::Tabs)
-    );
+    assert!(!attention_jump_reached(&jump, &snapshot, false));
+    assert!(attention_jump_reached(&jump, &snapshot, true));
 }
 
 #[test]
@@ -2078,40 +2145,6 @@ fn pane_button_focus_wraps_and_skips_disabled_zoom() {
     let cycle = |focus, backwards| cycle_pane_focus(focus, backwards, true, true, Some(2));
     assert_eq!(cycle(stack(0), false), PaneAction(Zoom));
     assert_eq!(cycle(stack(0), true), stack(2));
-}
-
-#[test]
-fn stack_close_focus_stays_on_a_shown_button_and_returns_to_the_titles() {
-    use HeadingAction::{CloseStack, HidePopup, HideSidebar};
-    use WorkspaceFocus::{Panes, Terminal};
-    let heading = WorkspaceFocus::HeadingAction;
-
-    // A button that still shows keeps focus, whichever column is selected: the rule takes no
-    // selected column, so an unselected Stack's Close is never evicted.
-    for action in [CloseStack(0), CloseStack(3), HidePopup, HideSidebar] {
-        assert_eq!(retained_heading_focus(action, true), heading(action));
-    }
-    // One that no longer shows gives focus up: a Stack's to the pane titles, a Hide
-    // button's to the terminal.
-    assert_eq!(retained_heading_focus(CloseStack(1), false), Panes);
-    assert_eq!(retained_heading_focus(HidePopup, false), Terminal);
-    assert_eq!(retained_heading_focus(HideSidebar, false), Terminal);
-
-    // Once a consent is sent, focus never stays on a Stack's Close: the Stack that takes the
-    // closed one's position is another Stack.
-    assert_eq!(focus_after_stack_close(heading(CloseStack(0))), Panes);
-    assert_eq!(focus_after_stack_close(heading(CloseStack(2))), Panes);
-    // A close confirmed with focus elsewhere, as after a pointer click, moves nothing.
-    for focus in [
-        Terminal,
-        Panes,
-        WorkspaceFocus::PaneAction(PaneHeaderAction::Close),
-        WorkspaceFocus::Tabs,
-        WorkspaceFocus::Sidebar,
-        heading(HideSidebar),
-    ] {
-        assert_eq!(focus_after_stack_close(focus), focus);
-    }
 }
 
 #[test]

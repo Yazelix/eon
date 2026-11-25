@@ -879,9 +879,9 @@ re-proved when that platform or feature is next touched.
     bounds. In the Panes region Tab and Shift+Tab move among the selected pane's
     title, Zoom and Close, then the selected column's Stack Close while it
     shows; Enter or Space activates the focused button; Up/Down return focus to
-    the title. After keyboard Close, focus returns to the selected pane's title.
-    After an accepted Enter in the Stack close prompt, focus on a Stack's Close
-    returns to the selected pane's title; Escape leaves focus where it was.
+    the title. A pane Close or confirmed Stack Close returns focus to the terminal
+    (VEN-C18). Escape from a close prompt restores its prior focus while that
+    target remains.
     AccessKit lists each visible header's buttons as `Zoom pane <label>`
     (`Restore columns` while zoomed) and `Close pane <label>`, and each visible
     Stack's button as `Close Stack` or `Close Stack N`. Its Focus action rests
@@ -1658,16 +1658,22 @@ re-proved when that platform or feature is next touched.
   pane stack while tabs remain visible and actionable. Each inactive tab's
   selection and hidden popup instances remain Eon-owned. A popup-only tab may
   have an empty body: no placeholder pane, attachment, resize failure, or alert.
-  Its selected tab remains the only keyboard and accessibility focus target;
-  reopening work restores terminal focus.
+  While there is no attached terminal, focus may rest on the selected tab.
+  A terminal attaching in that tab returns keyboard focus to the terminal.
   A catalog shortcut names the exact tab, entry and current instance, with
   Toggle intent from terminal focus and Focus intent from workspace chrome.
   Structural repeats remain consumed without sending duplicate actions.
   Tab traversal and structural actions use the existing semantic workspace
-  path; Eon decides their admission. While unlocked, F6 cycles visible
-  focus regions (VEN-C8). Escape returns chrome focus to the terminal. While the terminal is focused,
-  Escape, Ctrl+C, Tab and Enter reach its application through ordinary Orbit
-  input. Popup entry labels also name the accessible tab panel.
+  path; Eon decides their admission. A pointer press on a tab, pane header,
+  header control or heading action leaves keyboard focus on the terminal.
+  The control still performs its action on its usual press or release.
+  Workspace interface focus begins with F6 while unlocked (VEN-C30), or with
+  an assistive-technology focus request. Escape and the disappearance of
+  the focused interface item return focus to the terminal. Dialogs capture
+  input while open. Escape from a close prompt restores the prior focus if
+  its target remains. With terminal focus, Escape, Ctrl+C, Tab and Enter
+  reach Orbit as ordinary input. Popup
+  entry labels also name the accessible tab panel.
 - **v7 expansion:** Venus accepts multiple pending tabs and their independent
   Project popup endpoints from one canonical snapshot. It attaches only the
   active tab's selected picker and preserves the others across tab switches.
@@ -2664,9 +2670,13 @@ re-proved when that platform or feature is next touched.
       scrolled and clipped row geometry. A scroll thumb shows only while rows
       overflow; its size and position reflect the viewport and offset, and it
       disappears when all rows fit.
-    - Activating a row sends `FocusAttention`, and keyboard focus moves to the
-      target terminal, or stays on the tab when the covered-target rule only
-      selects the tab. It never stops a terminal.
+    - Activating a row sends `FocusAttention`. A pointer activation leaves
+      keyboard focus on the terminal. A focused row activated by keyboard
+      keeps focus while the jump is pending and on rejection while the row
+      remains. On success, keyboard focus moves to the target terminal, or
+      the visible terminal of the selected tab when a popup still covers
+      the target. VEN-C18 governs the fallback when no terminal attaches.
+      A row activation never stops a terminal.
     - While unlocked (VEN-C8), F6 cycles Terminal → Sidebar → Tabs → Panes,
       and skips Sidebar while it
       is not visible or has no rows, since the empty state holds no focus
@@ -2675,12 +2685,9 @@ re-proved when that platform or feature is next touched.
       `venus/src/application/shortcuts.rs`.
     - Arrows traverse rows, Enter activates and Esc returns focus to the
       terminal.
-    - **Focus rule.** the admitted Alt+Shift+H never moves keyboard focus into the sidebar;
-      focus stays on the terminal. Keyboard focus returns to the terminal in
-      three cases:
-      - the sidebar closes while it holds focus;
-      - it is hidden for width while it holds focus;
-      - the focused row's target is removed.
+    - **Focus rule.** Alt+Shift+H never takes focus into the sidebar. If
+      the focused row is removed, or the sidebar closes or hides for width
+      while it holds focus, focus returns to the terminal (VEN-C18).
     - When admitted (VEN-C8, VEN-C20), Alt+G and Alt+Shift+G send
       `NextAttention` and
       `PreviousAttention`, whether the sidebar is visible or not.
