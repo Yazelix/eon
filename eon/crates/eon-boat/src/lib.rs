@@ -31,6 +31,7 @@ use std::time::{Duration, Instant};
 /// Boat's noun in private-state error tokens (`unsafe-boat-state-directory`, ...).
 pub(crate) const NOUN: &str = "boat";
 const CONTROL: u64 = 30;
+const CREATE_UNSUBMITTED: &str = "boat-create-not-submitted";
 /// Sizes the run deadline (`timeout_seconds - CLEANUP`) and the `timeout` envelope.
 const CLEANUP: u64 = 60;
 /// The stop step of retirement: the stop request, then a wait of `STOP_WAIT` for it.
@@ -129,6 +130,11 @@ impl Client {
         !self.cleanup && Signals::caught() != 0
     }
 
+    fn can_launch_create(&self, retry: bool, now: Instant, signal: i32) -> bool {
+        let needed = Duration::from_secs(if retry { CONTROL } else { 0 });
+        (self.cleanup || signal == 0) && self.deadline > now + needed
+    }
+
     fn command(&self, json: bool, args: &[&str]) -> Command {
         let mut cmd = Command::new("boat");
         cmd.env_remove("SSH_AUTH_SOCK");
@@ -154,7 +160,8 @@ impl Client {
         args: &[&str],
         output: Output<'_>,
     ) -> Result<(u8, Vec<u8>), String> {
-        if Instant::now() >= self.deadline {
+        let creating = args.first() == Some(&"new");
+        if !creating && Instant::now() >= self.deadline {
             return Err("boat-client-timeout".into());
         }
         let logs = match &output {
@@ -169,10 +176,15 @@ impl Client {
             Output::Log(_, guard) | Output::Attach(_, _, guard, _) => Some(*guard),
         };
         let attach = matches!(output, Output::Attach(..));
-        let mut child = self
-            .command(json || attach, args)
-            .spawn()
-            .map_err(|_| "boat-unreachable")?;
+        let mut command = self.command(json || attach, args);
+        let mut child = if creating {
+            spawn_create(
+                || command.spawn(),
+                |retry| self.can_launch_create(retry, Instant::now(), Signals::caught()),
+            )?
+        } else {
+            command.spawn().map_err(|_| "boat-unreachable")?
+        };
         let stdout = child.stdout.take().unwrap();
         let stderr = child.stderr.take().unwrap();
         std::thread::scope(|scope| {
@@ -255,6 +267,22 @@ impl Client {
     }
 }
 
+fn spawn_create<T>(
+    mut spawn: impl FnMut() -> io::Result<T>,
+    permitted: impl Fn(bool) -> bool,
+) -> Result<T, &'static str> {
+    // A spawn error means Boat never ran. Once it runs, its result cannot authorize a replay.
+    for retry in [false, true] {
+        if !permitted(retry) {
+            break;
+        }
+        if let Ok(child) = spawn() {
+            return Ok(child);
+        }
+    }
+    Err(CREATE_UNSUBMITTED)
+}
+
 fn status_ok(code: u8) -> Result<(), String> {
     if code == 0 {
         Ok(())
@@ -295,16 +323,29 @@ fn raw(mut input: impl Read, log: Option<(File, bool)>, guard: Option<&attach::G
 }
 
 fn decode(code: u8, bytes: &[u8], operation: &str) -> Result<Value, String> {
+    let creating = operation == "new";
+    let unsupported = |reason| {
+        if creating {
+            reason
+        } else {
+            "unsupported-provider-output"
+        }
+    };
     let values = serde_json::Deserializer::from_slice(bytes)
         .into_iter::<Value>()
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|_| "unsupported-provider-output")?;
-    if code != 0
-        || values.iter().any(|value| {
-            value["ok"] == false || value["success"] == false || value["event"] == "error"
-        })
-    {
-        return Err("boat-command-failed".into());
+        .map_err(|_| unsupported("boat-create-invalid-json"))?;
+    let error_frame = values.iter().any(|value| {
+        value["ok"] == false || value["success"] == false || value["event"] == "error"
+    });
+    if code != 0 || error_frame {
+        return Err(if !creating {
+            "boat-command-failed".into()
+        } else if error_frame {
+            "boat-create-error-frame".into()
+        } else {
+            format!("boat-create-exit-{code}")
+        });
     }
     let value = if matches!(operation, "new" | "info") {
         values
@@ -314,7 +355,7 @@ fn decode(code: u8, bytes: &[u8], operation: &str) -> Result<Value, String> {
     } else {
         values.into_iter().last()
     };
-    value.ok_or_else(|| "unsupported-provider-output".into())
+    value.ok_or_else(|| unsupported("boat-create-missing-id").into())
 }
 
 fn sandbox(value: &Value) -> &Value {
@@ -453,59 +494,107 @@ fn check_owned_id(root: &Path, slot: u8, id: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
-    let Some(mut old) = lease::record(&lease.root, lease.slot)? else {
-        return Ok(());
+fn created_vm(list: &Value, run_id: &str) -> Result<Option<String>, String> {
+    if list.get("pageInfo").is_some() && list["pageInfo"]["hasMore"] != false {
+        return Err("unsupported-provider-output".into());
+    }
+    let rows = list["sandboxes"]
+        .as_array()
+        .ok_or("unsupported-provider-output")?;
+    let expected = format!("eon-build-{run_id}");
+    let mut matches = rows.iter().filter(|row| row["name"] == expected);
+    let Some(row) = matches.next() else {
+        return Ok(None);
     };
-    if old.phase == "stopped" {
-        return Ok(());
-    }
-    if old.vm_id.is_none() {
-        let list = client.json(&["list", "--all"])?;
-        let vms = list["sandboxes"]
-            .as_array()
-            .ok_or("unsupported-provider-output")?;
-        let matched: Vec<_> = vms
-            .iter()
-            .filter(|vm| vm["name"].as_str() == Some(&format!("eon-build-{}", old.run_id)))
-            .collect();
-        if matched.is_empty()
-            && old
-                .expires_at
-                .is_some_and(|expires| rota::slots::now_ns() / rota::slots::SECOND > expires)
-        {
-            old.phase = "stopped".into();
-            old.reason = Some("expired-create-absent".into());
-            return lease.save(&old);
-        }
-        if matched.len() != 1 {
-            return Err("remote-create-unknown".into());
-        }
-        let id = matched[0]["id"]
-            .as_str()
-            .filter(|id| safe_id(id))
-            .ok_or("remote-create-unknown")?;
-        check_owned_id(&lease.root, lease.slot, id)?;
-        old.vm_id = Some(id.to_owned());
-        lease.save(&old)?;
-    }
-    let id = old
-        .vm_id
-        .as_deref()
+    let id = row["id"]
+        .as_str()
         .filter(|id| safe_id(id))
         .ok_or("remote-create-unknown")?;
-    check_owned_id(&lease.root, lease.slot, id)?;
-    // Startup reconciliation runs under the run client and stays cancelable.
-    let (usage, retired) = retire(client.machine, !client.cleanup, (id, old.started), None);
+    if matches.next().is_some() || rows.iter().filter(|row| row["id"] == id).nth(1).is_some() {
+        return Err("remote-create-unknown".into());
+    }
+    Ok(Some(id.to_owned()))
+}
+
+fn recover(client: &Client, lease: &Lease) -> Result<(), String> {
+    if let Some(mut old) = lease::record(&lease.root, lease.slot)?
+        && old.phase != "stopped"
+    {
+        recover_record(client, lease, &mut old, None)?;
+    }
+    Ok(())
+}
+
+fn recover_record(
+    client: &Client,
+    lease: &Lease,
+    old: &mut Record,
+    evidence: Option<&attach::Evidence>,
+) -> Result<(), String> {
+    let id = match &old.vm_id {
+        Some(id) if safe_id(id) => id.clone(),
+        Some(_) => return Err("remote-create-unknown".into()),
+        None => {
+            let find = || created_vm(&client.json(&["list", "--all"])?, &old.run_id);
+            let mut found = find()?;
+            if found.is_none()
+                && let Some(log) = evidence
+            {
+                log.control("create inventory empty, rechecking");
+                found = find()?;
+            }
+            match found {
+                Some(id) => id,
+                None if old
+                    .expires_at
+                    .is_some_and(|end| rota::slots::now_ns() / rota::slots::SECOND > end) =>
+                {
+                    old.phase = "stopped".into();
+                    old.reason = Some(match old.reason.take() {
+                        Some(reason) => format!("{reason}; expired-create-absent"),
+                        None => "expired-create-absent".into(),
+                    });
+                    return lease.save(old);
+                }
+                None => return Err("remote-create-unknown".into()),
+            }
+        }
+    };
+    check_owned_id(&lease.root, lease.slot, &id)?;
+    let published = if old.vm_id.is_none() {
+        old.vm_id = Some(id.clone());
+        lease.save(old)
+    } else {
+        Ok(())
+    };
+    // Current-run recovery still retires a proved orphan under admission if publication fails.
+    if evidence.is_none() {
+        published.clone()?;
+    }
+    let target = (id.as_str(), old.started);
+    let (usage, retired) = retire(client.machine, !client.cleanup, target, evidence);
     if usage.is_some() {
         old.usage = usage;
     }
-    retired?;
-    old.phase = "stopped".into();
-    old.reason
-        .get_or_insert_with(|| "recovered-after-wrapper-loss".into());
+    if let Err(cleanup) = &retired {
+        if evidence.is_none() {
+            return retired;
+        }
+        old.phase = "cleanup-unknown".into();
+        old.reason = Some(match old.reason.take() {
+            Some(reason) => format!("{reason}; cleanup {cleanup}"),
+            None => cleanup.clone(),
+        });
+    } else {
+        old.phase = "stopped".into();
+        old.reason
+            .get_or_insert_with(|| "recovered-after-wrapper-loss".into());
+    }
     // `duration_seconds` stays the run's own: reconciliation time is not run time.
-    lease.save(&old)
+    let saved = lease.save(old);
+    published?;
+    saved?;
+    retired
 }
 
 /// While starts are serialized, recover only the journals whose locks we can take.
@@ -697,40 +786,44 @@ fn run(
         image.name,
         "--no-snapshots",
     ]);
-    let value = match created {
-        Ok(value) => value,
-        Err(reason) => {
-            record.reason = Some(reason);
+    let id = created.map_err(|reason| (reason, false)).and_then(|value| {
+        let id = sandbox(&value)["id"]
+            .as_str()
+            .filter(|id| safe_id(id))
+            .ok_or_else(|| ("boat-create-missing-id".to_owned(), false))?;
+        check_owned_id(&lease.root, lease.slot, id).map_err(|reason| (reason, true))?;
+        Ok(id.to_owned())
+    });
+    let id = match id {
+        Ok(id) => id,
+        Err((reason, identity_conflict)) => {
+            evidence.control(format!("create error={reason}"));
+            record.reason = Some(reason.clone());
+            if reason == CREATE_UNSUBMITTED {
+                record.phase = "stopped".into();
+                lease.save(&record)?;
+                return fallback(reason);
+            }
             let saved = lease.save(&record);
-            let recovered = recover(&Client::cleanup(machine, CLEANUP, false), &lease);
-            saved?;
-            return fallback(
-                recovered
-                    .err()
-                    .unwrap_or_else(|| "remote-create-failed-reconciled".into()),
+            let recovered = recover_record(
+                &Client::cleanup(machine, CLEANUP, false),
+                &lease,
+                &mut record,
+                Some(&evidence),
             );
+            let detail = recovered.as_ref().err().map_or("ok", String::as_str);
+            evidence.control(format!("create recovery {detail}"));
+            saved?;
+            return match recovered {
+                Err(reason) if identity_conflict || record.vm_id.is_some() => Err(reason),
+                Err(reason) => fallback(reason),
+                Ok(()) if identity_conflict => {
+                    fallback("remote-create-id-conflict-reconciled".into())
+                }
+                Ok(()) => fallback("remote-create-failed-reconciled".into()),
+            };
         }
     };
-    let id = sandbox(&value)["id"]
-        .as_str()
-        .filter(|id| safe_id(id))
-        .map(str::to_owned);
-    let Some(id) = id else {
-        let recovered = recover(&Client::cleanup(machine, CLEANUP, false), &lease);
-        return fallback(
-            recovered
-                .err()
-                .unwrap_or_else(|| "remote-create-invalid-response-reconciled".into()),
-        );
-    };
-    if let Err(reason) = check_owned_id(&lease.root, lease.slot, &id) {
-        record.reason = Some(reason);
-        let saved = lease.save(&record);
-        let recovered = recover(&Client::cleanup(machine, CLEANUP, false), &lease);
-        saved?;
-        recovered?;
-        return fallback("remote-create-id-conflict-reconciled".into());
-    }
     record.vm_id = Some(id.clone());
     record.phase = "preparing".into();
     let saved = lease.save(&record);
@@ -1792,14 +1885,55 @@ mod tests {
     fn creation_jsonl_selects_identity_and_never_ignores_an_error_frame() {
         let bytes = b"{\"event\":\"creating\"}\n{\"sandbox\":{\"id\":\"bx_test\"}}\n{\"event\":\"ready\"}\n";
         assert_eq!(sandbox(&decode(0, bytes, "new").unwrap())["id"], "bx_test");
-        assert!(
-            decode(
-                0,
-                b"{\"sandbox\":{\"id\":\"bx_test\"}}\n{\"event\":\"error\"}",
-                "new"
-            )
-            .is_err()
-        );
+        let error = b"{\"sandbox\":{\"id\":\"bx_test\"}}\n{\"event\":\"error\"}";
+        for (code, bytes, operation, reason) in [
+            (0, error.as_slice(), "new", "boat-create-error-frame"),
+            (1, error.as_slice(), "new", "boat-create-error-frame"),
+            (7, b"{}", "new", "boat-create-exit-7"),
+            (0, b"{", "new", "boat-create-invalid-json"),
+            (0, b"{}", "new", "boat-create-missing-id"),
+            (1, error.as_slice(), "list", "boat-command-failed"),
+        ] {
+            assert_eq!(decode(code, bytes, operation).unwrap_err(), reason);
+        }
+    }
+
+    #[test]
+    fn create_launch_replays_only_a_failed_spawn_and_honors_preflight() {
+        let client = Client::cleanup(Machine::Large, CONTROL + 1, true);
+        let failed = Err(io::ErrorKind::WouldBlock);
+        let gone = Err(io::ErrorKind::NotFound);
+        let refused = Err(CREATE_UNSUBMITTED);
+        for (remaining, signal, launches, expected, expected_calls) in [
+            (1, 0, [Ok(42), failed], Ok(42), 1),
+            (CONTROL + 1, 0, [failed, Ok(42)], Ok(42), 2),
+            (CONTROL + 1, 0, [failed, gone], refused, 2),
+            (CONTROL - 1, 0, [failed, Ok(42)], refused, 1),
+            (1, libc::SIGTERM, [Ok(42), failed], refused, 0),
+            (0, 0, [Ok(42), failed], refused, 0),
+        ] {
+            let now = client.deadline - Duration::from_secs(remaining);
+            let mut attempts = launches.into_iter();
+            let result = spawn_create(
+                || attempts.next().unwrap().map_err(io::Error::from),
+                |retry| client.can_launch_create(retry, now, signal),
+            );
+            assert_eq!(2 - attempts.len(), expected_calls);
+            assert_eq!(result, expected);
+        }
+    }
+
+    #[test]
+    fn create_inventory_requires_a_complete_unambiguous_identity() {
+        let matching = json!({"id": "bx_vm", "name": "eon-build-test"});
+        let unrelated = json!({"id": "unsupported"});
+        let scan = |rows: &[Value]| created_vm(&json!({"sandboxes": rows}), "test");
+        assert_eq!(scan(&[unrelated.clone(), unrelated.clone()]), Ok(None));
+        let found = scan(&[matching.clone(), unrelated]);
+        assert_eq!(found, Ok(Some("bx_vm".into())));
+        assert!(scan(&[matching.clone(), json!({"id":"bx_vm"})]).is_err());
+        assert!(scan(&[matching, json!({"id":"bx_other","name":"eon-build-test"})]).is_err());
+        assert!(created_vm(&json!({"sandboxes":[],"pageInfo":{"hasMore":true}}), "test").is_err());
     }
 
     pub(super) fn trial_limits() -> Value {

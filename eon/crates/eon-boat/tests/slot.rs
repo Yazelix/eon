@@ -824,7 +824,8 @@ high = ['never-start-this', '{{prompt}}']
             "tree": "unknown", "base": "unknown", "started": now - 4000,
             "expires_at": if expired { now - 1 } else { now + 4000 },
             "duration_seconds": null, "exit_code": null, "usage": null,
-            "environment_version": 1, "reason": null, "credentials_absent": false
+            "environment_version": 1, "reason": expired.then_some("boat-create-invalid-json"),
+            "credentials_absent": false
         });
         let path = self.root().join("boat/current.json");
         fs::write(&path, serde_json::to_vec(&record).unwrap()).unwrap();
@@ -1655,7 +1656,8 @@ fn review_expired_create_with_no_vm_is_reconciled_and_remote_work_can_resume() {
             .success()
     );
     assert_eq!(f.list()["boat"]["phase"], "stopped");
-    assert_eq!(f.list()["boat"]["reason"], "expired-create-absent");
+    let reason = "boat-create-invalid-json; expired-create-absent";
+    assert_eq!(f.list()["boat"]["reason"], reason);
     fs::write(f.dir.path().join("provider/mode"), "").unwrap();
     assert!(
         f.boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
@@ -1695,18 +1697,72 @@ fn review_refused_create_does_not_trap_the_next_gate_in_an_exit_125_loop() {
     let f = Fixture::boat_fixture();
     fs::write(f.dir.path().join("provider/mode"), "create-refused").unwrap();
     for _ in 0..2 {
-        let output = f
-            .boat_command(&["slot", "run", "--", "nix", "build", ".#default"])
-            .output()
-            .unwrap();
-        assert!(
-            output.status.success(),
-            "{}",
-            String::from_utf8_lossy(&output.stderr)
-        );
+        let output = f.pool_command().output().unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(f.list()["boat"]["phase"], "creating");
     }
     let calls = fs::read_to_string(f.dir.path().join("provider/calls")).unwrap();
     assert_eq!(calls.lines().filter(|line| *line == "new").count(), 1);
+}
+
+#[test]
+fn review_unsubmitted_create_falls_back_and_allows_the_next_start() {
+    let f = Fixture::boat_fixture();
+    let provider = f.dir.path().join("provider");
+    fs::write(provider.join("mode"), "spawn-refused").unwrap();
+    let original_path = std::env::var_os("PATH").unwrap();
+    // A failed fixture launch must never search for a real Boat CLI.
+    let paths = std::env::split_paths(&original_path)
+        .filter(|dir| matches!(dir.join("boat").try_exists(), Ok(false)));
+    let fake = f.dir.path().join("fake");
+    let path = std::env::join_paths(std::iter::once(fake.clone()).chain(paths)).unwrap();
+    let output = f.pool_command().env("PATH", path).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    assert!(f.dir.path().join("local-ran").exists());
+    let listing = f.list();
+    assert_eq!(listing["boat"]["phase"], "stopped");
+    assert_eq!(listing["boat"]["reason"], "boat-create-not-submitted");
+    let calls = fs::read_to_string(provider.join("calls")).unwrap();
+    let forbidden = |op| matches!(op, "new" | "list" | "delete");
+    assert!(!calls.lines().any(forbidden));
+    fs::set_permissions(fake.join("boat"), fs::Permissions::from_mode(0o755)).unwrap();
+    fs::write(provider.join("mode"), "").unwrap();
+    assert!(f.pool_command().output().unwrap().status.success());
+    assert_eq!(f.list()["boat"]["vm_id"], "bx_test");
+}
+
+#[test]
+fn review_create_failure_retires_the_visible_orphan_before_fallback() {
+    for (mode, code) in [("orphan-visible", 0), ("orphan-delete-fails", 125)] {
+        let f = Fixture::boat_fixture();
+        let provider = f.dir.path().join("provider");
+        fs::write(provider.join("mode"), mode).unwrap();
+        let output = f.pool_command().output().unwrap();
+        assert_eq!(output.status.code(), Some(code), "{mode}: {output:?}");
+        let record = f.list()["boat"].clone();
+        let calls = fs::read_to_string(provider.join("calls")).unwrap();
+        assert_eq!(calls.lines().filter(|line| *line == "new").count(), 1);
+        let retired = code == 0;
+        assert_eq!(provider.join("deleted").exists(), retired);
+        assert_eq!(f.dir.path().join("local-ran").exists(), code == 0);
+        let run_id = record["run_id"].as_str().unwrap();
+        let evidence =
+            fs::read_to_string(f.root().join("runs").join(run_id).join("boat.log")).unwrap();
+        assert!(evidence.contains("boat-create-invalid-json"), "{evidence}");
+        assert!(!evidence.contains("private-provider-sentinel"));
+        if retired {
+            assert_eq!(record["phase"], "stopped");
+        } else {
+            assert!(provider.join("term-sent").exists());
+            assert_eq!(record["phase"], "cleanup-unknown");
+            assert_eq!(record["vm_id"], "bx_test");
+            let reason = "boat-create-invalid-json; cleanup remote-cleanup-unknown";
+            assert_eq!(record["reason"], reason);
+            fs::write(provider.join("mode"), "").unwrap();
+            assert!(f.pool_command().output().unwrap().status.success());
+            assert_eq!(f.list()["boat"]["vm_id"], "bx_next");
+        }
+    }
 }
 
 #[test]

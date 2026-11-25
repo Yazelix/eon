@@ -75,6 +75,9 @@ env)
   printf '{"safeForThirdParties":true,"passGithub":%s,"passSecrets":false,"passSandboxCredentials":false,"passAgentsCredentials":false,"proxyAiCredentials":false,"variables":0,"secretFiles":[],"selectedRepositories":[],"latestVersionNumber":%s}\n' "$github" "$version"
   ;;
 limits)
+  if [ "$mode" = spawn-refused ] && [ "$(grep -cx limits "$root/calls")" = 3 ]; then
+    chmod a-x "$0"
+  fi
   if [ -f "$root/policy-probed" ]; then
   if [ "$mode" = mutate-source ]; then echo changed > "$root/../source"; echo '{"ok":false}'; exit 1; fi
   if [ "$mode" = break-local-queue ]; then chmod 000 "$root/../state/slots/queue/.lock"; echo '{"ok":false}'; exit 1; fi
@@ -115,6 +118,10 @@ new)
     if [ "${!i}" = --type ]; then j=$((i+1)); printf '%s\n' "${!j}" > "$root/type"; break; fi
   done
   echo running > "$root/state"
+  if [[ "$mode" == orphan-* ]]; then
+    printf 'private-provider-sentinel\n'
+    exit 1
+  fi
   echo '{"event":"creating"}'
   printf '{"sandbox":{"id":"%s"}}\n' "${BOAT_TEST_COLLISION:-$id}"
   echo '{"event":"ready"}'
@@ -320,6 +327,12 @@ stop)
   ;;
 delete)
   [ "$1" = --yes ]; [ "$2" = "$id" ]
+  if [ "$mode" = orphan-visible ]; then [ ! -e "$root/../local-ran" ]; fi
+  if [ "$mode" = orphan-delete-fails ]; then
+    kill -TERM "$PPID"
+    touch "$root/term-sent"
+    exit 1
+  fi
   [ ! -e "$root/delete-refused" ] || exit 1
   [ ! -e "$root/slow-retire" ] || sleep 10
   touch "$root/deleted"
@@ -333,6 +346,14 @@ usage)
   echo '{"seconds":1,"dollars":0.00001,"running":false}' ;;
 list)
   if [ "$mode" = reconcile-unreachable ] || [ -e "$root/list-fails" ]; then exit 1; fi
+  if [[ "$mode" == orphan-* ]] && [ -f "$root/new-args" ] && [ "$(cat "$root/state")" != deleted ]; then
+    if [ -e "$root/orphan-list" ]; then
+      read -r _ name _ < "$root/new-args"
+      printf '{"sandboxes":[{"id":"%s","name":"%s"}]}\n' "$id" "$name"
+      exit 0
+    fi
+    touch "$root/orphan-list"
+  fi
   # The deleted run's VM still listed: its deletion stays unconfirmed.
   if [ -e "$root/list-keeps" ]; then echo '{"sandboxes":[{"id":"bx_test"}]}'; exit 0; fi
   if [ "$mode" = reconcile-hold ]; then
