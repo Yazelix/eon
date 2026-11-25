@@ -142,6 +142,7 @@ fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'st
         slot: None,
         moved: None,
         closing: false,
+        storms: Storms::default(),
     };
     let fonts = FontSetup::with_directories(&FontSettings::default(), None).unwrap();
     let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
@@ -1561,4 +1562,141 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
     assert!(host.app.window.is_none());
     assert_eq!(host.app.presented_revision(), None);
     assert_eq!(host.app.quit, QuitProgress::Idle);
+}
+
+/// Feeds one Resized bucket of [productive, no-op, unknown] counts per second, then one productive
+/// event to close the last; `step` runs after each second.
+fn feed_buckets(storms: &mut Storms, buckets: &[[u32; 3]], mut step: impl FnMut(u64)) {
+    let (at, outcomes) = (
+        Instant::now(),
+        [Outcome::Productive, Outcome::NoOp, Outcome::Unknown],
+    );
+    for (second, bucket) in (0..).zip(buckets.iter().chain([&[1, 0, 0]])) {
+        let now = at + Duration::from_secs(second);
+        for (outcome, &count) in outcomes.into_iter().zip(bucket) {
+            (0..count).for_each(|_| storms.count(Kind::Resized, outcome, now));
+        }
+        step(second);
+    }
+}
+
+fn writing_to(writer: mpsc::SyncSender<Storm>) -> Storms {
+    let writer = Some(writer);
+    Storms {
+        writer,
+        ..Storms::default()
+    }
+}
+
+/// The warnings these buckets raise, queued instead of written.
+fn storms(buckets: &[[u32; 3]]) -> Vec<Storm> {
+    let (writer, warnings) = mpsc::sync_channel(64);
+    let mut storms = writing_to(writer);
+    feed_buckets(&mut storms, buckets, |_| {});
+    warnings.try_iter().collect()
+}
+
+#[test]
+fn no_op_storms_warn_after_two_full_buckets_at_most_once_a_minute() {
+    let storm = (Kind::Resized, [0, 256, 0], [13, 256, 0]);
+    assert_eq!(storms(&[[0, 256, 0], [13, 256, 0]]), [storm]);
+    assert_eq!(storms(&[[0, 256, 0]]), []); // one bucket
+    assert_eq!(storms(&[[0, 255, 0], [0, 256, 0]]), []);
+    assert_eq!(storms(&[[15, 265, 0], [14, 266, 0]]), []); // 94.6%
+    assert_eq!(storms(&[[14, 266, 0], [14, 266, 0]]).len(), 1); // 95%
+    assert_eq!(storms(&[[0, 256, 1], [0, 256, 0]]), []); // an unknown
+    assert_eq!(storms(&[[0, 256, 0], [0; 3], [0, 256, 0]]), []); // a skip
+    assert_eq!(storms(&[[0, 256, 0]; 61]).len(), 1);
+    assert_eq!(storms(&[[0, 256, 0]; 62]).len(), 2);
+}
+
+#[test]
+fn a_stalled_writer_never_blocks_and_drops_later_warnings() {
+    let ((entered, writing), (release, released)) = (mpsc::channel(), mpsc::channel::<()>());
+    let (sent, lines) = mpsc::channel();
+    let mut storms = writing_to(storm_writer(move |line| {
+        entered.send(()).unwrap();
+        let _ = released.recv();
+        sent.send(String::from_utf8_lossy(line).into_owned())
+            .unwrap();
+    }));
+    // Warnings close buckets 1, 61 and 121; the first is in the writer before the others.
+    feed_buckets(&mut storms, &[[0, 256, 0]; 122], |second| {
+        if second == 2 {
+            writing.recv().unwrap();
+        }
+    });
+    drop((release, storms));
+    let lines: Vec<_> = lines.iter().collect();
+    assert_eq!(lines.len(), 2, "{lines:?}");
+    assert!(
+        lines
+            .iter()
+            .all(|line| line.len() < 256 && line.ends_with('\n'))
+    );
+    let first = "venus: WARN event storm: Resized no-ops 256/256 then 256/256 in two consecutive";
+    assert!(lines[0].starts_with(first), "{}", lines[0]);
+}
+
+#[test]
+fn raw_events_count_once_with_venus_outcomes() {
+    use Outcome::*;
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    let at = Instant::now();
+    let counted = |host: &mut Host, event: WindowEvent, scale: f64| {
+        let (kind, before) = (Kind::of(&event) as usize, host.storms.current);
+        host.raw(&event, || scale, at);
+        let added: [u32; 3] =
+            std::array::from_fn(|i| host.storms.current[kind][i] - before[kind][i]);
+        assert_eq!(added.iter().sum::<u32>(), 1, "{event:?} counts once");
+        [Productive, NoOp, Unknown][added.iter().position(|&n| n == 1).unwrap()]
+    };
+    let resized = |width| WindowEvent::Resized(PhysicalSize::new(width, 600));
+    let moved = || WindowEvent::Moved(PhysicalPosition::new(0, 0));
+    assert_eq!(counted(&mut host, resized(960), 1.0), Unknown); // nothing applied
+    let before = host.storms.current;
+    host.apply_geometry(NATIVE);
+    host.window_event(WindowEvent::Focused(true));
+    assert_eq!(host.storms.current, before); // typed callbacks are no ingress
+    let modifiers = WindowEvent::ModifiersChanged(Default::default());
+    let ime = WindowEvent::Ime(winit::event::Ime::Commit("a".into()));
+    for (event, scale, outcome) in [
+        (resized(960), 1.0, NoOp),
+        (resized(800), 1.0, Productive),
+        (resized(800), 1.0, NoOp),
+        (resized(960), 1.0, Productive),
+        (moved(), 1.0, Unknown),
+        (moved(), 2.0, Productive),
+        (moved(), 1.0, Productive),
+        (modifiers, 1.0, Unknown),
+        (ime, 1.0, Unknown),
+        (WindowEvent::Focused(false), 1.0, Unknown),
+    ] {
+        assert_eq!(counted(&mut host, event, scale), outcome);
+    }
+    host.latch_failure("lost".into());
+    assert_eq!(counted(&mut host, resized(960), 1.0), Unknown);
+}
+
+#[test]
+fn counting_costs_under_half_a_microsecond_per_event() {
+    // A warning that a run's storm raises goes nowhere: the writer's receiver is gone.
+    let mut storms = writing_to(mpsc::sync_channel(1).0);
+    let (kind, outcome) = std::hint::black_box((Kind::Resized, Outcome::NoOp));
+    let mut run = |on: bool| {
+        let start = Instant::now();
+        for _ in 0..100_000 {
+            if std::hint::black_box(on) {
+                storms.count(kind, outcome, Instant::now());
+            }
+        }
+        std::hint::black_box(&storms.current);
+        start.elapsed()
+    };
+    let mut deltas: Vec<_> = (0..11)
+        .map(|_| run(true).saturating_sub(run(false)))
+        .collect();
+    deltas.sort();
+    println!("median detector cost per 100,000 events: {:?}", deltas[5]);
+    assert!(deltas[5] <= Duration::from_millis(50), "{deltas:?}");
 }
