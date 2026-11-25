@@ -406,16 +406,16 @@ lines = [498, 514]
 # Exact Darwin levels and legs for the whole first-parent diff.
 [[darwin]]
 commit = "7cf509e988af36c7da06778cf910974707887134"
-darwin = "ci"
+darwin = "proof"
 build = true
 
 [[darwin]]
 commit = "40a019fc71727232a145f0ac09a7ac32637f095e"
-darwin = "ci"
+darwin = "proof"
 
 [[darwin]]
 commit = "4962c101d8d3a92454ceef9180c777472bbf9144"
-darwin = "ci"
+darwin = "proof"
 
 [[darwin]]
 commit = "5a82cc0e7e7b7bf8616298d0307301ee7b0906dc"
@@ -424,3 +424,21 @@ darwin = "proof"
 [[darwin]]
 commit = "cce4082b0af3ee9c21378ff9dbec70c50e126766"
 darwin = "none"
+
+[[darwin]]
+commit = "040cb567257fc22a039b9ec64c39795857bd69c7"
+darwin = "proof"
+
+[[darwin]]
+commit = "8a5373bb15acdb5b94641694f5261ca7cd0315f6"
+darwin = "proof"
+
+[[darwin]]
+commit = "cf62874912aba0906b23104a2a7fce25fd6d3a40"
+darwin = "ci"
+build = true
+
+# Slot queue changes in a file with a non-Linux cfg.
+[[darwin]]
+commit = "76b8c761a1610c9f83699bbba1513d864d8e6daf"
+darwin = "proof"

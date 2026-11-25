@@ -13,6 +13,7 @@ pub struct Change {
     pub new_object: String,
     pub status: char,
     pub path: String,
+    pub macos_cfg: bool,
 }
 
 /// One path's review tier and Darwin check level, with their reasons.
@@ -79,13 +80,16 @@ fn parse_header(header: &str, path: String) -> Result<Change> {
         new_object: new_object.into(),
         status,
         path,
+        macos_cfg: false,
     })
 }
 
-/// Whether the decision for `change` reads its added and removed lines: a
-/// `.rs` path that neither a mode rule nor a High path rule decides, and that
-/// the Medium list holds.
+/// Whether the review tier or Darwin level reads the added and removed lines.
 pub fn needs_lines(change: &Change) -> bool {
+    needs_tier_lines(change) || (change.status != 'T' && rules::darwin_source(&change.path))
+}
+
+fn needs_tier_lines(change: &Change) -> bool {
     change.path.ends_with(".rs")
         && mode_reason(change).is_none()
         && rules::path_rule(&change.path).is_some_and(|rule| rule.tier == Tier::Medium)
@@ -211,7 +215,25 @@ pub fn classify(
             Ok(value)
         };
         let (tier, reason) = decide(change, lines, &mut names)?;
-        let (darwin, darwin_reason) = rules::darwin_rule(&change.path, names)?;
+        let (mut darwin, mut darwin_reason) = rules::darwin_rule(&change.path, names)?;
+        if darwin == DarwinLevel::Ci && change.macos_cfg {
+            darwin = DarwinLevel::Proof;
+            darwin_reason = "macOS or non-Linux cfg in changed source";
+        } else if darwin == DarwinLevel::Ci
+            && change.status == 'T'
+            && rules::darwin_source(&change.path)
+        {
+            darwin = DarwinLevel::Proof;
+            darwin_reason = "source file type change";
+        } else if darwin == DarwinLevel::Ci
+            && rules::darwin_source(&change.path)
+            && lines
+                .get(&change.path)
+                .is_some_and(|changed| changed.iter().any(|line| rules::darwin_sensitive(line)))
+        {
+            darwin = DarwinLevel::Proof;
+            darwin_reason = "macOS-sensitive changed line";
+        }
         verdicts.push(Verdict {
             tier,
             path: change.path.clone(),
@@ -237,7 +259,7 @@ fn decide(
     };
     match rule.tier {
         Tier::High => Ok((Tier::High, rule.reason.into())),
-        Tier::Medium if needs_lines(change) => {
+        Tier::Medium if needs_tier_lines(change) => {
             let changed = match lines.get(&change.path) {
                 Some(changed) => changed.as_slice(),
                 None if change.old_object == change.new_object => &[],
@@ -364,6 +386,7 @@ mod tests {
             new_object: object(new_mode, TWO).into(),
             status,
             path: path.into(),
+            macos_cfg: false,
         }
     }
 
@@ -595,9 +618,9 @@ mod tests {
             ),
             high("risky token: UnixListener::bind")
         );
-        assert!(!needs_lines(&modified("venus/src/transport.rs")));
+        assert!(!needs_tier_lines(&modified("venus/src/transport.rs")));
         assert!(!needs_lines(&modified("venus/assets/a.txt")));
-        assert!(!needs_lines(&modified("eon/crates/eon/build.rs")));
+        assert!(!needs_tier_lines(&modified("eon/crates/eon/build.rs")));
         let missing = classify(&[modified(path)], &BTreeMap::new(), |_| Ok(false));
         assert!(missing.is_err());
     }
@@ -713,6 +736,65 @@ mod tests {
             "proof (workspace-tests, build)"
         );
         assert!(render_darwin(&verdicts).ends_with("darwin: proof (workspace-tests, build)\n"));
+    }
+
+    #[test]
+    fn darwin_promotes_sensitive_source_without_changing_the_review_tier() {
+        for line in [
+            "#[cfg(any(test, target_os = \"macos\"))]",
+            "#[cfg(not (target_os = \"linux\"))]",
+            "UnixStream::connect(address)",
+            "UnixDatagram::unbound()",
+            "flags |= O_NONBLOCK",
+            "stream.set_nonblocking(true)",
+            "libc::accept4(fd, addr, len, flags)",
+            "flags |= SOCK_CLOEXEC",
+            "std::env::var_os(\"XDG_RUNTIME_DIR\")",
+            "let root = runtime_dir();",
+            "let file = memfd_create(name, flags);",
+            "root.canonicalize()",
+            "std::env::temp_dir()",
+            "const ROOT: &str = \"/dev/shm\";",
+            "let label = platform_label(key);",
+            "libc::shm_open(name, flags, mode)",
+            "libc::O_TMPFILE",
+            "std::process::Command::new(program)",
+        ] {
+            let path = "eon/crates/eon/build.rs";
+            let changes = [modified(path)];
+            assert!(needs_lines(&changes[0]));
+            let lines = BTreeMap::from([(path.to_owned(), vec![line.to_owned()])]);
+            let verdicts = classify(&changes, &lines, |_| Ok(false)).unwrap();
+            assert_eq!(verdicts[0].tier, Tier::High);
+            assert_eq!(verdicts[0].darwin, DarwinLevel::Proof, "{line}");
+        }
+        let path = "venus/src/window.rs";
+        let lines = BTreeMap::from([(path.to_owned(), vec!["let width = 12;".to_owned()])]);
+        let mut gated = modified(path);
+        gated.macos_cfg = true;
+        assert_eq!(
+            classify(&[gated], &lines, |_| Ok(false)).unwrap()[0].darwin,
+            DarwinLevel::Proof
+        );
+        assert_eq!(
+            classify(&[modified(path)], &lines, |_| Ok(false)).unwrap()[0].darwin,
+            DarwinLevel::Ci
+        );
+        let replaced = change("100644", "120000", 'T', path);
+        assert!(!needs_lines(&replaced));
+        let verdicts = classify(&[replaced], &BTreeMap::new(), |_| Ok(false)).unwrap();
+        assert_eq!(verdicts[0].tier, Tier::High);
+        assert_eq!(verdicts[0].darwin, DarwinLevel::Proof);
+        assert_eq!(
+            classify(
+                &[modified("orbit/src/socket.rs")],
+                &BTreeMap::new(),
+                |_| Ok(false)
+            )
+            .unwrap()[0]
+                .darwin,
+            DarwinLevel::Proof
+        );
     }
 
     #[test]

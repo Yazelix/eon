@@ -182,11 +182,24 @@ and canonical slot-home resolution returns an explicit Unsupported error there.
 
 ### CI failure collection
 
-Filtered pushes to `edge` run only `build`. For Darwin evidence before
-landing, push the reviewed commit to `ci/<bead>` and dispatch the workflow
-manually. Choose `workspace-tests` for the workspace suite, `build` for the
-package, or `both` (the default). When `review-tier classify` prints a
-`darwin:` line, use the jobs it lists and skip the dispatch for `darwin: none`.
+Filtered pushes to `edge` run only `build`. The lead's landing tooling uses
+the `darwin:` line from `review-tier classify`:
+
+- `none` skips native Darwin.
+- `ci` lands with green Linux checks and `eon-darwin-clippy`. After pushing
+  `edge`, the landing helper dispatches the listed jobs on a scratch ref
+  pinned to the landed commit so a later push cannot change the tested tree
+  or cancel its run. It records the run ID and monitors the result. A red
+  run opens a P0 bug naming the commit and blocks the next release until
+  the failure is fixed forward or reverted and release proof is green.
+  Set `LAND_POST_MAC_PROOF=1` when this landing also requires mac-proof.
+- `proof` runs the listed jobs and mac-proof on the reviewed candidate
+  before landing. This covers native macOS surfaces and sensitive socket,
+  path, temporary file, platform label, shared-memory and process changes.
+
+For manual pre-landing proof, push the reviewed commit to `ci/<bead>` and
+dispatch the listed jobs. Choose `workspace-tests` for the workspace suite,
+`build` for the package, or `both` for both jobs.
 
 ```sh
 candidate=FULL_COMMIT_SHA
@@ -213,6 +226,12 @@ starting the proof. [GitHub Actions limits](https://docs.github.com/en/actions/r
 
 Record the run IDs with the reviewed commit. After landing, delete the scratch
 branch with `git push origin --delete "$branch"`.
+
+For a release, use the lead's `land-darwin-ci.sh dispatch-release BEAD REV`
+and `release-check BEAD REV` before tagging or promoting. The release check
+requires green workspace tests, package build and mac-proof on the exact
+release tree. It also checks the outstanding post-landing Darwin results
+and the P0 beads they opened.
 
 The `build` job keeps the strict Nix package gate. With `legs=both`, the jobs
 use separate Apple Silicon runners and finish independently. Both jobs retain

@@ -260,10 +260,28 @@ const DARWIN_RULES: &[DarwinRule] = &[
             "venus/src/main.rs",
             "venus/Cargo.toml",
             "launcher/**",
+            "**/macos/**",
+            "**/macos.rs",
+            "**/darwin/**",
+            "**/darwin.rs",
+            "**/platform.rs",
             "nix/macos-app.nix",
             "eon/tools/mac-proof/**",
             "orbit/terminfo/eon-darwin.terminfo",
             ".github/workflows/mac-proof.yml",
+        ],
+        unreferenced_markdown: false,
+    },
+    DarwinRule {
+        level: DarwinLevel::Proof,
+        reason: "macOS-sensitive boundary",
+        patterns: &[
+            "orbit/src/socket.rs",
+            "venus/src/transport.rs",
+            "runtime/crates/eon-runtime/src/control.rs",
+            "runtime/crates/eon-runtime/src/editor.rs",
+            "runtime/crates/eon-runtime/src/supervisor/update/handoff.rs",
+            "runtime/crates/eon-runtime/src/supervisor/update/handoff/**",
         ],
         unreferenced_markdown: false,
     },
@@ -320,6 +338,71 @@ pub fn darwin_rule(
 
 pub fn darwin_build(path: &str) -> bool {
     DARWIN_BUILD.iter().any(|pattern| glob(pattern, path))
+}
+
+const DARWIN_SENSITIVE: &[&str] = &[
+    "target_os=\"macos\"",
+    "target_vendor=\"apple\"",
+    "not(target_os=\"linux\")",
+    "aarch64-darwin",
+    "/private/tmp",
+    "canonicalize",
+    "read_link",
+    "symlink",
+    "sockaddr",
+    "socket",
+    "unixstream",
+    "unixlistener",
+    "unixdatagram",
+    "o_nonblock",
+    "set_nonblocking(",
+    "accept4",
+    "sock_cloexec",
+    ".sock",
+    "runtime_dir",
+    "temp_dir",
+    "tmpdir",
+    "tempdir",
+    "tempfile",
+    "tmpfile",
+    "/dev/shm",
+    "shm_open",
+    "shm_unlink",
+    "shmget",
+    "shmat",
+    "memfd",
+    "mknodat",
+    "platform_label",
+    "platform_key",
+    "key_label",
+    "proc_pidinfo",
+    "/proc/",
+    "process::",
+    "command::new",
+    "posix_spawn",
+    "fork(",
+    "execve(",
+    "waitpid(",
+    "kill(",
+];
+
+pub fn darwin_source(path: &str) -> bool {
+    path.rsplit_once('.').is_some_and(|(_, extension)| {
+        matches!(
+            extension,
+            "rs" | "nix" | "sh" | "c" | "h" | "m" | "mm" | "swift" | "toml" | "yml" | "yaml"
+        )
+    }) && !path.starts_with(".beads/")
+        && !path.starts_with("eon/tools/review-tier/evals/")
+}
+
+pub fn darwin_sensitive(line: &str) -> bool {
+    let line: String = line
+        .chars()
+        .filter(|ch| !ch.is_ascii_whitespace())
+        .map(|ch| ch.to_ascii_lowercase())
+        .collect();
+    DARWIN_SENSITIVE.iter().any(|token| line.contains(token))
 }
 
 /// The first path rule matching `path`, if any.
@@ -400,6 +483,14 @@ pub fn render_darwin() -> String {
     out.push_str("# ci and proof run workspace-tests. Add build if any changed path matches:\n");
     for pattern in DARWIN_BUILD {
         out.push_str(&format!("build  path: {pattern}\n"));
+    }
+    out.push_str(
+        "# A changed Rust file with a macOS or non-Linux cfg in either tree requires proof.\n",
+    );
+    out.push_str("# A source file type change requires proof.\n");
+    out.push_str("# Raise ci to proof for these tokens in added or removed source lines:\n");
+    for token in DARWIN_SENSITIVE {
+        out.push_str(&format!("proof  token: {token}\n"));
     }
     out
 }

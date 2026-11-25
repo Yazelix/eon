@@ -90,6 +90,11 @@ of the eon-uxgal evidence inventory).
   canonicalizing (`/var` is `/private/var`); goldens that include a
   platform-specific label such as a key name; accepted sockets that inherit
   `O_NONBLOCK`. (R06, R14, R16, R18)
+- **Linux-only paths.** Block additions or extensions of Linux-only paths,
+  dependencies or tools unless they ship with an `aarch64-darwin` alternative
+  or have Lucca's recorded approval under [Platform Discipline](docs/AGENT-RULES.md#platform-discipline).
+  Look for `cfg(target_os = "linux")`, Linux-only dependencies and tools,
+  and Linux assumptions in shared code, scripts and tests.
 - **Racy or load-bound tests.** Asserting a non-zero duration for trivial
   work; writing an executable and running it while parallel tests fork
   (`ETXTBSY`); fixed time bounds that fail under load; reading a file before
@@ -108,10 +113,9 @@ of the eon-uxgal evidence inventory).
 
 ## Required evidence
 
-Some failures only a gate catches. A missing required check blocks landing.
-A missing author check is a blocker. A check the lead runs at landing is
-named in your review; the landing does not proceed without its recorded
-result.
+A missing author check is a blocker. Name the checks the lead must record
+before landing and any checks due after landing. A missing pre-landing
+result blocks landing.
 
 | The change touches | Required check | Who |
 | --- | --- | --- |
@@ -121,9 +125,26 @@ result.
 | `Cargo.lock`, `nix/notices`, or new assets | `.#archive-notice-check` and `.#archive-source-check` (R08, R09) | lead at landing |
 | anything in the package | `nix build` of `.#default` and the Linux checks, including the eon-tests check (R05, F14) | lead at landing |
 | a new sandbox need (flock, bwrap, user namespaces) | the Nix check sandbox at landing, and a note on hosted runners (R07, F14) | lead at landing |
-| macOS-sensitive code (sockets, paths, temp dirs, platform labels) | the Darwin route (`darwin-build.yml` or mac-proof) or a named macOS bead (R14-R18) | lead |
+| any Rust code or test, or an edge change marked `darwin: ci` | green `nix develop -c eon-darwin-clippy` on the exact candidate and merged landing trees, plus the applicable Linux checks | author and lead at landing |
+| an edge change marked `darwin: ci` | immediately dispatch the listed `darwin-build.yml` jobs, including `workspace-tests`, on the exact landed `edge` commit, with `mac-proof.yml` when the route requires it | lead after landing |
+| an edge change marked `darwin: proof` | green candidate runs for the listed `darwin-build.yml` jobs and `mac-proof.yml` on the reviewed tree | lead before landing |
+| promotion to `main` or creation of a release tag | green `darwin-build.yml` workspace tests and package build, and green `mac-proof.yml`, all on the exact release tree | lead before promotion or tagging |
 | a visible surface | a 1280×800 capture | author |
 | an output or render path | the eon-bench gate from the Verification table | author |
+
+`darwin: proof` covers macOS platform code (launch, the app bundle,
+`cfg(target_os = "macos")` paths and mac-proof routes) and macOS-sensitive
+code (sockets, paths, temp dirs, platform labels, shared memory, temporary
+file and process APIs). Cross-Clippy checks compilation. Native proof
+exercises runtime behavior such as socket discovery and Darwin alternatives
+to `/dev/shm` and `O_TMPFILE`.
+
+For `darwin: proof`, the lead may reuse native evidence when the delta
+from the tested tree to the reviewed tree classifies `darwin: none`.
+Record each native run's tested tree, run ID and result. A red post-landing
+Darwin result automatically files a P0 bug naming the landing commit and
+blocks the next release until a fix-forward or revert restores green native
+Darwin.
 
 ## Skip or skim
 

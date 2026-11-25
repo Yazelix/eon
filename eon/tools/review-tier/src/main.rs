@@ -160,16 +160,28 @@ fn check_source_dir(source: &Path, root: &Path) -> Result<()> {
 
 /// Classifies the diff between two trees; shared by `classify` and the eval.
 fn classify_trees(git: &Git, base_tree: &str, candidate_tree: &str) -> Result<Vec<Verdict>> {
-    let changes = classify::parse_raw(&git.raw_diff(base_tree, candidate_tree)?)?;
-    let rust: Vec<&str> = changes
+    let mut changes = classify::parse_raw(&git.raw_diff(base_tree, candidate_tree)?)?;
+    let rust: Vec<_> = changes
+        .iter()
+        .map(|change| change.path.as_str())
+        .filter(|path| path.ends_with(".rs"))
+        .collect();
+    if !rust.is_empty() {
+        let mut macos = git.macos_sources(base_tree, &rust)?;
+        macos.extend(git.macos_sources(candidate_tree, &rust)?);
+        for change in &mut changes {
+            change.macos_cfg = macos.contains(&change.path);
+        }
+    }
+    let source: Vec<&str> = changes
         .iter()
         .filter(|change| classify::needs_lines(change))
         .map(|change| change.path.as_str())
         .collect();
-    let lines = if rust.is_empty() {
+    let lines = if source.is_empty() {
         BTreeMap::new()
     } else {
-        classify::parse_line_diff(&git.line_diff(base_tree, candidate_tree, &rust)?, &rust)?
+        classify::parse_line_diff(&git.line_diff(base_tree, candidate_tree, &source)?, &source)?
     };
     classify::classify(&changes, &lines, |path| {
         Ok(git.names(base_tree, path)? || git.names(candidate_tree, path)?)

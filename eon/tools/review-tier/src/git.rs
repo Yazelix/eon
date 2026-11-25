@@ -2,6 +2,7 @@
 //! and every call with `core.quotepath` off, diff prefixes pinned and the
 //! environment that could change git's output removed.
 use crate::Result;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 
@@ -150,6 +151,31 @@ impl Git {
     /// `git diff -U0` between two trees, limited to `paths` taken literally.
     pub fn line_diff(&self, base: &str, candidate: &str, paths: &[&str]) -> Result<Vec<u8>> {
         self.run(&line_diff_args(base, candidate, paths))
+    }
+
+    pub fn macos_sources(&self, tree: &str, paths: &[&str]) -> Result<BTreeSet<String>> {
+        let prefix = format!("{tree}:");
+        let mut args = vec![
+            "--literal-pathspecs",
+            "grep",
+            "-IlzE",
+            r#"target_os[[:space:]]*=[[:space:]]*"macos"|target_vendor[[:space:]]*=[[:space:]]*"apple"|not[[:space:]]*\([[:space:]]*target_os[[:space:]]*=[[:space:]]*"linux"[[:space:]]*\)"#,
+            tree,
+            "--",
+        ];
+        args.extend(paths);
+        let output = self.output(&args)?;
+        if output.status.code() == Some(1) {
+            return Ok(BTreeSet::new());
+        }
+        text(&checked(&args, output)?)?
+            .split_terminator('\0')
+            .map(|path| {
+                path.strip_prefix(&prefix)
+                    .map(str::to_owned)
+                    .ok_or_else(|| format!("unexpected grep path {path:?}").into())
+            })
+            .collect()
     }
 
     /// Whether any `.rs` or `.nix` file in `tree` contains `path` or its

@@ -137,6 +137,27 @@ crate.
   candidate tree or a higher tier sends the slice back. A change to the
   rules that lowers any tier needs Lucca's approval, as a contract change
   does.
+- **Darwin.** The lead uses `classify`'s `darwin:` line to set the
+  proof required on `edge`. The author and lead run
+  `nix develop -c eon-darwin-clippy` on the exact candidate and merged
+  landing trees respectively for every Rust change and every `ci` change.
+  A `ci` change needs green applicable Linux checks and Darwin cross-Clippy
+  to land. Immediately after landing, dispatch the listed native Darwin
+  build jobs on the exact landed `edge` commit and mac-proof when the route
+  requires it. A red post-landing Darwin result automatically files a P0
+  bug naming the landing commit and blocks the next release until a
+  fix-forward or revert restores green native Darwin. A `proof` change
+  needs green candidate runs for the listed Darwin build jobs and mac-proof
+  before landing. Its native evidence carries over when the delta from the
+  tested tree to the reviewed tree classifies `darwin: none`. Before
+  promoting to `main` or creating a release tag, require green Darwin
+  workspace tests, package build and mac-proof on the exact release tree.
+  `darwin: proof` covers macOS platform code (launch, the app bundle,
+  `cfg(target_os = "macos")` paths and mac-proof routes) and macOS-sensitive
+  code (sockets, paths, temp dirs, platform labels, shared memory, temporary
+  file and process APIs). Cross-Clippy checks compilation. Native proof
+  exercises runtime behavior such as socket discovery and Darwin
+  alternatives to `/dev/shm` and `O_TMPFILE`.
 - **High** (the default: contracts, wire and protocol code, Bend, lifecycle
   and trust-boundary code, Rust lines with `unsafe`, signal, exec,
   permission or socket-bind calls, mode and type changes, dependencies, Nix,

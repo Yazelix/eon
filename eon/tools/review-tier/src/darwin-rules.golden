@@ -7,10 +7,21 @@ proof  path: venus/src/accessibility.rs  native macOS surface
 proof  path: venus/src/main.rs  native macOS surface
 proof  path: venus/Cargo.toml  native macOS surface
 proof  path: launcher/**  native macOS surface
+proof  path: **/macos/**  native macOS surface
+proof  path: **/macos.rs  native macOS surface
+proof  path: **/darwin/**  native macOS surface
+proof  path: **/darwin.rs  native macOS surface
+proof  path: **/platform.rs  native macOS surface
 proof  path: nix/macos-app.nix  native macOS surface
 proof  path: eon/tools/mac-proof/**  native macOS surface
 proof  path: orbit/terminfo/eon-darwin.terminfo  native macOS surface
 proof  path: .github/workflows/mac-proof.yml  native macOS surface
+proof  path: orbit/src/socket.rs  macOS-sensitive boundary
+proof  path: venus/src/transport.rs  macOS-sensitive boundary
+proof  path: runtime/crates/eon-runtime/src/control.rs  macOS-sensitive boundary
+proof  path: runtime/crates/eon-runtime/src/editor.rs  macOS-sensitive boundary
+proof  path: runtime/crates/eon-runtime/src/supervisor/update/handoff.rs  macOS-sensitive boundary
+proof  path: runtime/crates/eon-runtime/src/supervisor/update/handoff/**  macOS-sensitive boundary
 none   path: .beads/**  planning
 none   path: **/*.md without a name match in .rs or .nix  Markdown not read by code
 ci     path: **/*.md  Markdown read by code
@@ -24,3 +35,49 @@ build  path: **/Cargo.toml
 build  path: components/**
 build  path: launcher/**
 build  path: .github/workflows/darwin-build.yml
+# A changed Rust file with a macOS or non-Linux cfg in either tree requires proof.
+# A source file type change requires proof.
+# Raise ci to proof for these tokens in added or removed source lines:
+proof  token: target_os="macos"
+proof  token: target_vendor="apple"
+proof  token: not(target_os="linux")
+proof  token: aarch64-darwin
+proof  token: /private/tmp
+proof  token: canonicalize
+proof  token: read_link
+proof  token: symlink
+proof  token: sockaddr
+proof  token: socket
+proof  token: unixstream
+proof  token: unixlistener
+proof  token: unixdatagram
+proof  token: o_nonblock
+proof  token: set_nonblocking(
+proof  token: accept4
+proof  token: sock_cloexec
+proof  token: .sock
+proof  token: runtime_dir
+proof  token: temp_dir
+proof  token: tmpdir
+proof  token: tempdir
+proof  token: tempfile
+proof  token: tmpfile
+proof  token: /dev/shm
+proof  token: shm_open
+proof  token: shm_unlink
+proof  token: shmget
+proof  token: shmat
+proof  token: memfd
+proof  token: mknodat
+proof  token: platform_label
+proof  token: platform_key
+proof  token: key_label
+proof  token: proc_pidinfo
+proof  token: /proc/
+proof  token: process::
+proof  token: command::new
+proof  token: posix_spawn
+proof  token: fork(
+proof  token: execve(
+proof  token: waitpid(
+proof  token: kill(
