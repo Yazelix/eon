@@ -883,6 +883,19 @@ pub(crate) fn fit_header_text(
     text: &str,
     width: f32,
 ) -> (String, f32) {
+    // Keep the positional prefix, such as a tab's number.
+    let prefix = text.find("  ").map_or(0, |index| index + 2);
+    fit_header_text_after(fonts, metrics, text, prefix, width)
+}
+
+/// Fit `text` as [`fit_header_text`] does, eliding only after its first `prefix` bytes.
+pub(crate) fn fit_header_text_after(
+    fonts: &mut FontSystem,
+    metrics: CellMetrics,
+    text: &str,
+    prefix: usize,
+    width: f32,
+) -> (String, f32) {
     let title = chrome_title_metrics(metrics);
     let mut buffer = Buffer::new(fonts, Metrics::new(title.font_size, title.line_height));
     buffer.set_size(None, Some(title.text_height));
@@ -905,8 +918,7 @@ pub(crate) fn fit_header_text(
         return (text.to_owned(), measured);
     }
 
-    // Keep the positional prefix; cuts use the shaper's original cluster boundaries.
-    let prefix = text.find("  ").map_or(0, |index| index + 2);
+    // Cuts use the shaper's original cluster boundaries.
     let mut boundaries: Vec<_> = buffer
         .layout_runs()
         .flat_map(|run| run.glyphs.iter())

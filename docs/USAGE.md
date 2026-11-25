@@ -1152,7 +1152,10 @@ the panes' rows in pane order. A row shows:
   with `claude --name eon-9a`; otherwise the title the agent reports, and
   without that, the app's name, such as `Codex`;
 - how long ago the state changed (`now`, `4m`, `2h`, `3d`);
-- the pane (`p3`) or popup it runs in.
+- the pane (`p3`) or popup it runs in;
+- the pane's tag, when `eon pane rename` set one, last on the second line:
+  `1h · p25 · eon-igae.25`. On a narrow sidebar only the tag shortens, with `…`;
+  the age and pane stay whole.
 
 On Linux, the four measured Codex code-mode/ChatGPT REPL helpers alone leave
 the row finished or idle. Builds, servers and watchers started as separate
@@ -2056,10 +2059,12 @@ before the literal `--` when NAME looks like an option. Invalid names or tags
 leave both fields unchanged.
 
 Pane JSON exposes nullable `tag` beside `pinned_name`, including in subscription
-snapshots, gaps and pane events. A tag change emits `pane-renamed`. Tags follow
-the same lifetime as pins and are not interpreted as Beads IDs. Setting a tag
-requires a fresh window using the matching CLI, Runtime and Venus build;
-existing windows keep their original build and terminals.
+snapshots, gaps and pane events. A tag change emits `pane-renamed`. The agent
+sidebar shows the tag at the end of the pane row's second line, and screen
+readers hear the whole tag. Tags follow the same lifetime as pins and are not
+interpreted as Beads IDs. Setting a tag requires a fresh window using the
+matching CLI, Runtime and Venus build; existing windows keep their original
+build and terminals.
 
 ## Subscribe to events
 

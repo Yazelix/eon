@@ -886,6 +886,42 @@ fn agent_sidebar_rows_show_attention_in_tab_order_and_reveal_the_focused_row() {
         ]
     );
 
+    // A pane's tag ends its row's second line, and only the tag shortens (eon-wih11).
+    let mut tagged = snapshot.clone();
+    tagged.tabs[2].columns[0].panes[0].tag = Some("t4".into());
+    tagged.tabs[2].columns[1].panes[0].tag = Some("eon-igae.25".into());
+    let scene = project(&tagged, 800, None);
+    let detail = |id| scene.sidebar_row(id).unwrap().detail.as_str();
+    assert_eq!(detail("p4"), "now · p4 · status stale · t4");
+    assert_eq!(detail("p5"), "2h · p5 · eon-igae.25");
+    let spoken = "Idle: aider in tab 3, api, p5, tag eon-igae.25, changed just now";
+    for (fit, shown) in [("now · p5 · …", "now · p5 · …"), ("now · p5 ·", "now · p5")] {
+        let mut asked = None;
+        let scene = WorkspaceScene::from_snapshot_with_zoom(
+            &tagged,
+            EonBar::default(),
+            PhysicalSize::new(1400, 800),
+            metrics,
+            0.0,
+            0.0,
+            |kind, text| match kind {
+                HeaderText::After(prefix, width) if text.ends_with("igae.25") => {
+                    asked = Some((text[..prefix].to_owned(), width));
+                    (fit.to_owned(), 0.0)
+                }
+                _ => (text.into(), text.len() as f32 * 10.0),
+            },
+            None,
+            false,
+            SidebarView::default(),
+        );
+        let row = scene.sidebar_row("p5").unwrap();
+        let width = row.text_right - row.text_left;
+        assert_eq!(asked, Some(("now · p5 · ".to_owned(), width)));
+        assert_eq!(row.detail, shown);
+        assert_eq!(row.accessible_label, spoken);
+    }
+
     // Pane pins name both attention surfaces without changing the reporting app or popup.
     let mut renamed = snapshot.clone();
     for (app, name, pin, expected, provider) in [
@@ -1280,6 +1316,7 @@ fn popup_marker_reserves_the_right_edge_and_tracks_row_height_and_scroll() {
                 let mut row = attention_row(
                     &attention,
                     None,
+                    None,
                     "t1",
                     "u1",
                     "חלון",
@@ -1387,6 +1424,7 @@ fn popup_detail_keeps_metadata_ltr_after_an_rtl_catalog_label() {
                 others: 2,
             }),
         },
+        None,
         None,
         "t1",
         "u1",
