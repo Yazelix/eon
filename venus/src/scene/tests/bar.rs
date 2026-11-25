@@ -3169,7 +3169,7 @@ fn a_full_bar_with_room_shows_the_icon() {
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![workspace("s1", "main", 0), workspace("s2", "evo", 1)],
+            workspaces: vec![workspace("s1", "main", 0), workspace("s2", "dev", 1)],
             active_tab: "t1".into(),
             geometry: PopupGeometry {
                 side_margin: 8.0,
