@@ -495,7 +495,14 @@ dependency decision does not establish public-distribution proof.
   The Linux candidate entry still requires `WAYLAND_DISPLAY`.
   Related work:
   - eon-yp6vg.58 owns the `accesskit_macos` gap.
-  - eon-yp6vg.7.2 owns the scroll gain.
+  - Native input goes through Rune's raw winit event hook into Venus's input
+    policy. The candidate keeps root winit's unscaled Wayland finger and
+    continuous axis deltas, matching shipping Venus. Rune's vendored winit
+    applies a 12× gain to those sources.
+  - Direct native event, caret and plain clipboard bindings are part of the
+    private host. The host cutover from eon-yp6vg.20 removes the temporary
+    plumbing. The candidate caps queued clipboard effects so an outstanding
+    native paste cannot grow the worker queue indefinitely.
 - **Version policy:** the pin moves only by a reviewed fork commit on a
   protected branch. Each move updates the `rev` in both manifests and the
   Nix hash, and repeats the lock alignment and the checks above.

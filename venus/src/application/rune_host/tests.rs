@@ -10,8 +10,8 @@ use std::{
     sync::mpsc,
 };
 use winit::{
-    event::{DeviceId, TouchPhase},
-    keyboard::{KeyCode, PhysicalKey},
+    event::{DeviceId, Touch, TouchPhase},
+    keyboard::{KeyCode, ModifiersState, PhysicalKey},
 };
 
 /// A lane that records what it is asked, in order; `quit` is the app-level end.
@@ -568,17 +568,24 @@ fn unrelated_snapshots_preserve_warm_dialogs_and_the_next_sidebar_scroll() {
     app.build_workspace(true, true);
     next.busy = None;
     app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next.clone())));
-    let sidebar = app.workspace_scene().unwrap().sidebar().unwrap();
+    let scene = app.workspace_scene().unwrap();
+    let sidebar = scene.sidebar().unwrap();
+    let metrics = app.window.as_ref().unwrap().renderer.metrics();
     app.cursor =
         PhysicalPosition::new(f64::from(sidebar.left + 5.0), f64::from(sidebar.top + 30.0));
+    let delta = MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -21.0));
+    assert_eq!(
+        sidebar_wheel(&scene, app.cursor, delta, metrics),
+        Some(63.0)
+    );
     app.presentation.publish(app.presentation.candidate(None));
     host.window_event(WindowEvent::MouseWheel {
         device_id: DeviceId::dummy(),
-        delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -21.0)),
+        delta,
         phase: TouchPhase::Moved,
     });
     let app = &mut host.app;
-    assert_eq!(app.sidebar_scroll, 63.0);
+    assert_eq!(app.sidebar_scroll, 42.0);
     app.set_shortcut_viewer(true);
     app.dialog = app.dialog_scene();
     DIALOG_BUILDS.with(|calls| calls.set(0));
@@ -1160,10 +1167,161 @@ fn actions_until_marker(host: &mut Host, stream: &UnixStream) -> Vec<ClientMessa
             | ClientMessage::PreviewVertical { .. }
             | ClientMessage::ScrollVertical { .. }
             | ClientMessage::Mouse(_)
+            | ClientMessage::Paste(_)
             | ClientMessage::Selection(_)) => actions.push(message),
             _ => {}
         }
     }
+}
+
+#[test]
+fn native_input_keeps_touch_and_cancelled_wheel_phases() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let peer = Peer::new(&mut host, "native-phases");
+    let stream = peer.accept();
+    attach_fixture(&peer, &stream, &mut host, NATIVE);
+    let candidate = host.prepare_grid(native_slot()).unwrap();
+    present(&mut host, candidate);
+    actions_until_marker(&mut host, &stream);
+    let mut tx = Tx::default();
+    assert!(host.native_event(
+        &WindowEvent::ModifiersChanged(ModifiersState::SHIFT.into()),
+        &mut tx
+    ));
+    assert_eq!(host.app.input.modifiers(), session::Modifiers::SHIFT);
+    assert!(host.native_event(
+        &WindowEvent::Touch(Touch {
+            device_id: DeviceId::dummy(),
+            phase: TouchPhase::Cancelled,
+            location: PhysicalPosition::new(4.0, 4.0),
+            force: None,
+            id: 1,
+        }),
+        &mut tx,
+    ));
+    assert!(actions_until_marker(&mut host, &stream).is_empty());
+
+    for phase in [TouchPhase::Started, TouchPhase::Cancelled] {
+        assert!(host.native_event(
+            &WindowEvent::MouseWheel {
+                device_id: DeviceId::dummy(),
+                delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, 90.0)),
+                phase,
+            },
+            &mut tx,
+        ));
+        assert_eq!(
+            host.app.terminal.terminal_scroll.phase_active,
+            phase == TouchPhase::Started
+        );
+        assert_eq!(host.app.terminal.terminal_scroll.velocity, 0.0);
+    }
+    assert!(matches!(
+        actions_until_marker(&mut host, &stream).as_slice(),
+        [ClientMessage::PreviewVertical {
+            frame_revision: 1,
+            ..
+        }]
+    ));
+    assert!(!host.native_event(&WindowEvent::Focused(false), &mut tx));
+}
+
+#[test]
+fn ime_caret_uses_logical_points_and_enables_with_a_hidden_cursor() {
+    let window = RuneWindow::default();
+    let area = (
+        PhysicalPosition::new(60.0, 42.0),
+        PhysicalSize::new(20.0, 26.0),
+    );
+    window.sync_ime(true, Some(area));
+    assert_eq!(
+        ime_rect(window.ime_area.get().unwrap(), 2.0),
+        [30.0, 21.0, 10.0, 13.0]
+    );
+    window.sync_ime(true, None);
+    assert!(window.ime_area.get().is_some());
+    window.sync_ime(false, Some(area));
+    assert!(window.ime_area.get().is_none());
+}
+
+#[test]
+fn paste_completion_is_retired_by_focus_or_selected_attachment_changes() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    on_focus(&mut host, true, &mut Tx::default());
+    let peer = Peer::new(&mut host, "paste-admission");
+    let stream = peer.accept();
+    attach_fixture(&peer, &stream, &mut host, NATIVE);
+    actions_until_marker(&mut host, &stream);
+    let arm = |host: &Host| {
+        let window = host.rune_window().unwrap();
+        window.reading_paste.set(true);
+        window.paste_target.set(paste_target(&host.app));
+    };
+    let finish = |host: &mut Host, text: &str| {
+        host.user_event(
+            UserEvent::RuneClipboard(Clipboard::Read(Outcome::Text(text.into()))),
+            &mut Tx::default(),
+        )
+    };
+    arm(&host);
+    assert!(read_clipboard(&mut host.app));
+    assert!(
+        host.app
+            .terminal
+            .model
+            .notice()
+            .unwrap()
+            .contains("already pending")
+    );
+    on_focus(&mut host, false, &mut Tx::default());
+    on_focus(&mut host, true, &mut Tx::default());
+    assert!(host.rune_window().unwrap().reading_paste.get());
+    finish(&mut host, "old focus");
+    arm(&host);
+    host.app.attachments += 2;
+    finish(&mut host, "old selection");
+    assert!(actions_until_marker(&mut host, &stream).is_empty());
+
+    arm(&host);
+    finish(&mut host, "current");
+    assert_eq!(
+        actions_until_marker(&mut host, &stream),
+        [ClientMessage::Paste(b"current".to_vec())]
+    );
+
+    for text in [String::new(), "x".repeat(session::MAX_PASTE_BYTES + 1)] {
+        arm(&host);
+        finish(&mut host, &text);
+        assert!(host.app.terminal.model.notice().is_some());
+    }
+    assert!(actions_until_marker(&mut host, &stream).is_empty());
+}
+
+#[test]
+fn a_clipboard_completion_follows_the_originating_column() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.app
+        .terminal
+        .model
+        .apply(ServerMessage::Attached)
+        .unwrap();
+    let attachment = host.app.terminal.model.image_attachment().unwrap();
+    let column = std::mem::replace(&mut host.app.terminal, TerminalView::new(None));
+    host.app.column_views.push(column);
+    complete_clipboard(
+        &mut host.app,
+        Clipboard::Written(attachment, NativeClipboard::Both, false),
+    );
+    assert!(host.app.terminal.model.notice().is_none());
+    assert!(
+        host.app.column_views[0]
+            .model
+            .notice()
+            .unwrap()
+            .contains("could not write")
+    );
 }
 
 fn wheel(host: &mut Host) {
@@ -1187,6 +1345,131 @@ fn left(host: &mut Host, state: ElementState) {
         state,
         button: MouseButton::Left,
     });
+}
+
+#[test]
+fn undrawn_dialogs_capture_pointer_without_activating_targets() {
+    let mut host = busy_host(|| {});
+    host.apply_geometry(NATIVE);
+    let target = |host: &mut Host, rect: SceneRect| {
+        let frame = host.app.presentation.candidate(Some(1));
+        present(host, frame);
+        host.window_event(WindowEvent::CursorMoved {
+            device_id: DeviceId::dummy(),
+            position: PhysicalPosition::new(
+                f64::from(rect.left + rect.width / 2.0),
+                f64::from(rect.top + rect.height / 2.0),
+            ),
+        });
+    };
+
+    host.app.set_window_menu(true);
+    let dialog = host.app.dialog_scene().unwrap();
+    let quit = dialog
+        .menu_rows()
+        .find(|row| row.menu_action == Some(WindowMenuAction::Quit))
+        .unwrap();
+    target(&mut host, quit.rect.intersection(dialog.content).unwrap());
+    left(&mut host, ElementState::Pressed);
+    left(&mut host, ElementState::Released);
+    assert!(host.app.window_menu.open);
+    assert_eq!(
+        host.app.window_menu.highlighted,
+        Some(WindowMenuAction::Detach)
+    );
+    assert!(!quit_prompt_open(&host.app));
+
+    host.app.set_window_menu(false);
+    host.app.set_attention_inbox(true);
+    let dialog = host.app.dialog_scene().unwrap();
+    let chip = dialog.filters.iter().find(|chip| !chip.selected).unwrap();
+    target(&mut host, chip.rect);
+    left(&mut host, ElementState::Pressed);
+    left(&mut host, ElementState::Released);
+    assert!(host.app.attention_inbox.open);
+    assert_eq!(host.app.attention_inbox.filter, AttentionFilter::All);
+    assert!(!host.app.input.is_selecting());
+}
+
+#[test]
+fn withdrawn_frames_stop_scroll_even_after_a_late_preview() {
+    for (name, outcome, skip) in [
+        (
+            "surface-scroll",
+            FrameOutcome::Skipped,
+            Some(FrameSkip::Surface),
+        ),
+        ("undrawn-scroll", FrameOutcome::Drawn, None),
+    ] {
+        let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+        host.apply_geometry(NATIVE);
+        on_focus(&mut host, true, &mut Tx::default());
+        let peer = Peer::new(&mut host, name);
+        let stream = peer.accept();
+        attach_fixture(&peer, &stream, &mut host, NATIVE);
+        let shown = host.prepare_grid(native_slot()).unwrap();
+        present(&mut host, shown);
+        actions_until_marker(&mut host, &stream);
+
+        let now = Instant::now();
+        let height = f64::from(host.app.window.as_ref().unwrap().renderer.metrics().height);
+        let motion = &mut host.app.terminal.terminal_scroll;
+        motion.push_pixels(30.0, TouchPhase::Started, now, height);
+        motion.push_pixels(
+            30.0,
+            TouchPhase::Ended,
+            now + Duration::from_millis(20),
+            height,
+        );
+        host.app.drive_terminal_scroll();
+        let direction = session::VerticalDirection::Up;
+        assert_eq!(
+            actions_until_marker(&mut host, &stream),
+            [ClientMessage::PreviewVertical {
+                frame_revision: 1,
+                direction
+            }]
+        );
+        let velocity = host.app.terminal.terminal_scroll.velocity;
+        assert!(velocity > 0.0);
+        assert!(
+            !host
+                .frames
+                .report(FrameOutcome::Skipped, Some(FrameSkip::Timeout))
+        );
+        assert_eq!(host.app.terminal.terminal_scroll.velocity, velocity);
+
+        assert!(host.frames.report(outcome, skip));
+        host.receive_frame(&mut Tx::default());
+        peer.send(
+            &stream,
+            &mut host,
+            [ServerMessage::VerticalPreview(session::VerticalPreview {
+                frame_revision: 1,
+                direction,
+                outcome: session::PreviewOutcome::TerminalRouted,
+            })],
+            |host| host.app.terminal.model.scroll_preview().is_some(),
+        );
+        host.app.advance_deadlines(now + Duration::from_secs(1));
+        host.app.drive_terminal_scroll();
+        wheel(&mut host);
+        assert_eq!(host.app.presented_revision(), None);
+        assert_eq!(host.app.terminal.terminal_scroll.velocity, 0.0);
+        assert!(actions_until_marker(&mut host, &stream).is_empty());
+
+        let matching = host.prepare_grid(native_slot()).unwrap();
+        present(&mut host, matching);
+        wheel(&mut host);
+        assert!(matches!(
+            actions_until_marker(&mut host, &stream).as_slice(),
+            [ClientMessage::Mouse(_)
+                | ClientMessage::PreviewVertical {
+                    frame_revision: 1,
+                    ..
+                }]
+        ));
+    }
 }
 
 /// Replays both intervals in the Step 2 native resize sentinel.
@@ -1248,6 +1531,9 @@ fn a_raw_resize_withdraws_input_until_a_draw_of_the_applied_grid() {
         host.app.terminal.model.scene().unwrap().revision == 2
     });
     wheel(&mut host);
+    left(&mut host, ElementState::Pressed);
+    left(&mut host, ElementState::Released);
+    assert!(host.app.terminal.deferred_selection.is_empty());
     assert!(actions_until_marker(&mut host, &stream).is_empty());
     let qualifying = host.prepare_grid(half_slot).unwrap();
     present_at(&mut host, half_slot, qualifying);

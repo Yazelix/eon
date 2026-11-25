@@ -516,6 +516,8 @@ impl SelectionGate {
 #[derive(Debug)]
 enum UserEvent {
     AccessKit(AccessKitEvent),
+    #[cfg(feature = "candidate-rune")]
+    RuneClipboard(rune_host::Clipboard),
     Exit,
     Present,
     Transport,
@@ -724,7 +726,10 @@ impl NativeWindow {
         }
     }
 
-    /// Rune: IME is eon-yp6vg.7.2's binding; nothing is set yet.
+    fn is_rune(&self) -> bool {
+        !matches!(self, Self::Winit { .. })
+    }
+
     fn sync_ime(&mut self, allowed: bool, area: Option<PhysicalCaretArea>) {
         match self {
             #[cfg(target_os = "linux")]
@@ -740,7 +745,7 @@ impl NativeWindow {
                 window.set_ime_allowed(allowed);
             }
             #[cfg(feature = "candidate-rune")]
-            Self::Rune(_) => {}
+            Self::Rune(window) => window.sync_ime(allowed, area),
         }
     }
 
@@ -779,7 +784,6 @@ impl NativeWindow {
         }
     }
 
-    /// Rune: pointer input is eon-yp6vg.7.2's binding; the cursor stays Rune's.
     fn set_cursor(&self, icon: CursorIcon) {
         match self {
             Self::Winit { window, .. } => window.set_cursor(icon),
@@ -788,7 +792,6 @@ impl NativeWindow {
         }
     }
 
-    /// Rune: pointer input is eon-yp6vg.7.2's binding, so no drag starts here.
     fn drag_window(&self) -> std::result::Result<(), winit::error::ExternalError> {
         match self {
             Self::Winit { window, .. } => window.drag_window(),
@@ -1496,6 +1499,17 @@ impl TerminalView {
         self.model.rows_from_live().is_some_and(|rows| rows > 0)
     }
 
+    fn selection_presented(&mut self, revision: u64, now: Instant) {
+        let above_live = self.scrolled_back();
+        self.selection_scroll
+            .presented(revision, now, self.pending_viewport, above_live);
+    }
+
+    fn input_deadline(&self) -> Option<Instant> {
+        let retry = self.terminal_scroll.preview_retry_at();
+        self.selection_scroll.next.into_iter().chain(retry).min()
+    }
+
     fn new(orbit_socket: Option<PathBuf>) -> Self {
         Self {
             orbit_socket,
@@ -2009,10 +2023,14 @@ impl Application {
     }
 
     fn drive_terminal_scroll(&mut self) {
-        if matches!(
-            self.terminal.pending_viewport,
-            Some(PendingViewportRequest::SelectionTick(_))
-        ) {
+        let pending = self.terminal.pending_viewport;
+        let hosted = self
+            .window
+            .as_ref()
+            .is_some_and(|window| window.native.is_rune());
+        if matches!(pending, Some(PendingViewportRequest::SelectionTick(_)))
+            || hosted && self.presented_revision().is_none()
+        {
             return;
         }
         let Some(frame_revision) = self.terminal.model.scene().map(|scene| scene.revision) else {
@@ -3915,7 +3933,8 @@ impl Application {
                 }
                 match result {
                     Ok(Some(ModelEffect::Clipboard(effect))) => {
-                        write_clipboard_effect(&mut view.model, effect);
+                        let host = (&self.events, &self.window);
+                        write_clipboard_effect(host, &mut view.model, effect);
                     }
                     Ok(Some(effect)) => image_effect = Some(effect),
                     Ok(None) => {}
@@ -4274,8 +4293,7 @@ impl Application {
             self.next_disk,
             self.next_gpu,
             next_marker.filter(|due| *due > now),
-            self.terminal.selection_scroll.next,
-            self.terminal.terminal_scroll.preview_retry_at(),
+            self.terminal.input_deadline(),
             self.terminal.orbit_retry.deadline,
             self.column_views
                 .iter()
@@ -5210,7 +5228,10 @@ impl Application {
                 let accepted_frame = frame && result.is_ok();
                 let accepted = result.is_ok();
                 match result {
-                    Ok(Some(ModelEffect::Clipboard(effect))) => self.write_clipboard(effect),
+                    Ok(Some(ModelEffect::Clipboard(effect))) => {
+                        let host = (&self.events, &self.window);
+                        write_clipboard_effect(host, &mut self.terminal.model, effect);
+                    }
                     Ok(Some(effect)) => self.apply_image_effect(effect),
                     Ok(None) => {}
                     Err(error) => self.terminal.model.mark_lost(error.to_string()),
@@ -5708,6 +5729,8 @@ impl Application {
                 workspace_focus,
                 self.terminal.model.is_attached(),
             );
+        #[cfg(feature = "candidate-rune")]
+        let retire_paste = !ime_allowed || self.input_locked();
         let pointer_icon = self.pointer_icon(dialog.is_some(), scrollback_rect);
         let Some(state) = &mut self.window else {
             return;
@@ -5726,9 +5749,8 @@ impl Application {
             .and_then(|scene| scene.cursor)
             .map(|cursor| {
                 let metrics = state.renderer.metrics();
-                let origin = workspace.as_deref().map_or((0.0, 0.0), |workspace| {
-                    (workspace.terminal.left, workspace.terminal.top)
-                });
+                let scene = workspace.as_deref().filter(|_| !state.native.is_rune());
+                let origin = terminal_origin(scene);
                 let left =
                     origin.0 + metrics.padding + f32::from(cursor.leading_column()) * metrics.width;
                 let top = origin.1 + metrics.padding + f32::from(cursor.row) * metrics.height;
@@ -5738,6 +5760,10 @@ impl Application {
                 )
             });
         state.native.sync_ime(ime_allowed, caret);
+        #[cfg(feature = "candidate-rune")]
+        if retire_paste && let NativeWindow::Rune(window) = &state.native {
+            window.retire_paste();
+        }
         state.native.set_cursor(pointer_icon);
         if let Some((accessibility, adapter)) = state.native.accessibility() {
             accessibility.update(
@@ -5970,15 +5996,18 @@ impl Application {
         self.presentation.presented_revision()
     }
 
-    fn write_clipboard(&mut self, effect: ClipboardEffect) {
-        write_clipboard_effect(&mut self.terminal.model, effect);
-    }
-
     fn paste_clipboard(&mut self) {
+        #[cfg(feature = "candidate-rune")]
+        if rune_host::read_clipboard(self) {
+            return;
+        }
         if !self.terminal.model.is_attached() {
             return;
         }
-        let result = read_native_clipboard().and_then(clipboard_paste_message);
+        self.complete_paste(read_native_clipboard().and_then(clipboard_paste_message));
+    }
+
+    fn complete_paste(&mut self, result: std::result::Result<ClientMessage, String>) {
         match result {
             Ok(message) => {
                 self.send(message);
@@ -6105,14 +6134,20 @@ impl Application {
         self.links.unshifted = false;
     }
 
+    fn advance_terminal_scroll(&mut self, now: Instant) -> bool {
+        if self.window_focused && !self.window_occluded {
+            self.terminal.terminal_scroll.advance(now);
+            self.drive_terminal_scroll();
+            return self.terminal.terminal_scroll.velocity != 0.0;
+        }
+        false
+    }
+
     fn render(&mut self) {
         self.prepare_workspace();
         bench_trace("render_begin", "");
         self.sync_images();
-        if self.window_focused && !self.window_occluded {
-            self.terminal.terminal_scroll.advance(Instant::now());
-            self.drive_terminal_scroll();
-        }
+        let kinetic_active = self.advance_terminal_scroll(Instant::now());
         if !cursor_animation_allowed(self.window_focused, self.window_occluded)
             || (self.terminal.model.scene().is_some()
                 && (!self.terminal.model.is_attached()
@@ -6152,7 +6187,6 @@ impl Application {
         };
         let preedit = self.input.preedit();
         let workspace_focus = self.workspace_focus;
-        let kinetic_active = self.terminal.terminal_scroll.velocity != 0.0;
         let link_generation = (candidate.revision.is_some()
             && self.link_surface_available(unshifted))
         .then_some(candidate.generation);
@@ -6300,13 +6334,7 @@ impl Application {
                     || state.renderer.presented_scrollback_rect() != prior_scrollback_target;
                 self.presentation.publish(candidate);
                 if let Some(revision) = candidate.revision {
-                    let above_live = self.terminal.scrolled_back();
-                    self.terminal.selection_scroll.presented(
-                        revision,
-                        Instant::now(),
-                        self.terminal.pending_viewport,
-                        above_live,
-                    );
+                    self.terminal.selection_presented(revision, Instant::now());
                 }
                 self.links.unshifted = unshifted;
                 self.links.shown = shown;
@@ -6505,11 +6533,15 @@ impl Application {
             self.pending_pane = None;
         }
         PendingClose::on_window(&mut self.pending_close, &event);
+        let hosted = self
+            .window
+            .as_ref()
+            .is_some_and(|state| state.native.is_rune());
         let workspace_focus = self.workspace_focus;
         let dialog_open = self.dialog_open();
         let presentation_current = self.presentation.has_presented_geometry();
         let presented_revision = self.presentation.presented_revision();
-        if let WindowEvent::MouseInput { state, button, .. } = &event {
+        if !hosted && let WindowEvent::MouseInput { state, button, .. } = &event {
             let window_menu_scene = self.window_menu.open.then(|| self.dialog_scene()).flatten();
             let outside_menu = window_menu_scene.as_ref().is_some_and(|dialog| {
                 !dialog
@@ -6696,7 +6728,7 @@ impl Application {
                     self.terminal.selection_scroll.cancel();
                     self.cursor = position;
                     self.links.pointer_inside = true;
-                    if self.window_menu.open {
+                    if self.window_menu.open && !hosted {
                         let action = self.dialog_scene().and_then(|dialog| {
                             dialog
                                 .menu_target_at(position.x as f32, position.y as f32)
@@ -6721,6 +6753,8 @@ impl Application {
                 let workspace = self.workspace_scene();
                 let scrollback_rect = self.scrollback_rect(workspace.as_deref());
                 let state = self.window.as_ref().expect("native event has a window");
+                let screen = terminal_screen(workspace.as_deref(), state.renderer.size());
+                let workspace = workspace.filter(|_| !hosted);
                 let header_at = |position: PhysicalPosition<f64>| {
                     workspace.as_deref().and_then(|scene| {
                         match scene.hit_test(position.x as f32, position.y as f32) {
@@ -6779,7 +6813,6 @@ impl Application {
                 }
                 let motion = move_terminal_pointer(&mut self.input, position, workspace.as_deref());
                 if self.input.is_selecting() {
-                    let screen = terminal_screen(workspace.as_deref(), state.renderer.size());
                     let size = surface_size(screen, state.renderer.metrics());
                     if let Some(message) = size.and_then(|size| self.input.selection_motion(size)) {
                         self.send_or_defer_selection(message, presentation_current);
@@ -6794,6 +6827,7 @@ impl Application {
                         self.terminal.pending_viewport,
                     );
                 } else if presented_revision.is_some()
+                    && (!hosted || within_screen(position, screen))
                     && workspace.as_deref().is_none_or(|workspace| {
                         matches!(
                             workspace.hit_test(position.x as f32, position.y as f32),
@@ -6857,6 +6891,7 @@ impl Application {
                 if dialog_open {
                     bench_trace("input_consumed", "dialog-pointer");
                     if self.attention_inbox.open
+                        && !hosted
                         && presentation_current
                         && button == MouseButton::Left
                         && button_state == ElementState::Pressed
@@ -6876,6 +6911,8 @@ impl Application {
                 let candidate = self.presentation_candidate(workspace.as_deref());
                 let scrollback_rect = self.scrollback_rect(workspace.as_deref());
                 let state = self.window.as_mut().expect("native event has a window");
+                let screen = terminal_screen(workspace.as_deref(), state.renderer.size());
+                let workspace = workspace.filter(|_| !hosted);
                 if button_state == ElementState::Pressed {
                     let scrolling = self
                         .terminal
@@ -6905,7 +6942,6 @@ impl Application {
                         state.native.request_redraw();
                     }
                 }
-                let renderer_size = state.renderer.size();
                 let metrics = state.renderer.metrics();
                 if button == MouseButton::Left && button_state == ElementState::Pressed {
                     self.header_press = None;
@@ -7060,15 +7096,24 @@ impl Application {
                     matches!(hit, Some(WorkspaceHit::Terminal)),
                     button_state,
                     presentation_current
-                        || button == MouseButton::Left && candidate.revision.is_some(),
+                        || !hosted && button == MouseButton::Left && candidate.revision.is_some(),
                 ) {
                     if button_state == ElementState::Pressed {
                         bench_trace("input_rejected", "non-terminal-or-unpublished-geometry");
                     }
                     return;
                 }
+                if hosted
+                    && (presented_revision.is_none() && !self.input.is_selecting()
+                        || button_state == ElementState::Pressed
+                            && !within_screen(self.cursor, screen))
+                {
+                    if button_state == ElementState::Released {
+                        self.input.commit_mouse_button(button_state, button);
+                    }
+                    return;
+                }
                 let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_deref());
-                let screen = terminal_screen(workspace.as_deref(), renderer_size);
                 let size = surface_size(screen, metrics);
                 let selection = size.and_then(|size| {
                     self.input.selection_button(
@@ -7104,6 +7149,8 @@ impl Application {
                 self.terminal.scrollback_press = None;
                 let workspace = self.workspace_scene();
                 let state = self.window.as_mut().expect("native event has a window");
+                let screen = terminal_screen(workspace.as_deref(), state.renderer.size());
+                let workspace = workspace.filter(|_| !hosted);
                 let metrics = state.renderer.metrics();
                 let hit = workspace.as_deref().and_then(|workspace| {
                     workspace.hit_test(self.cursor.x as f32, self.cursor.y as f32)
@@ -7156,7 +7203,7 @@ impl Application {
                 if workspace.is_some() && !matches!(hit, Some(WorkspaceHit::Terminal)) {
                     return;
                 }
-                if presented_revision.is_none() {
+                if presented_revision.is_none() || hosted && !within_screen(self.cursor, screen) {
                     return;
                 }
                 let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_deref());
@@ -7210,6 +7257,8 @@ impl Application {
         mut native: impl FnMut(&mut Self, NativeRequest),
     ) {
         match event {
+            #[cfg(feature = "candidate-rune")]
+            UserEvent::RuneClipboard(result) => rune_host::complete_clipboard(self, result),
             UserEvent::WindowCommandFailed(detail) => {
                 self.terminal
                     .model
@@ -7730,12 +7779,21 @@ fn orbit_transport(wake: &Wake, socket: PathBuf) -> Transport {
 }
 
 /// Write a terminal's clipboard effect natively and report the result on that terminal.
-fn write_clipboard_effect(model: &mut SessionModel, effect: ClipboardEffect) {
+fn write_clipboard_effect(
+    _host: (&EventSink, &Option<WindowState>),
+    model: &mut SessionModel,
+    effect: ClipboardEffect,
+) {
     let clipboard = native_clipboard(&effect);
     let text = match effect {
         ClipboardEffect::SelectionCopy { text, .. }
         | ClipboardEffect::TerminalWrite { text, .. } => text,
     };
+    #[cfg(feature = "candidate-rune")]
+    if let Some(NativeWindow::Rune(window)) = _host.1.as_ref().map(|state| &state.native) {
+        window.write_clipboard(_host.0, model, clipboard, text);
+        return;
+    }
     let result = write_native_clipboard(clipboard, text);
     model.set_venus_notice(
         LocalNoticeSource::Clipboard,
@@ -7779,13 +7837,19 @@ fn move_terminal_pointer(
     position: PhysicalPosition<f64>,
     workspace: Option<&WorkspaceScene>,
 ) -> Option<ClientMessage> {
-    let (x, y) = workspace.map_or((position.x, position.y), |workspace| {
-        (
-            position.x - f64::from(workspace.terminal.left),
-            position.y - f64::from(workspace.terminal.top),
-        )
-    });
-    input.move_pointer(x, y)
+    let (x, y) = terminal_origin(workspace);
+    input.move_pointer(position.x - f64::from(x), position.y - f64::from(y))
+}
+
+fn terminal_origin(workspace: Option<&WorkspaceScene>) -> (f32, f32) {
+    workspace.map_or((0.0, 0.0), |scene| {
+        (scene.terminal.left, scene.terminal.top)
+    })
+}
+
+fn within_screen(position: PhysicalPosition<f64>, screen: PhysicalSize<u32>) -> bool {
+    (0.0..f64::from(screen.width)).contains(&position.x)
+        && (0.0..f64::from(screen.height)).contains(&position.y)
 }
 
 /// Whether the scrollback pill takes pointer motion at `position`. A held
@@ -8481,17 +8545,29 @@ fn clipboard_paste_message(input: impl Read) -> std::result::Result<ClientMessag
         .take(session::MAX_PASTE_BYTES as u64 + 1)
         .read_to_end(&mut text)
         .map_err(|error| error.to_string())?;
-    if text.is_empty() {
-        return Err("The native clipboard contains no text".into());
-    }
-    if text.len() > session::MAX_PASTE_BYTES {
-        return Err(format!(
-            "Native clipboard text exceeds the {} byte paste limit",
-            session::MAX_PASTE_BYTES
-        ));
-    }
-    std::str::from_utf8(&text).map_err(|_| "stream did not contain valid UTF-8".to_string())?;
+    check_clipboard_paste_size(text.len())?;
+    std::str::from_utf8(&text).map_err(|_| CLIPBOARD_INVALID_UTF8.to_string())?;
     Ok(ClientMessage::Paste(text))
+}
+
+fn check_clipboard_paste_size(size: usize) -> std::result::Result<(), String> {
+    if size == 0 {
+        return Err(CLIPBOARD_EMPTY.into());
+    }
+    if size > session::MAX_PASTE_BYTES {
+        return Err(clipboard_paste_limit());
+    }
+    Ok(())
+}
+
+const CLIPBOARD_EMPTY: &str = "The native clipboard contains no text";
+const CLIPBOARD_INVALID_UTF8: &str = "stream did not contain valid UTF-8";
+
+fn clipboard_paste_limit() -> String {
+    format!(
+        "Native clipboard text exceeds the {} byte paste limit",
+        session::MAX_PASTE_BYTES
+    )
 }
 
 fn clipboard_paste_notice(error: impl std::fmt::Display) -> String {

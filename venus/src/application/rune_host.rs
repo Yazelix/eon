@@ -24,8 +24,8 @@
 //!   request (eon-yp6vg.57 and .54 bring the candidate to macOS).
 //!
 //! Limits kept for later beads: the hosted renderer draws the active terminal only, without
-//! workspace chrome or dialogs (eon-yp6vg.8-.16); no keyboard, pointer or IME input
-//! (eon-yp6vg.7.2); no platform accessibility adapter (VEN-C1's Rune-hosted gap).
+//! workspace chrome or dialogs (eon-yp6vg.8-.16) or a platform accessibility adapter
+//! (VEN-C1's Rune-hosted gap).
 //! The host admits input from completed frames and treats GPU device loss as terminal.
 //! Since dialogs are not drawn, closing a
 //! busy window opens a Quit prompt nobody can see or answer: that window then ends only through
@@ -36,10 +36,12 @@ use crate::rune_candidate::{
     Failure, Fit, SlotGeometry,
     rune_host::{Drawn, FrameTarget, draw_slot, grid_view, hosted_renderer, preflight, resize_to},
 };
+use NativeClipboard::{Both, Standard};
 use eon_workspace_protocol::SESSION_CLEANUP_TIMEOUT;
 use rune::{
     App, AppHandle, AppSpec, CloseResponse, Compositor, Frame, FrameOutcome, FrameSkip,
     QuitResponse, Tx, WindowGeometry, WindowHandle,
+    clipboard::plain::{self, Outcome, Selection},
 };
 use std::{
     cell::{Cell, RefCell},
@@ -64,9 +66,23 @@ pub(super) struct RuneWindow {
     redraw: Cell<bool>,
     title: RefCell<Option<String>>,
     shown_title: RefCell<String>,
+    ime_area: Cell<Option<PhysicalCaretArea>>,
+    reading_paste: Cell<bool>,
+    paste_target: Cell<Option<(u64, u64)>>,
+    clipboard_writes: Cell<usize>,
 }
 
 impl RuneWindow {
+    pub(super) fn sync_ime(&self, allowed: bool, area: Option<PhysicalCaretArea>) {
+        self.ime_area.set(allowed.then(|| {
+            area.unwrap_or((PhysicalPosition::new(0.0, 0.0), PhysicalSize::new(1.0, 1.0)))
+        }));
+    }
+
+    pub(super) fn retire_paste(&self) {
+        self.paste_target.set(None);
+    }
+
     pub(super) fn has_output(&self) -> bool {
         self.output.get()
     }
@@ -86,6 +102,136 @@ impl RuneWindow {
         let title = self.title.take()?;
         *self.shown_title.borrow_mut() = title.clone();
         Some(title)
+    }
+}
+
+fn ime_rect(area: PhysicalCaretArea, scale: f32) -> [f32; 4] {
+    let (pos, size) = area;
+    let scale = f64::from(scale);
+    [pos.x, pos.y, size.width, size.height].map(|value| (value / scale) as f32)
+}
+
+#[derive(Debug)]
+pub(super) enum Clipboard {
+    Read(Outcome),
+    Written(u64, NativeClipboard, bool),
+}
+
+fn paste_target(app: &Application) -> Option<(u64, u64)> {
+    let attachment = app.terminal.model.image_attachment()?;
+    (terminal_focused(app.window_focused, app.workspace_focus)
+        && !app.dialog_open()
+        && !app.input_locked())
+    .then_some((app.attachments, attachment))
+}
+
+pub(super) fn read_clipboard(app: &mut Application) -> bool {
+    let Some(NativeWindow::Rune(window)) = app.window.as_ref().map(|state| &state.native) else {
+        return false;
+    };
+    let Some(target) = paste_target(app) else {
+        return true;
+    };
+    if window.reading_paste.replace(true) {
+        app.complete_paste(Err("A native paste is already pending".into()));
+        return true;
+    }
+    window.paste_target.set(Some(target));
+    let events = app.events.clone();
+    let complete = move |outcome| {
+        events.send(UserEvent::RuneClipboard(Clipboard::Read(outcome)));
+    };
+    plain::read_text(Selection::Regular, session::MAX_PASTE_BYTES, complete);
+    true
+}
+
+// Bound memory while a native read is holding the shared worker. Each effect already has
+// Orbit's byte cap and can offer at most two destinations.
+const MAX_CLIPBOARD_WRITES: usize = 8;
+
+impl RuneWindow {
+    pub(super) fn write_clipboard(
+        &self,
+        events: &EventSink,
+        model: &mut SessionModel,
+        target: NativeClipboard,
+        text: String,
+    ) {
+        let Some(attachment) = model.image_attachment() else {
+            return;
+        };
+        let pending = self.clipboard_writes.get();
+        if pending == MAX_CLIPBOARD_WRITES {
+            model.set_venus_notice(
+                LocalNoticeSource::Clipboard,
+                clipboard_notice(target, Err("Too many native clipboard writes are pending")),
+            );
+            return;
+        }
+        self.clipboard_writes.set(pending + 1);
+        let events = events.clone();
+        let completed = move |success| {
+            events.send(UserEvent::RuneClipboard(Clipboard::Written(
+                attachment, target, success,
+            )));
+        };
+        // Both requests are submitted before another effect can enqueue. The FIFO worker
+        // completes the first before it can successfully write the second.
+        let regular = (target == Both).then(|| {
+            let (send, receive) = std::sync::mpsc::sync_channel(1);
+            plain::write_text(Selection::Regular, text.clone(), move |outcome| {
+                let _ = send.try_send(outcome == Outcome::Written);
+            });
+            receive
+        });
+        let selection = if target == Standard {
+            Selection::Regular
+        } else {
+            Selection::Primary
+        };
+        plain::write_text(selection, text, move |outcome| {
+            completed(
+                outcome == Outcome::Written
+                    && regular.is_none_or(|result| result.try_recv() == Ok(true)),
+            );
+        });
+    }
+}
+
+pub(super) fn complete_clipboard(app: &mut Application, result: Clipboard) {
+    let Some(NativeWindow::Rune(window)) = app.window.as_ref().map(|state| &state.native) else {
+        return;
+    };
+    match result {
+        Clipboard::Read(outcome) => {
+            window.reading_paste.set(false);
+            let request = window.paste_target.take();
+            if request.is_none() || request != paste_target(app) {
+                return;
+            }
+            app.complete_paste(match outcome {
+                Outcome::Text(text) => check_clipboard_paste_size(text.len())
+                    .map(|()| ClientMessage::Paste(text.into_bytes())),
+                Outcome::Empty | Outcome::NonText => Err(CLIPBOARD_EMPTY.into()),
+                Outcome::TooLarge => Err(clipboard_paste_limit()),
+                Outcome::InvalidUtf8 => Err(CLIPBOARD_INVALID_UTF8.into()),
+                _ => Err("Native clipboard text is unavailable".into()),
+            });
+        }
+        Clipboard::Written(attachment, target, success) => {
+            let pending = &window.clipboard_writes;
+            pending.set(pending.get().saturating_sub(1));
+            if let Some(view) = std::iter::once(&mut app.terminal)
+                .chain(&mut app.column_views)
+                .find(|view| view.model.image_attachment() == Some(attachment))
+            {
+                let result = success.then_some(()).ok_or("Native clipboard write failed");
+                let notice = clipboard_notice(target, result);
+                view.model
+                    .set_venus_notice(LocalNoticeSource::Clipboard, notice);
+                app.refresh_client_view();
+            }
+        }
     }
 }
 
@@ -269,6 +415,7 @@ struct Early {
     geometry: Option<Geometry>,
     focused: Option<bool>,
     visible: Option<bool>,
+    modifiers: Option<winit::event::Modifiers>,
 }
 
 /// The Rune app's state: Venus's `Application` and the host's own bookkeeping.
@@ -319,16 +466,23 @@ impl Host {
         }
     }
 
-    /// The end of every Rune callback: applies Venus's native requests, records a fatal error
+    fn finish(&mut self, tx: &mut Tx) -> bool {
+        self.finish_with_deadline(tx, self.app.terminal.input_deadline())
+    }
+
+    /// The end of a Rune callback: applies Venus's native requests, records a fatal error
     /// for the exit status, keeps the control thread's Present admission current, and gives the
     /// window its title. True when the view must redraw.
-    fn finish(&mut self, tx: &mut Tx) -> bool {
+    fn finish_with_deadline(&mut self, tx: &mut Tx, deadline: Option<Instant>) -> bool {
         if self.check_failure() {
             tx.quit();
             return false;
         }
         while let Some(request) = self.app.native_requests.take() {
             self.apply(request);
+        }
+        if let Some(deadline) = deadline {
+            tx.wake_after(deadline.saturating_duration_since(Instant::now()));
         }
         self.admit_present();
         let Some(window) = self.rune_window() else {
@@ -360,6 +514,40 @@ impl Host {
         self.app.handle_window_event(window_id(), event);
     }
 
+    fn native_event(&mut self, event: &WindowEvent, tx: &mut Tx) -> bool {
+        match event {
+            WindowEvent::KeyboardInput { .. }
+            | WindowEvent::Ime(_)
+            | WindowEvent::CursorEntered { .. }
+            | WindowEvent::CursorMoved { .. }
+            | WindowEvent::CursorLeft { .. }
+            | WindowEvent::MouseInput { .. }
+            | WindowEvent::MouseWheel { .. }
+            | WindowEvent::Touch(_)
+            | WindowEvent::ModifiersChanged(_) => {}
+            _ => return false,
+        }
+        let synthetic = matches!(
+            event,
+            WindowEvent::KeyboardInput {
+                is_synthetic: true,
+                ..
+            }
+        );
+        if !synthetic && self.begin() {
+            if let WindowEvent::ModifiersChanged(modifiers) = event
+                && self.app.window.is_none()
+            {
+                self.early.modifiers = Some(*modifiers);
+            } else {
+                self.window_event(event.clone());
+            }
+        }
+        self.finish_live(tx);
+        // Rune consumes input but keeps its own modifier bookkeeping even when this returns true.
+        true
+    }
+
     fn begin(&mut self) -> bool {
         if self.check_failure() {
             return false;
@@ -388,7 +576,10 @@ impl Host {
                     window.withdrawn.set(false);
                 }
                 if let Some(revision) = candidate.revision {
+                    let now = Instant::now();
+                    self.app.terminal.selection_presented(revision, now);
                     self.app.flush_deferred_selection(revision);
+                    self.app.native_requests.redraw |= self.app.advance_terminal_scroll(now);
                 }
             }
             Some(Completion::Surface | Completion::Drawn(None)) => self.withdraw_surface(),
@@ -410,6 +601,8 @@ impl Host {
             self.app.presentation.invalidate();
         }
         self.app.cancel_native_pointer_sequence();
+        self.app.input.reset_scroll();
+        self.app.cancel_terminal_scroll();
     }
 
     /// Applies one native geometry report: the output fact, then a scale change and a resize as
@@ -484,7 +677,6 @@ impl Host {
         }
         // Input queued since the last move used a geometry the window no longer has.
         self.withdraw_surface();
-        self.app.cancel_terminal_scroll();
         true
     }
 
@@ -530,6 +722,9 @@ impl Host {
         self.app.refresh_client_view();
         if let Some(focused) = early.focused {
             self.window_event(WindowEvent::Focused(focused));
+        }
+        if let Some(modifiers) = early.modifiers {
+            self.window_event(WindowEvent::ModifiersChanged(modifiers));
         }
         if let Some(visible) = early.visible {
             self.window_event(WindowEvent::Occluded(!visible));
@@ -629,8 +824,12 @@ impl Host {
         app.prepare_workspace();
         let candidate = app.presentation_candidate(app.workspace_scene().as_deref());
         let scene = app.terminal.model.scene()?;
+        let status = app.status_for(false, candidate);
         let renderer = &mut app.window.as_mut()?.renderer;
-        if let Err(error) = renderer.prepare_hosted(scene, app.blink_visible, candidate.generation)
+        let generation = candidate.generation;
+        let preedit = app.input.preedit();
+        if let Err(error) =
+            renderer.prepare_hosted(scene, app.blink_visible, generation, &status, preedit)
         {
             self.fail(error.to_string());
             return None;
@@ -733,15 +932,14 @@ fn on_geometry(host: &mut Host, geometry: WindowGeometry, tx: &mut Tx) -> bool {
     host.finish(tx)
 }
 
-/// Rune's raw native events, before Rune applies them; only size and scale matter here
-/// (eon-lza1n). Rune never consumes these events, so true only marks state changed.
+/// Structural events withdraw geometry before any pending receipt can be applied.
 fn on_window_event(host: &mut Host, window: &Window, event: &WindowEvent, tx: &mut Tx) -> bool {
     let (size, scale) = match *event {
         WindowEvent::Resized(size) => (Some((size.width, size.height)), None),
         WindowEvent::ScaleFactorChanged { scale_factor, .. } => (None, Some(scale_factor)),
         // On macOS a drag across displays rescales the drawable before winit reports the scale.
         WindowEvent::Moved(_) => (None, Some(window.scale_factor())),
-        _ => return false,
+        _ => return host.native_event(event, tx),
     };
     if !host.check_failure() && !host.raw_geometry(size, scale) {
         return false;
@@ -753,6 +951,7 @@ fn on_focus(host: &mut Host, focused: bool, tx: &mut Tx) {
     if host.begin() {
         if host.app.window.is_none() {
             host.early.focused = Some(focused);
+            host.early.modifiers = host.early.modifiers.filter(|_| focused);
         } else {
             host.window_event(WindowEvent::Focused(focused));
         }
@@ -812,10 +1011,8 @@ fn poll(host: &mut Host, _clock: f64, tx: &mut Tx) -> bool {
         return true;
     }
     host.admit_present();
-    if let Some(deadline) = host.app.end_turn() {
-        tx.wake_after(deadline.saturating_duration_since(Instant::now()));
-    }
-    host.finish(tx)
+    let deadline = host.app.end_turn();
+    host.finish_with_deadline(tx, deadline)
 }
 
 /// Runs a launch through the Rune host. Errors are startup refusals and fatal window, render or
@@ -866,7 +1063,13 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         "Venus",
         (initial.width as f32, initial.height as f32),
         || unreachable!("App::init supplies the state"),
-        |_, _| grid_view(),
+        |host: &Host, cx| {
+            let area = host.rune_window().and_then(|window| window.ime_area.get());
+            grid_view().children(area.map(|area| {
+                let [x, y, w, h] = ime_rect(area, cx.env().scale);
+                rune::el().absolute(x, y).w(w).h(h).ime_cursor()
+            }))
+        },
     );
     spec.poll = Some(poll);
     let mut app = App::new(spec)
