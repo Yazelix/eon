@@ -104,6 +104,26 @@ file. The new contexts:
 - Base input (`eon-yp6vg.65`) at `/nix/store/bh87dwl4zkm34kkrnfbj56j5xr0cvgxl-eon-archive-notice-input.json`.
 - Proposal input at `/nix/store/nh4mxdga98ja0b2bxfkldyj21pbkwiri-eon-archive-notice-input.json` (before renewal).
 
+### Benchmark input-method fixtures (eon-33cww.4.1)
+
+Compared with Eon `87c3b1cb`, the Eon, Orbit and Venus contexts change only
+through the normalized lock. It adds the registry crate
+`wayland-protocols-misc 0.3.12` and its edge from benchmark-only `eon-bench`.
+No shipped producer selects it. Each producer's context, runtime crates,
+native packages and binary audit sets are byte-identical to the base. Its
+canonical graph differs only in the embedded lock.
+
+The exception identities and classifications are unchanged: Eon has 9 host
+and 2 unselected, Orbit 6 and 1, and Venus 15 and 4. The `inspect-audit`
+replays reproduce each candidate graph and binary observation. The strict
+`propose-audit-renewal` result changes six fingerprints, and the edited file
+equals it canonically. Zoxide's dependency-omission probe still rejects
+removal of `anyhow 1.0.98` under the renewed data.
+
+- Vendor at `/nix/store/5q91f3i8knbjyg0mv7qmrcgv69zns7fk-cargo-vendor-dir`.
+- Base input at `/nix/store/wzrd4bydv4d70dx7pnpx5ffcy5y2pmj0-eon-archive-notice-input.json`.
+- Proposal input at `/nix/store/8xzf9zfy4yv8xsdffnqybrj9zq4mj9pa-eon-archive-notice-input.json` (before renewal).
+
 ### Wayland precision scroll pin (eon-yp6vg.65)
 
 From Eon `03e7f81a`, the `dpi` and `winit` source records move

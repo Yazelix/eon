@@ -1656,6 +1656,7 @@
                   --set-default EON_BENCH_DRI ${pkgs.mesa}/lib/dri \
                   --set-default EON_BENCH_EGL ${pkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json \
                   --set-default EON_BENCH_LAVAPIPE ${pkgs.mesa}/share/vulkan/icd.d/lvp_icd.x86_64.json \
+                  --set-default EON_BENCH_FCITX5 ${pkgs.fcitx5}/bin/fcitx5 \
                   --set-default EON_BENCH_MAGICK ${pkgs.imagemagick}/bin/magick \
                   --set-default EON_BENCH_SH ${pkgs.runtimeShell} \
                   --set-default EON_BENCH_TAR ${pkgs.gnutar}/bin/tar \

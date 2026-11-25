@@ -19,10 +19,11 @@ use std::{
 };
 #[cfg(any(target_os = "linux", test))]
 mod diagnostics;
-#[cfg(target_os = "linux")]
-mod input;
+pub mod events;
 #[cfg(target_os = "linux")]
 mod native;
+#[cfg(target_os = "linux")]
+mod seat;
 #[cfg(target_os = "linux")]
 pub use native::workload;
 type Result<T = ()> = std::result::Result<T, String>;
@@ -188,6 +189,67 @@ fn identity(value: String) -> Result<String> {
     }
     Ok(value.to_lowercase())
 }
+/// Candidates, source tree, renderer, and the suite's remaining flags.
+type Shared = (Vec<Candidate>, String, Renderer, Vec<(String, String)>);
+/// Splits the candidate, source-tree and renderer flags that frames and events
+/// share from a suite's own flags.
+fn candidates(flags: Vec<(String, String)>) -> Result<Shared> {
+    let (mut paths, mut revisions, mut trees) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+    let (mut source_tree, mut renderer, mut rest) = (None, None, Vec::new());
+    for (flag, value) in flags {
+        match flag.as_str() {
+            "--eon" | "--revision" | "--candidate-tree" => {
+                let (label, value) = labelled(value)?;
+                let map = match flag.as_str() {
+                    "--eon" => &mut paths,
+                    "--revision" => &mut revisions,
+                    _ => &mut trees,
+                };
+                let value = if flag == "--eon" {
+                    value
+                } else {
+                    identity(value)?
+                };
+                if map.insert(label, value).is_some() {
+                    return Err(format!("repeated {flag} label"));
+                }
+            }
+            "--source-tree" => {
+                if source_tree.replace(identity(value)?).is_some() {
+                    return Err("repeated --source-tree".into());
+                }
+            }
+            "--renderer" => {
+                if renderer.replace(Renderer(value)).is_some() {
+                    return Err("repeated --renderer".into());
+                }
+            }
+            _ => rest.push((flag, value)),
+        }
+    }
+    if paths.is_empty()
+        || paths.len() > 2
+        || paths.keys().ne(revisions.keys())
+        || paths.keys().ne(trees.keys())
+    {
+        return Err("supply one or two candidates, each with matching --revision and --candidate-tree labels".into());
+    }
+    let renderer = renderer.unwrap_or_else(|| Renderer("lavapipe".into()));
+    renderer.render_node()?;
+    let candidates = paths
+        .into_iter()
+        .map(|(label, path)| Candidate {
+            path: path.into(),
+            #[cfg(target_os = "linux")]
+            revision: revisions[&label].clone(),
+            #[cfg(target_os = "linux")]
+            tree: trees[&label].clone(),
+            label,
+        })
+        .collect();
+    let source_tree = source_tree.ok_or("--source-tree is required")?;
+    Ok((candidates, source_tree, renderer, rest))
+}
 pub fn options(args: &[String]) -> Result<Options> {
     let (mut settings, flags) = suite::parse(
         args,
@@ -209,27 +271,11 @@ pub fn options(args: &[String]) -> Result<Options> {
             "--mode",
         ],
     )?;
-    let (mut paths, mut revisions, mut trees) = (BTreeMap::new(), BTreeMap::new(), BTreeMap::new());
+    let (candidates, source_tree, renderer, flags) = candidates(flags)?;
     let (mut singles, mut workloads, mut columns, mut sizes) =
         (BTreeMap::new(), Vec::new(), Vec::new(), Vec::new());
     for (flag, value) in flags {
         match flag.as_str() {
-            "--eon" | "--revision" | "--candidate-tree" => {
-                let (label, value) = labelled(value)?;
-                let map = match flag.as_str() {
-                    "--eon" => &mut paths,
-                    "--revision" => &mut revisions,
-                    _ => &mut trees,
-                };
-                let value = if flag == "--eon" {
-                    value
-                } else {
-                    identity(value)?
-                };
-                if map.insert(label, value).is_some() {
-                    return Err(format!("repeated {flag} label"));
-                }
-            }
             "--only" => {
                 if !WORKLOADS.contains(&value.as_str()) || workloads.contains(&value) {
                     return Err("unknown or repeated workload".into());
@@ -261,24 +307,6 @@ pub fn options(args: &[String]) -> Result<Options> {
             }
         }
     }
-    if paths.is_empty()
-        || paths.len() > 2
-        || paths.keys().ne(revisions.keys())
-        || paths.keys().ne(trees.keys())
-    {
-        return Err("supply one or two candidates, each with matching --revision and --candidate-tree labels".into());
-    }
-    let source_tree = identity(
-        singles
-            .remove("--source-tree")
-            .ok_or("--source-tree is required")?,
-    )?;
-    let renderer = Renderer(
-        singles
-            .remove("--renderer")
-            .unwrap_or_else(|| "lavapipe".into()),
-    );
-    renderer.render_node()?;
     let mode = singles.remove("--mode").unwrap_or_else(|| "measure".into());
     if !["measure", "check", "control"].contains(&mode.as_str()) {
         return Err("mode must be measure, check or control".into());
@@ -341,22 +369,11 @@ pub fn options(args: &[String]) -> Result<Options> {
     let runs = settings
         .samples
         .checked_add(settings.warmups)
-        .and_then(|n| n.checked_mul(cells.len() as u64 * paths.len() as u64))
+        .and_then(|n| n.checked_mul(cells.len() as u64 * candidates.len() as u64))
         .ok_or("run count overflow")?;
     if runs > 1000 || settings.warmups > 10 {
         return Err("frames run budget is <=1000 runs and <=10 warmups".into());
     }
-    let candidates = paths
-        .into_iter()
-        .map(|(label, path)| Candidate {
-            path: path.into(),
-            #[cfg(target_os = "linux")]
-            revision: revisions[&label].clone(),
-            #[cfg(target_os = "linux")]
-            tree: trees[&label].clone(),
-            label,
-        })
-        .collect();
     #[cfg(not(target_os = "linux"))]
     let _ = (
         source_tree,
@@ -387,18 +404,34 @@ pub fn options(args: &[String]) -> Result<Options> {
 }
 
 pub fn run(args: &[String], options: &Options) -> Result {
+    isolate(
+        args,
+        &options.settings,
+        &options.candidates,
+        &options.renderer,
+        "frames",
+    )
+}
+/// Re-executes `eon-bench <suite>-inner` in the display jail.
+fn isolate(
+    args: &[String],
+    settings: &suite::Settings,
+    candidates: &[Candidate],
+    renderer: &Renderer,
+    suite: &str,
+) -> Result {
     if !cfg!(target_os = "linux") {
-        return Err("frames requires Linux/Wayland".into());
+        return Err(format!("{suite} requires Linux/Wayland"));
     }
     fs::DirBuilder::new()
         .mode(0o700)
-        .create(&options.settings.out)
+        .create(&settings.out)
         .map_err(error)?;
-    let out = fs::canonicalize(&options.settings.out).map_err(error)?;
+    let out = fs::canonicalize(&settings.out).map_err(error)?;
     let outcome = (|| -> Result {
         let mut arguments = args.to_vec();
         let mut mounts = Vec::new();
-        for candidate in &options.candidates {
+        for candidate in candidates {
             let path = crate::launcher::candidate(&candidate.path)?;
             mounts.push(terminals::candidate_fontconfig(&path)?);
             let passed = format!("{}={}", candidate.label, candidate.path.display());
@@ -415,7 +448,7 @@ pub fn run(args: &[String], options: &Options) -> Result {
         arguments[index + 1] = out.to_str().ok_or("non-UTF8 output path")?.into();
         let exe = std::env::current_exe().map_err(error)?;
         let mut command = isolation::command(&out, &[&exe]);
-        isolation::display(&mut command, options.renderer.render_node()?);
+        isolation::display(&mut command, renderer.render_node()?);
         for mount in mounts {
             command
                 .arg("--ro-bind")
@@ -425,7 +458,7 @@ pub fn run(args: &[String], options: &Options) -> Result {
         command
             .arg("--")
             .arg(exe)
-            .arg("frames-inner")
+            .arg(format!("{suite}-inner"))
             .args(arguments);
         isolation::run(&mut command)
     })();
@@ -436,8 +469,8 @@ pub fn run(args: &[String], options: &Options) -> Result {
             out.join("result.json"),
             object([
                 ("schema", 1u64.into()),
-                ("tool", "eon-bench-frames".into()),
-                ("suite", "frames".into()),
+                ("tool", format!("eon-bench-{suite}").into()),
+                ("suite", suite.into()),
                 ("result", "fail".into()),
                 ("error", e.as_str().into()),
                 (
