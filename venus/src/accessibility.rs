@@ -1122,8 +1122,7 @@ impl Accessibility {
     }
 
     #[allow(clippy::too_many_arguments)]
-    /// `adapter` is none on a host without a platform accessibility adapter (the Rune
-    /// candidate, VEN-C1's Rune-hosted gap); the tree's snapshot still follows the frame.
+    /// Update the snapshot for synchronous activation and publish to an active adapter.
     pub fn update(
         &self,
         adapter: Option<&mut Adapter>,
@@ -1170,17 +1169,13 @@ impl Accessibility {
 
     pub fn present_links(
         &self,
-        adapter: Option<&mut Adapter>,
+        adapter: &mut Adapter,
         scene: Option<&Scene>,
         generation: Option<u64>,
     ) {
         if lock(&self.snapshot).link_identity == link_identity(scene, generation) {
             return;
         }
-        let Some(adapter) = adapter else {
-            lock(&self.snapshot).set_links(scene, generation);
-            return;
-        };
         adapter.update_if_active(|| {
             let mut snapshot = lock(&self.snapshot);
             snapshot.set_links(scene, generation);
@@ -3532,7 +3527,7 @@ mod tests {
                     0,
                 );
                 if dialog.content.height > dialog.attention_rows[0].rect.height {
-                    let target = dialog.attention_scrolled_target().unwrap();
+                    let target = dialog.attention_scrolled_target(dialog.scroll).unwrap();
                     assert_ne!(
                         target.1, "p259",
                         "paging keeps the highlight on visible rows"

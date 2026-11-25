@@ -508,17 +508,11 @@ impl Host {
     /// The first frame: Venus's window, with its hosted renderer on Rune's device, then the
     /// tail of `create_window` and the native facts that came first.
     fn create_window(&mut self, renderer: Renderer, geometry: SlotGeometry) {
-        let (width, height) = geometry.size();
-        let accessibility = Accessibility::new(
-            PhysicalSize::new(width, height),
-            self.app.detect_local_hosts,
-        );
         let scale_factor = f64::from(geometry.scale());
         report(format_args!("window scale factor {scale_factor}"));
         self.app.window = Some(WindowState {
             renderer,
             scale_factor,
-            accessibility,
             native: NativeWindow::Rune(RuneWindow::default()),
         });
         let early = std::mem::take(&mut self.early);
@@ -629,9 +623,11 @@ impl Host {
             || renderer.metrics() != renderer.metrics_at_scale(f64::from(geometry.scale()))
         {
             resize_to(renderer, geometry);
+            app.workspace_update |= LAYOUT_WORKSPACE;
         }
         app.sync_images();
-        let candidate = app.presentation_candidate(app.workspace_scene().as_ref());
+        app.prepare_workspace();
+        let candidate = app.presentation_candidate(app.workspace_scene().as_deref());
         let scene = app.terminal.model.scene()?;
         let renderer = &mut app.window.as_mut()?.renderer;
         if let Err(error) = renderer.prepare_hosted(scene, app.blink_visible, candidate.generation)

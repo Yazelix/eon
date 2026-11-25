@@ -40,6 +40,7 @@ use std::{
     },
     path::PathBuf,
     process::{Child, Command, Stdio},
+    rc::Rc,
     sync::{Arc, Condvar, Mutex, MutexGuard, PoisonError},
     thread,
     time::{Duration, Instant, SystemTime},
@@ -609,7 +610,6 @@ impl EventSink {
 struct WindowState {
     renderer: Renderer,
     scale_factor: f64,
-    accessibility: Accessibility,
     native: NativeWindow,
 }
 
@@ -673,6 +673,7 @@ enum NativeWindow {
     Winit {
         window: Arc<Window>,
         adapter: accesskit_winit::Adapter,
+        accessibility: Accessibility,
         #[cfg(target_os = "linux")]
         ime: WaylandIme,
     },
@@ -796,9 +797,13 @@ impl NativeWindow {
         }
     }
 
-    fn adapter(&mut self) -> Option<&mut accesskit_winit::Adapter> {
+    fn accessibility(&mut self) -> Option<(&Accessibility, &mut accesskit_winit::Adapter)> {
         match self {
-            Self::Winit { adapter, .. } => Some(adapter),
+            Self::Winit {
+                accessibility,
+                adapter,
+                ..
+            } => Some((accessibility, adapter)),
             #[cfg(feature = "candidate-rune")]
             Self::Rune(_) => None,
         }
@@ -871,6 +876,7 @@ struct AttentionInboxState {
     filter: AttentionFilter,
     highlighted: Option<(String, String)>,
     scroll: f32,
+    reveal: bool,
 }
 
 impl AttentionInboxState {
@@ -905,6 +911,7 @@ impl AttentionInboxState {
     ) {
         self.filter = filter;
         self.scroll = 0.0;
+        self.reveal = false;
         self.select(snapshot, 0);
     }
 
@@ -932,20 +939,6 @@ impl AttentionInboxState {
         if self.index(snapshot).is_none() {
             self.select(snapshot, previous_index);
         }
-    }
-
-    fn refresh(
-        &mut self,
-        snapshot: &eon_workspace_protocol::v50::Snapshot,
-        previous_index: usize,
-        presentation: &mut PresentationState,
-    ) -> bool {
-        if !self.open {
-            return false;
-        }
-        self.reconcile(snapshot, previous_index);
-        presentation.invalidate();
-        true
     }
 
     fn activation(&self, presentation: &PresentationState) -> Option<WorkspaceAction> {
@@ -1281,16 +1274,13 @@ fn quit_prompt_changed(
     current: &eon_workspace_protocol::v50::Snapshot,
     next: &eon_workspace_protocol::v50::Snapshot,
 ) -> bool {
-    let inputs = |snapshot: &eon_workspace_protocol::v50::Snapshot| {
-        (
-            snapshot
-                .running
-                .as_ref()
-                .map(|running| running.this.live_terminals),
-            snapshot.busy.clone(),
-        )
+    let count = |snapshot: &Snapshot| {
+        snapshot
+            .running
+            .as_ref()
+            .map(|running| running.this.live_terminals)
     };
-    inputs(current) != inputs(next)
+    count(current) != count(next) || current.busy != next.busy
 }
 
 /// Where Quit this window stands (EON-C8).
@@ -1330,14 +1320,6 @@ enum QuitStep {
     Stop(Outgoing),
 }
 
-/// What a workspace event asks of Quit this window.
-#[derive(Debug, Default, PartialEq)]
-struct QuitEffects {
-    /// An open quit prompt is worded differently, though no other view changed.
-    refresh: bool,
-    step: Option<QuitStep>,
-}
-
 impl QuitProgress {
     /// Alt+Shift+Q, or another way to quit: a busy snapshot asks at once; an idle one waits for
     /// the next workspace response. Nothing happens without a running window or while a quit is
@@ -1359,47 +1341,42 @@ impl QuitProgress {
     }
 
     /// Takes a workspace event before the model applies it. `current` is the snapshot the
-    /// model holds and `quit_prompt` whether the quit prompt is open.
+    /// model holds.
     fn on_workspace(
         &mut self,
         current: Option<&eon_workspace_protocol::v50::Snapshot>,
-        quit_prompt: bool,
         event: &WorkspaceEvent,
-    ) -> QuitEffects {
+    ) -> Option<QuitStep> {
         use eon_workspace_protocol::v50::Response;
-        let (decides_on, refresh) = match event {
-            WorkspaceEvent::Response(Response::Snapshot(snapshot)) => (
-                Some(snapshot),
-                quit_prompt
-                    && current.is_some_and(|current| quit_prompt_changed(current, snapshot)),
-            ),
+        let decides_on = match event {
+            WorkspaceEvent::Response(Response::Snapshot(snapshot)) => Some(snapshot),
             // After a failed Stop the supervisor refuses every refresh, so a pending quit
             // decides on the snapshot it keeps. Another failure says nothing about what runs,
             // so the quit waits for a snapshot.
             WorkspaceEvent::Response(Response::Failure(failure))
                 if failure.code == "stop-incomplete" =>
             {
-                (current, false)
+                current
             }
             WorkspaceEvent::Answered { ticket, .. } => {
                 // An answer that reaches here did not end the window, so quitting may retry.
                 if *self == Self::Stopping(*ticket) {
                     *self = Self::Idle;
                 }
-                return QuitEffects::default();
+                return None;
             }
             WorkspaceEvent::Unavailable { .. } | WorkspaceEvent::NoWorker { .. } => {
                 if *self == Self::Pending {
                     *self = Self::Idle;
                 }
-                return QuitEffects::default();
+                return None;
             }
             WorkspaceEvent::Slow | WorkspaceEvent::Degraded { .. } => {
                 unreachable!("handle_workspace returns before a slow or degraded report")
             }
-            WorkspaceEvent::Response(_) => return QuitEffects::default(),
+            WorkspaceEvent::Response(_) => return None,
         };
-        let step = if *self == Self::Pending {
+        if *self == Self::Pending {
             *self = Self::Idle;
             decides_on.and_then(|snapshot| {
                 if quit_asks(snapshot) {
@@ -1410,8 +1387,7 @@ impl QuitProgress {
             })
         } else {
             None
-        };
-        QuitEffects { refresh, step }
+        }
     }
 
     /// Whether a Stop may be sent; one in flight holds the next.
@@ -1601,6 +1577,11 @@ fn image_references<'a>(views: impl IntoIterator<Item = &'a TerminalView>) -> Ha
         .collect()
 }
 
+const LAYOUT_WORKSPACE: u8 = 1;
+const ANCHOR_SIDEBAR: u8 = 2 | LAYOUT_WORKSPACE;
+const REVEAL_SELECTION: u8 = 4 | ANCHOR_SIDEBAR;
+const RESIZE_WORKSPACE: u8 = 8;
+
 struct Application {
     #[cfg_attr(
         target_os = "macos",
@@ -1645,6 +1626,8 @@ struct Application {
     transport_wake: Wake,
     workspace_wake: Wake,
     native_requests: NativeRequests,
+    defer_refresh: bool,
+    refresh_pending: bool,
     window: Option<WindowState>,
     /// The terminal that receives keyboard and pointer input: the selected column's,
     /// a popup's, or the standalone session's.
@@ -1702,8 +1685,9 @@ struct Application {
     pending_close: Option<PendingClose>,
     /// Finished event-loop turns, which the Stack close prompt's confirmation delay counts.
     turns: u64,
-    /// When a sidebar row's age next changes its label.
+    /// The next sidebar label change.
     next_age: Option<Instant>,
+    next_dialog_age: Option<Instant>,
     header_press: Option<HeaderPress>,
     shortcut_viewer: ShortcutViewerState,
     window_menu: WindowMenuState,
@@ -1712,19 +1696,24 @@ struct Application {
     close_prompt: Option<ClosePrompt>,
     quit: QuitProgress,
     hints_visible: bool,
-    hints: Option<ShortcutHintsScene>,
     hint_popup: HintPopupLatch,
     zoom: Option<ZoomTarget>,
-    tab_texts: HashMap<String, (String, f32)>,
-    quota_widths: HashMap<String, f32>,
-    /// Fitted header texts, the workspace label's name, by their text.
-    fitted_texts: HashMap<String, (String, f32)>,
+    workspace: Option<Rc<WorkspaceScene>>,
+    workspace_update: u8,
     /// The open dialog's texts measured in its row typography, with the metrics they were
     /// measured at.
     dialog_texts: DialogTexts,
+    dialog: Option<Rc<DialogScene>>,
     tab_scroll: f32,
     pane_scroll: f32,
     cursor: PhysicalPosition<f64>,
+}
+
+#[cfg(test)]
+thread_local! {
+    static WORKSPACE_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static DIALOG_BUILDS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+    static TEST_LOCAL_TIME: RefCell<Option<jiff::Zoned>> = const { RefCell::new(None) };
 }
 
 impl Application {
@@ -1780,6 +1769,8 @@ impl Application {
                 workspace_events.send(UserEvent::Workspace);
             }),
             native_requests: NativeRequests::default(),
+            defer_refresh: false,
+            refresh_pending: false,
             application_id,
             terminal: TerminalView::new(orbit_socket),
             column_views: Vec::new(),
@@ -1856,6 +1847,7 @@ impl Application {
             pending_close: None,
             turns: 0,
             next_age: None,
+            next_dialog_age: None,
             header_press: None,
             shortcut_viewer: ShortcutViewerState::default(),
             window_menu: WindowMenuState::default(),
@@ -1864,13 +1856,12 @@ impl Application {
             close_prompt: None,
             quit: QuitProgress::Idle,
             hints_visible: true,
-            hints: None,
             hint_popup: HintPopupLatch::default(),
             zoom: None,
-            tab_texts: HashMap::new(),
-            quota_widths: HashMap::new(),
-            fitted_texts: HashMap::new(),
+            workspace: None,
+            workspace_update: 0,
             dialog_texts: DialogTexts::default(),
+            dialog: None,
             tab_scroll: 0.0,
             pane_scroll: 0.0,
             cursor: PhysicalPosition::new(0.0, 0.0),
@@ -1944,10 +1935,10 @@ impl Application {
         self.window = Some(WindowState {
             renderer,
             scale_factor,
-            accessibility,
             native: NativeWindow::Winit {
                 window,
                 adapter,
+                accessibility,
                 #[cfg(target_os = "linux")]
                 ime: WaylandIme::new(scale_factor),
             },
@@ -2120,47 +2111,16 @@ impl Application {
         }
     }
 
-    fn workspace_scene(&self) -> Option<WorkspaceScene> {
-        let state = self.window.as_ref()?;
-        self.workspace_model.snapshot().map(|snapshot| {
-            let picker = workspace_picker_tooltip(&snapshot.entries, snapshot.input_locked);
-            let now = local_now();
-            WorkspaceScene::from_snapshot_with_zoom(
-                snapshot,
-                EonBar {
-                    items: &self.bar_items,
-                    version: self.eon_version.as_deref(),
-                    release_stage: self.eon_release_stage,
-                    icon: self.eon_icon.is_some(),
-                    cpu: self.cpu.as_ref(),
-                    ram: self.ram.as_ref(),
-                    disk: self.disk.as_ref(),
-                    gpu: self.gpu.as_ref(),
-                    clock: self.clock.as_ref(),
-                    now: now.as_ref(),
-                    quota_pace: Some(self.workspace_model.quota_pace()),
-                    workspace_picker: picker.as_deref(),
-                },
-                state.renderer.size(),
-                state.renderer.metrics(),
-                self.tab_scroll,
-                self.pane_scroll,
-                // Replays the last measurement, which every change to these texts rebuilds.
-                |kind, label| match kind {
-                    HeaderText::Tab(id) => self.tab_texts[id].clone(),
-                    HeaderText::Fact => (label.to_owned(), self.quota_widths[label]),
-                    HeaderText::Reading => (label.to_owned(), state.renderer.reading_width()),
-                    HeaderText::Fit(_) => self.fitted_texts[label].clone(),
-                },
-                self.hints.clone(),
-                self.zoomed(),
-                sidebar_view(
-                    self.workspace_focus,
-                    self.sidebar_row.as_deref(),
-                    self.sidebar_scroll,
-                ),
-            )
-        })
+    fn workspace_scene(&self) -> Option<Rc<WorkspaceScene>> {
+        self.window.as_ref()?;
+        self.workspace.clone()
+    }
+
+    fn prepare_workspace(&mut self) {
+        if self.workspace_update & LAYOUT_WORKSPACE != 0 {
+            let keep_scroll = self.workspace_update & REVEAL_SELECTION != REVEAL_SELECTION;
+            self.build_workspace(keep_scroll, keep_scroll);
+        }
     }
 
     /// Whether the selected pane and the active tab's layout still match the zoom target.
@@ -2197,8 +2157,70 @@ impl Application {
     }
 
     /// The open dialog: the close prompt, else the shortcut viewer.
-    fn dialog_scene(&self) -> Option<DialogScene> {
-        self.dialog_scene_with(&self.dialog_text()?)
+    fn dialog_scene(&self) -> Option<Rc<DialogScene>> {
+        self.dialog
+            .clone()
+            .or_else(|| self.dialog_scene_with(&self.dialog_text()?).map(Rc::new))
+    }
+
+    fn prepare_dialog(&mut self) -> Option<Rc<DialogScene>> {
+        if self.dialog.is_none() && self.dialog_open() {
+            self.dialog = self.measure_dialog_texts().map(Rc::new);
+            if let Some(dialog) = &self.dialog
+                && *dialog.kind() == DialogKind::AttentionInbox
+            {
+                self.attention_inbox.scroll = dialog.scroll;
+                self.attention_inbox.reveal = false;
+            }
+            self.next_dialog_age = self
+                .dialog
+                .as_deref()
+                .and_then(DialogScene::attention_age_wait)
+                .map(|wait| Instant::now() + Duration::from_millis(wait));
+        }
+        self.dialog.clone()
+    }
+
+    fn dialog_snapshot_changed(&self, before: &Snapshot, after: &Snapshot) -> bool {
+        let entries = before.entries != after.entries;
+        let lock = before.input_locked != after.input_locked;
+        if self.window_menu.open {
+            return before.running != after.running || entries;
+        }
+        if self.attention_inbox.open {
+            return before.attention_queue != after.attention_queue
+                || entries
+                || before.tabs != after.tabs
+                || before.active_tab != after.active_tab
+                || before.workspace != after.workspace
+                || before.workspaces != after.workspaces;
+        }
+        match self.close_prompt.as_ref().map(|prompt| &prompt.target) {
+            Some(PromptTarget::QuitOtherWindow(action)) => {
+                peer_window(before, action) != peer_window(after, action)
+            }
+            Some(PromptTarget::QuitWindow) => entries || lock || quit_prompt_changed(before, after),
+            Some(PromptTarget::CloseColumn { scope, .. }) => {
+                scope.end != CloseEnd::Column && (entries || lock)
+                    || stack_number(before, &scope.pane) != stack_number(after, &scope.pane)
+            }
+            Some(PromptTarget::CloseTab { tab, .. }) => {
+                entries
+                    || lock
+                    || before.tabs.iter().find(|live| live.id == *tab)
+                        != after.tabs.iter().find(|live| live.id == *tab)
+                    || close_prompt_workspace(before) != close_prompt_workspace(after)
+            }
+            None => {
+                self.shortcut_viewer.open
+                    && (entries
+                        || lock
+                        || before.sidebar != after.sidebar
+                        || before.running.is_some() != after.running.is_some()
+                        || before.input_lock != after.input_lock
+                        || before.released_shortcuts != after.released_shortcuts)
+            }
+        }
     }
 
     /// Dialog text as the renderer measured it, estimated where it has not yet.
@@ -2213,11 +2235,15 @@ impl Application {
     /// scene sizes rows as they are drawn. Measured widths can move the wrap widths a layout
     /// asks for, so a few passes settle it; the measurements last while the dialog stays open
     /// at the same metrics.
-    fn measure_dialog_texts(&mut self) {
-        let Some(metrics) = self.window.as_ref().map(|state| state.renderer.metrics()) else {
-            self.dialog_texts = DialogTexts::default();
-            return;
-        };
+    fn measure_dialog_texts(&mut self) -> Option<DialogScene> {
+        let state = self
+            .window
+            .as_ref()
+            .filter(|state| state.native.id().is_some())?;
+        if self.attention_inbox.open && !self.window_menu.open {
+            return self.dialog_scene_with(&self.dialog_text()?);
+        }
+        let metrics = state.renderer.metrics();
         if self.dialog_texts.metrics != Some(metrics) {
             self.dialog_texts = DialogTexts {
                 metrics: Some(metrics),
@@ -2226,7 +2252,7 @@ impl Application {
         }
         for _ in 0..4 {
             let asked = RefCell::default();
-            self.dialog_scene_with(&MeasuredText {
+            let dialog = self.dialog_scene_with(&MeasuredText {
                 asked: Some(&asked),
                 ..self.dialog_texts.at(metrics)
             });
@@ -2235,9 +2261,7 @@ impl Application {
                 .widths
                 .retain(|text, _| widths.contains(text));
             self.dialog_texts.lines.retain(|key, _| lines.contains(key));
-            let Some(state) = self.window.as_mut() else {
-                return;
-            };
+            let state = self.window.as_mut()?;
             let mut measured = false;
             for text in widths {
                 if let Entry::Vacant(entry) = self.dialog_texts.widths.entry(text) {
@@ -2257,12 +2281,15 @@ impl Application {
                 }
             }
             if !measured {
-                return;
+                return dialog;
             }
         }
+        self.dialog_scene_with(&self.dialog_text()?)
     }
 
     fn dialog_scene_with(&self, measure: &dyn DialogText) -> Option<DialogScene> {
+        #[cfg(test)]
+        DIALOG_BUILDS.with(|calls| calls.set(calls.get() + 1));
         if self.window_menu.open {
             let state = self.window.as_ref()?;
             return Some(DialogScene::window_menu(
@@ -2277,7 +2304,7 @@ impl Application {
         }
         if self.attention_inbox.open {
             let state = self.window.as_ref()?;
-            return Some(DialogScene::attention_inbox(
+            let mut dialog = DialogScene::attention_inbox(
                 self.workspace_model.snapshot()?,
                 self.attention_inbox.filter,
                 self.attention_inbox.target(),
@@ -2285,7 +2312,11 @@ impl Application {
                 state.renderer.metrics(),
                 self.attention_inbox.scroll,
                 sidebar_view(self.workspace_focus, None, self.sidebar_scroll).now,
-            ));
+            );
+            if self.attention_inbox.reveal {
+                dialog.reveal_attention();
+            }
+            return Some(dialog);
         }
         let Some(prompt) = &self.close_prompt else {
             return self.shortcut_viewer_scene_with(measure);
@@ -2349,10 +2380,6 @@ impl Application {
         ))
     }
 
-    fn shortcut_viewer_scene(&self) -> Option<DialogScene> {
-        self.shortcut_viewer_scene_with(&self.dialog_text()?)
-    }
-
     fn shortcut_viewer_scene_with(&self, measure: &dyn DialogText) -> Option<DialogScene> {
         let state = self.window.as_ref()?;
         let snapshot = self.workspace_model.snapshot()?;
@@ -2380,12 +2407,12 @@ impl Application {
     /// Whether the shortcut viewer is the dialog shown and the pointer is outside it.
     /// The inbox and the close prompt draw over it, as in `dialog_scene`.
     fn pointer_outside_viewer(&self) -> bool {
-        !self.attention_inbox.open
-            && self.close_prompt.is_none()
-            && self.shortcut_viewer_scene().is_some_and(|dialog| {
-                !dialog
-                    .bounds
-                    .contains(self.cursor.x as f32, self.cursor.y as f32)
+        self.shortcut_viewer.open
+            && self.dialog_scene().is_some_and(|dialog| {
+                matches!(dialog.kind(), DialogKind::Shortcuts { .. })
+                    && !dialog
+                        .bounds
+                        .contains(self.cursor.x as f32, self.cursor.y as f32)
             })
     }
 
@@ -2421,6 +2448,7 @@ impl Application {
         if let Some(dialog) = self.dialog_scene() {
             self.window_menu.scroll = dialog.menu_action_scroll(&action);
         }
+        self.dialog = None;
         self.refresh_client_view();
     }
 
@@ -2555,21 +2583,15 @@ impl Application {
     }
 
     fn reveal_inbox_highlight(&mut self) {
-        if !self.attention_inbox.open {
-            return;
-        }
-        if let Some(dialog) = self.dialog_scene() {
-            let scroll = dialog.attention_highlight_scroll();
-            if self.attention_inbox.scroll != scroll {
-                self.attention_inbox.scroll = scroll;
-                self.presentation.invalidate();
-            }
-        }
+        self.attention_inbox.reveal = true;
+        self.dialog = None;
+        self.presentation.invalidate();
     }
 
     fn filter_attention_inbox(&mut self, filter: AttentionFilter) {
         if let Some(snapshot) = self.workspace_model.snapshot() {
             self.attention_inbox.set_filter(snapshot, filter);
+            self.dialog = None;
             self.presentation.invalidate();
             self.refresh_client_view();
         }
@@ -2653,8 +2675,16 @@ impl Application {
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
+        let inbox = self.attention_inbox.open;
         change(self);
-        self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+        self.dialog = None;
+        self.next_dialog_age = None;
+        if !self.dialog_open() {
+            self.dialog_texts = DialogTexts::default();
+        }
+        if inbox != self.attention_inbox.open {
+            self.workspace_update |= LAYOUT_WORKSPACE;
+        }
         let is_terminal_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
         let message = self.input.terminal_focus(is_terminal_focused);
@@ -3033,16 +3063,14 @@ impl Application {
         let scroll = list_scroll_offset(dialog.scroll, pixels, dialog.max_scroll);
         if *self.dialog_scroll() != scroll {
             *self.dialog_scroll() = scroll;
+            self.dialog = None;
             if self.window_menu.open {
                 self.presentation.invalidate();
             }
             if self.attention_inbox.open {
-                if let Some(target) = self.dialog_scene().and_then(|dialog| {
-                    dialog
-                        .attention_scrolled_target()
-                        .map(|(tab, target)| (tab.to_owned(), target.to_owned()))
-                }) {
-                    self.attention_inbox.highlighted = Some(target);
+                self.attention_inbox.reveal = false;
+                if let Some((tab, target)) = dialog.attention_scrolled_target(scroll) {
+                    self.attention_inbox.highlighted = Some((tab.to_owned(), target.to_owned()));
                 }
                 self.presentation.invalidate();
             }
@@ -3058,7 +3086,7 @@ impl Application {
         }
         let state = self.window.as_ref()?;
         Some(terminal_screen(
-            self.workspace_scene().as_ref(),
+            self.workspace_scene().as_deref(),
             state.renderer.size(),
         ))
     }
@@ -3125,14 +3153,18 @@ impl Application {
         self.presentation.candidate(revision)
     }
 
-    fn rebuild_workspace_measurements(
-        &mut self,
-        tab_scroll: f32,
-        pane_scroll: f32,
-    ) -> Option<WorkspaceScene> {
+    fn build_workspace(&mut self, keep_tabs: bool, keep_panes: bool) {
         let zoom = self.zoomed();
-        let state = self.window.as_mut()?;
-        let snapshot = self.workspace_model.snapshot()?;
+        let previous = self.workspace.take();
+        let update = self.workspace_update;
+        self.workspace_update &= RESIZE_WORKSPACE;
+        self.next_age = None;
+        let (Some(state), Some(snapshot)) = (self.window.as_mut(), self.workspace_model.snapshot())
+        else {
+            return;
+        };
+        #[cfg(test)]
+        WORKSPACE_BUILDS.with(|calls| calls.set(calls.get() + 1));
         let zoom = WorkspaceScene::zoom_visible(snapshot, zoom);
         let version_width = self
             .eon_version
@@ -3143,92 +3175,97 @@ impl Application {
                     .renderer
                     .measure_monospace_text(&self.eon_release_stage.version_label(version))
             });
-        self.hints = self.hints_visible.then(|| {
-            ShortcutHintsScene::new(
-                if self.attention_inbox.open {
-                    crate::attention_inbox_hints()
-                } else if snapshot.input_locked {
-                    Vec::new()
-                } else {
-                    shortcut_hints_for(
-                        NATIVE_PLATFORM,
-                        self.workspace_focus,
-                        &snapshot.entries,
-                        snapshot.sidebar,
-                        snapshot.running.is_some(),
-                        snapshot.released_shortcuts,
-                    )
-                },
-                state.renderer.size(),
-                state.renderer.metrics(),
-                version_width,
-                // The clock's `HH:MM` is drawn in cells too.
-                self.clock
-                    .as_ref()
-                    .filter(|_| self.bar_items.contains(&BarItem::Clock))
-                    .map(|_| "00:00".len() as f32 * state.renderer.metrics().width),
-                |text| state.renderer.measure_header_text(text).1,
-            )
-        });
-        self.tab_texts.clear();
-        self.quota_widths.clear();
-        self.fitted_texts.clear();
+        let hints = |renderer: &mut Renderer, focus| {
+            self.hints_visible.then(|| {
+                ShortcutHintsScene::new(
+                    if self.attention_inbox.open {
+                        crate::attention_inbox_hints()
+                    } else if snapshot.input_locked {
+                        Vec::new()
+                    } else {
+                        shortcut_hints_for(
+                            NATIVE_PLATFORM,
+                            focus,
+                            &snapshot.entries,
+                            snapshot.sidebar,
+                            snapshot.running.is_some(),
+                            snapshot.released_shortcuts,
+                        )
+                    },
+                    renderer.size(),
+                    renderer.metrics(),
+                    version_width,
+                    // The clock's `HH:MM` is drawn in cells too.
+                    self.clock
+                        .as_ref()
+                        .filter(|_| self.bar_items.contains(&BarItem::Clock))
+                        .map(|_| "00:00".len() as f32 * renderer.metrics().width),
+                    |text| renderer.measure_header_text(text).1,
+                )
+            })
+        };
         let picker = workspace_picker_tooltip(&snapshot.entries, snapshot.input_locked);
         let now = local_now();
-        Some(WorkspaceScene::from_snapshot_with_zoom(
+        let bar = EonBar {
+            items: &self.bar_items,
+            version: self.eon_version.as_deref(),
+            release_stage: self.eon_release_stage,
+            icon: self.eon_icon.is_some(),
+            cpu: self.cpu.as_ref(),
+            ram: self.ram.as_ref(),
+            disk: self.disk.as_ref(),
+            gpu: self.gpu.as_ref(),
+            clock: self.clock.as_ref(),
+            now: now.as_ref(),
+            quota_pace: Some(self.workspace_model.quota_pace()),
+            workspace_picker: picker.as_deref(),
+        };
+        let initial_hints = hints(&mut state.renderer, self.workspace_focus);
+        let mut scene = WorkspaceScene::from_snapshot_with_zoom(
             snapshot,
-            EonBar {
-                items: &self.bar_items,
-                version: self.eon_version.as_deref(),
-                release_stage: self.eon_release_stage,
-                icon: self.eon_icon.is_some(),
-                cpu: self.cpu.as_ref(),
-                ram: self.ram.as_ref(),
-                disk: self.disk.as_ref(),
-                gpu: self.gpu.as_ref(),
-                clock: self.clock.as_ref(),
-                now: now.as_ref(),
-                quota_pace: Some(self.workspace_model.quota_pace()),
-                workspace_picker: picker.as_deref(),
-            },
+            bar,
             state.renderer.size(),
             state.renderer.metrics(),
-            tab_scroll,
-            pane_scroll,
+            keep_tabs.then_some(self.tab_scroll),
+            keep_panes.then_some(self.pane_scroll),
             |kind, label| match kind {
-                HeaderText::Tab(id) => {
-                    let fitted = state.renderer.fit_tab_text(label);
-                    self.tab_texts.insert(id.to_owned(), fitted.clone());
-                    fitted
-                }
+                HeaderText::Tab(_) => state.renderer.fit_tab_text(label),
                 HeaderText::Reading => (label.to_owned(), state.renderer.reading_width()),
-                HeaderText::Fact => {
-                    let fitted = state.renderer.measure_header_text(label);
-                    self.quota_widths.insert(label.to_owned(), fitted.1);
-                    fitted
-                }
-                HeaderText::Fit(width) => {
-                    let fitted = state.renderer.fit_header_text(label, width);
-                    self.fitted_texts.insert(label.to_owned(), fitted.clone());
-                    fitted
-                }
+                HeaderText::Fact => state.renderer.measure_header_text(label),
+                HeaderText::Fit(width) => state.renderer.fit_header_text(label, width),
             },
-            self.hints.clone(),
+            initial_hints,
             zoom,
             sidebar_view(
                 self.workspace_focus,
                 self.sidebar_row.as_deref(),
                 self.sidebar_scroll,
             ),
-        ))
+        );
+        if update & ANCHOR_SIDEBAR == ANCHOR_SIDEBAR
+            && let Some(previous) = previous
+        {
+            scene.set_sidebar_scroll(scene.sidebar_preserved_scroll(&previous));
+        }
+        let focus_lost =
+            !Self::chrome_focus_retained(&scene, self.workspace_focus, self.sidebar_row.as_deref());
+        if focus_lost {
+            scene.set_hints(hints(&mut state.renderer, WorkspaceFocus::Terminal), &bar);
+        }
+        self.tab_scroll = scene.tab_scroll();
+        self.pane_scroll = scene.pane_scroll();
+        self.sidebar_scroll = scene.sidebar_scroll();
+        self.next_age = scene
+            .sidebar_age_wait()
+            .map(|ms| Instant::now() + Duration::from_millis(ms));
+        self.workspace = Some(Rc::new(scene));
+        if focus_lost {
+            self.change_workspace_focus(WorkspaceFocus::Terminal, false);
+        }
     }
 
     fn reveal_workspace_selection(&mut self) {
-        let Some(scene) = self.rebuild_workspace_measurements(0.0, 0.0) else {
-            return;
-        };
-        self.tab_scroll = scene.active_tab_scroll();
-        self.pane_scroll = scene.selected_pane_scroll();
+        self.build_workspace(false, false);
     }
 
     /// Puts keyboard focus on the sidebar row whose target is `target`, while it shows.
@@ -3248,6 +3285,7 @@ impl Application {
             let previous = self.sidebar_scroll;
             self.reveal_sidebar_row();
             if changed || self.sidebar_scroll != previous {
+                self.workspace_update |= LAYOUT_WORKSPACE;
                 // Revealing the row can scroll every row, and rows are hit targets.
                 self.presentation.invalidate();
                 self.refresh_client_view();
@@ -3325,36 +3363,36 @@ impl Application {
         }
     }
 
-    /// Returns keyboard focus to the terminal when the focused interface item disappears.
-    fn retain_chrome_focus(&mut self) {
-        if self.workspace_focus != WorkspaceFocus::Terminal
-            && !self
-                .workspace_scene()
-                .is_some_and(|scene| match self.workspace_focus {
-                    WorkspaceFocus::Terminal => true,
-                    WorkspaceFocus::Tabs => scene.tabs.iter().any(|tab| tab.selected),
-                    WorkspaceFocus::Panes => scene.panes.iter().any(|pane| {
-                        pane.selected && pane.rect.intersection(scene.header_viewport).is_some()
-                    }),
-                    WorkspaceFocus::PaneAction(action) => scene
-                        .panes
-                        .iter()
-                        .find(|pane| pane.selected)
-                        .and_then(|pane| scene.pane_action(&pane.id, action))
-                        .is_some_and(|(_, enabled)| enabled),
-                    WorkspaceFocus::Sidebar => self
-                        .sidebar_row
-                        .as_deref()
-                        .is_some_and(|row| scene.sidebar_row(row).is_some()),
-                    WorkspaceFocus::HeadingAction(action) => scene.heading_action(action).is_some(),
-                    WorkspaceFocus::Header(control) => scene.has_control(control),
-                })
-        {
-            self.set_workspace_focus(WorkspaceFocus::Terminal);
+    fn chrome_focus_retained(
+        scene: &WorkspaceScene,
+        focus: WorkspaceFocus,
+        sidebar_row: Option<&str>,
+    ) -> bool {
+        match focus {
+            WorkspaceFocus::Terminal => true,
+            WorkspaceFocus::Tabs => scene.tabs.iter().any(|tab| tab.selected),
+            WorkspaceFocus::Panes => scene.panes.iter().any(|pane| {
+                pane.selected && pane.rect.intersection(scene.header_viewport).is_some()
+            }),
+            WorkspaceFocus::PaneAction(action) => scene
+                .panes
+                .iter()
+                .find(|pane| pane.selected)
+                .and_then(|pane| scene.pane_action(&pane.id, action))
+                .is_some_and(|(_, enabled)| enabled),
+            WorkspaceFocus::Sidebar => {
+                sidebar_row.is_some_and(|row| scene.sidebar_row(row).is_some())
+            }
+            WorkspaceFocus::HeadingAction(action) => scene.heading_action(action).is_some(),
+            WorkspaceFocus::Header(control) => scene.has_control(control),
         }
     }
 
     fn set_workspace_focus(&mut self, focus: WorkspaceFocus) {
+        self.change_workspace_focus(focus, true);
+    }
+
+    fn change_workspace_focus(&mut self, focus: WorkspaceFocus, layout: bool) {
         if self.workspace_focus == focus {
             return;
         }
@@ -3371,7 +3409,9 @@ impl Application {
         if focus == WorkspaceFocus::Sidebar {
             self.reveal_sidebar_row();
         }
-        self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+        if layout {
+            self.workspace_update |= LAYOUT_WORKSPACE;
+        }
         // Revealing a sidebar row can move its hit target.
         if self.sidebar_scroll != sidebar_scroll {
             self.presentation.invalidate();
@@ -3394,11 +3434,9 @@ impl Application {
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
         self.hints_visible = !self.hints_visible;
-        self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
+        self.workspace_update |= LAYOUT_WORKSPACE;
         self.presentation.invalidate();
         self.send_resize();
-        // The hints line changes the bar's inset, which can hide the workspace label.
-        self.retain_chrome_focus();
         self.refresh_client_view();
     }
 
@@ -3429,14 +3467,9 @@ impl Application {
         self.zoom = (!self.zoomed()).then_some(target);
         self.cancel_terminal_scroll();
         self.cancel_pointer_sequence();
-        if let Some(scene) = self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll)
-            && self.zoom.is_none()
-        {
-            self.pane_scroll = scene.selected_pane_scroll();
-        }
+        self.build_workspace(true, self.zoom.is_some());
         self.presentation.invalidate();
         self.send_resize();
-        self.retain_chrome_focus();
         self.refresh_client_view();
     }
 
@@ -3527,6 +3560,9 @@ impl Application {
             return;
         };
         let pending = self.pending_pane.take().unwrap();
+        if ready {
+            self.prepare_workspace();
+        }
         if ready
             && self.workspace_scene().is_some_and(|scene| {
                 scene
@@ -4052,6 +4088,7 @@ impl Application {
 
     /// Advance before sleep, then wait until the returned deadline or indefinitely on None.
     fn advance_deadlines(&mut self, now: Instant) -> Option<Instant> {
+        let deferred = std::mem::replace(&mut self.defer_refresh, true);
         if let Some(result) = self
             .link_opener
             .as_mut()
@@ -4091,8 +4128,8 @@ impl Application {
                 // Showing or losing the clock gives or takes its room in the shortcut hints.
                 let room = clock.is_some() != self.clock.is_some();
                 self.clock = clock;
+                self.workspace_update |= LAYOUT_WORKSPACE;
                 if room {
-                    self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll);
                     self.presentation.content_changed();
                 }
                 self.refresh_client_view();
@@ -4117,6 +4154,7 @@ impl Application {
             if cpu != self.cpu || ram != self.ram {
                 self.cpu = cpu;
                 self.ram = ram;
+                self.workspace_update |= LAYOUT_WORKSPACE;
                 self.refresh_client_view();
             }
         }
@@ -4140,6 +4178,7 @@ impl Application {
             if self.gpu_reading {
                 // A hung driver child cannot leave an old reading visible or start another child.
                 if self.gpu.take().is_some() {
+                    self.workspace_update |= LAYOUT_WORKSPACE;
                     self.refresh_client_view();
                 }
             } else {
@@ -4147,6 +4186,13 @@ impl Application {
             }
         }
         if self.next_age.is_some_and(|due| now >= due) {
+            self.workspace_update |= LAYOUT_WORKSPACE;
+            self.presentation.content_changed();
+            self.refresh_client_view();
+        }
+        if self.next_dialog_age.is_some_and(|due| now >= due) {
+            self.dialog = None;
+            self.presentation.content_changed();
             self.refresh_client_view();
         }
         self.drive_selection_autoscroll(now);
@@ -4197,12 +4243,33 @@ impl Application {
         {
             self.native_requests.redraw = true;
         }
+        self.prepare_workspace();
+        let quota_deadline = self
+            .workspace
+            .as_ref()
+            .filter(|scene| !scene.quotas.is_empty())
+            .and_then(|scene| {
+                let local = local_now();
+                if self
+                    .workspace_model
+                    .quota_pace()
+                    .time_changed(local.as_ref())
+                {
+                    self.workspace_update |= LAYOUT_WORKSPACE;
+                    self.refresh_pending = true;
+                }
+                now.checked_add(scene.quota_reset_wait(local.as_ref()?)?)
+            });
+        self.defer_refresh = deferred;
+        self.settle_client_view();
         [
             self.next_blink,
             self.next_spinner,
             self.next_animation,
             self.next_clock,
             self.next_age,
+            quota_deadline,
+            self.next_dialog_age,
             self.next_reading,
             self.next_disk,
             self.next_gpu,
@@ -4275,13 +4342,9 @@ impl Application {
             return;
         }
         let ask = PendingClose::on_workspace(&mut self.pending_close, &event);
-        let quit = self.quit.on_workspace(
-            self.workspace_model.snapshot(),
-            self.close_prompt
-                .as_ref()
-                .is_some_and(|prompt| matches!(prompt.target, PromptTarget::QuitWindow)),
-            &event,
-        );
+        let quit = self
+            .quit
+            .on_workspace(self.workspace_model.snapshot(), &event);
         if let WorkspaceEvent::Answered { ticket, accepted } = event {
             self.settle_pane_action(Some((ticket, accepted)));
             // A refused action's notice is new even when it repeats a poll's or an earlier one.
@@ -4298,70 +4361,55 @@ impl Application {
             }
             return;
         }
-        let inbox_index = self
-            .workspace_model
-            .snapshot()
+        let current = self.workspace_model.snapshot();
+        let next = match &event {
+            WorkspaceEvent::Response(eon_workspace_protocol::v50::Response::Snapshot(next)) => {
+                Some(next)
+            }
+            _ => None,
+        };
+        let received_snapshot = next.is_some();
+        let snapshot_changed = received_snapshot && current != next;
+        let changes = current.zip(next).filter(|(before, after)| before != after);
+        let (metadata_only, quota_changed, badge_only, labels_only, sidebar_toggled, lock_changed) =
+            changes
+                .map(|(before, after)| {
+                    let lock = before.input_locked != after.input_locked
+                        || before.input_lock != after.input_lock;
+                    let comparable = if lock {
+                        Cow::Owned(Snapshot {
+                            input_locked: before.input_locked,
+                            input_lock: before.input_lock.clone(),
+                            ..after.clone()
+                        })
+                    } else {
+                        Cow::Borrowed(after)
+                    };
+                    let attention = attention_only_change(before, &comparable);
+                    let (quota, quota_only) = quota_change(before, &comparable);
+                    (
+                        attention || quota_only || lock && before == comparable.as_ref(),
+                        quota,
+                        attention && before.tabs == after.tabs,
+                        labels_only_change(before, &comparable),
+                        before.sidebar != after.sidebar,
+                        lock,
+                    )
+                })
+                .unwrap_or_default();
+        let running_toggled = changes
+            .is_some_and(|(before, after)| before.running.is_some() != after.running.is_some());
+        let dialog_changed = self.dialog_open()
+            && changes.is_some_and(|(before, after)| self.dialog_snapshot_changed(before, after));
+        let focus_lost = changes.is_some_and(|(before, after)| {
+            workspace_focus_lost(self.workspace_focus, before, after)
+        });
+        let inbox_index = current
             .and_then(|snapshot| self.attention_inbox.index(snapshot))
             .unwrap_or(0);
-        let (
-            received_snapshot,
-            snapshot_changed,
-            metadata_only,
-            quota_changed,
-            badge_only,
-            labels_only,
-            sidebar_toggled,
-            lock_changed,
-        ) = match &event {
-            WorkspaceEvent::Response(eon_workspace_protocol::v50::Response::Snapshot(snapshot)) => {
-                let current = self.workspace_model.snapshot();
-                let without_lock_change = current
-                    .filter(|current| {
-                        current.input_locked != snapshot.input_locked
-                            || current.input_lock != snapshot.input_lock
-                    })
-                    .map_or(Cow::Borrowed(snapshot), |current| {
-                        Cow::Owned(Snapshot {
-                            input_locked: current.input_locked,
-                            input_lock: current.input_lock.clone(),
-                            ..snapshot.clone()
-                        })
-                    });
-                let lock_changed = matches!(without_lock_change, Cow::Owned(_));
-                let comparable = without_lock_change.as_ref();
-                let attention_only =
-                    current.is_some_and(|current| attention_only_change(current, comparable));
-                let (quota_changed, quota_only) =
-                    current.map_or((false, false), |current| quota_change(current, comparable));
-                let lock_only = lock_changed && current == Some(comparable);
-                let metadata_only = attention_only || quota_only || lock_only;
-                (
-                    true,
-                    current != Some(snapshot),
-                    metadata_only,
-                    quota_changed,
-                    // Another workspace's attention moves no tab, pane or sidebar row (VEN-C21).
-                    attention_only && current.is_some_and(|current| current.tabs == snapshot.tabs),
-                    current.is_some_and(|current| labels_only_change(current, comparable)),
-                    current.is_some_and(|current| current.sidebar != snapshot.sidebar),
-                    lock_changed,
-                )
-            }
-            _ => (false, false, false, false, false, false, false, false),
-        };
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable { .. });
-        let focus_lost = matches!(
-            &event,
-            WorkspaceEvent::Response(eon_workspace_protocol::v50::Response::Snapshot(next))
-                if snapshot_changed && self.workspace_model.snapshot().is_some_and(|current| {
-                    workspace_focus_lost(self.workspace_focus, current, next)
-                })
-        );
-        let sidebar_before = (received_snapshot && snapshot_changed)
-            .then(|| self.workspace_scene())
-            .flatten();
         let quota_expired = unavailable && self.workspace_model.snapshot().is_some_and(has_quota);
-        let (mut view_changed, workspace_changed) = match event {
+        let (view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(eon_workspace_protocol::v50::Response::Failure(failure))
                 if failure.code == "stop-incomplete" =>
             {
@@ -4389,27 +4437,33 @@ impl Application {
                 unreachable!("answers, slow and degraded reports return above; no-worker is worded")
             }
         };
-        if received_snapshot
-            && snapshot_changed
-            && let Some(snapshot) = self.workspace_model.snapshot()
-        {
-            view_changed |=
-                self.attention_inbox
-                    .refresh(snapshot, inbox_index, &mut self.presentation);
-            self.reveal_inbox_highlight();
+        if dialog_changed {
+            self.dialog = None;
+            self.presentation.invalidate();
+            if self.attention_inbox.open
+                && !self.window_menu.open
+                && let Some(snapshot) = self.workspace_model.snapshot()
+            {
+                self.attention_inbox.reconcile(snapshot, inbox_index);
+                self.attention_inbox.reveal = true;
+            }
         }
         // Accepted selection or layout changes end zoom; covering popups leave its target intact.
         if self.zoom.is_some() && !self.zoomed() {
             self.zoom = None;
         }
         if self.window.is_none() || self.initial_scale_pending {
-            if snapshot_changed && view_changed {
-                self.reveal_workspace_selection();
+            if snapshot_changed && (view_changed || running_toggled) {
+                self.workspace_update |= REVEAL_SELECTION;
+            }
+            if self.workspace_update & LAYOUT_WORKSPACE != 0 || dialog_changed {
+                self.refresh_client_view();
             }
             self.close_stale_prompt(unavailable);
             return;
         }
         if unavailable && quota_expired {
+            self.workspace_update |= LAYOUT_WORKSPACE;
             self.presentation.invalidate();
         }
         // Showing or hiding the sidebar moves every column, as the hints and zoom toggles do.
@@ -4418,7 +4472,7 @@ impl Application {
         }
         if workspace_changed {
             self.cancel_terminal_scroll();
-            self.reveal_workspace_selection();
+            self.workspace_update |= REVEAL_SELECTION;
             self.presentation.invalidate();
             let attachment = self.workspace_model.active_attachment();
             let popup_visible = self
@@ -4443,21 +4497,19 @@ impl Application {
                 }
             }
             self.reconcile_column_views();
-            self.send_resize();
-        } else if snapshot_changed && view_changed {
-            let Some(scene) =
-                self.rebuild_workspace_measurements(self.tab_scroll, self.pane_scroll)
-            else {
-                return;
-            };
-            self.tab_scroll = scene.tab_scroll();
-            self.pane_scroll = scene.pane_scroll();
+            self.workspace_update |= RESIZE_WORKSPACE;
+        } else if snapshot_changed && (view_changed || running_toggled) {
+            self.workspace_update |= ANCHOR_SIDEBAR;
             // Bar and sidebar controls wait for repaint; metadata never moves terminal links.
-            if labels_only || badge_only || metadata_only {
+            if !running_toggled && (labels_only || badge_only || metadata_only) {
                 self.presentation.content_changed();
                 if quota_changed
                     || lock_changed
-                    || !labels_only && !badge_only && scene.sidebar().is_some()
+                    || !labels_only
+                        && !badge_only
+                        && self
+                            .workspace_scene()
+                            .is_some_and(|scene| scene.sidebar().is_some())
                 {
                     self.presentation.unpublish();
                 }
@@ -4465,13 +4517,8 @@ impl Application {
                 self.presentation.invalidate();
                 // Showing or hiding the sidebar resizes the columns; other refreshes leave
                 // every size as it was, so nothing is sent.
-                self.send_resize();
+                self.workspace_update |= RESIZE_WORKSPACE;
             }
-        }
-        if let Some(previous) = sidebar_before
-            && let Some(scene) = self.workspace_scene()
-        {
-            self.sidebar_scroll = scene.sidebar_preserved_scroll(&previous);
         }
         self.close_stale_prompt(unavailable);
         if focus_lost {
@@ -4485,16 +4532,10 @@ impl Application {
             self.attention_jump = None;
             self.pending_pane = None;
         }
-        self.retain_chrome_focus();
-        // The quit prompt is worded from the snapshot's busy list and terminal count, which
-        // change no other view.
-        if quit.refresh {
-            self.presentation.content_changed();
-        }
-        if view_changed || quit.refresh {
+        if view_changed || running_toggled || dialog_changed {
             self.refresh_client_view();
         }
-        self.take_quit_step(quit.step);
+        self.take_quit_step(quit);
     }
 
     /// Closes the prompt with its target or the workspace connection. Closing it refreshes the
@@ -4611,6 +4652,7 @@ impl Application {
                 let quota_expired = self.workspace_model.snapshot().is_some_and(has_quota);
                 if refuse_queued(&mut self.workspace_model, error) {
                     if quota_expired {
+                        self.workspace_update |= LAYOUT_WORKSPACE;
                         self.presentation.invalidate();
                     }
                     self.refresh_client_view();
@@ -4710,6 +4752,7 @@ impl Application {
             })
             .is_ok();
         if !self.gpu_reading && self.gpu.take().is_some() {
+            self.workspace_update |= LAYOUT_WORKSPACE;
             self.refresh_client_view();
         }
     }
@@ -4718,6 +4761,7 @@ impl Application {
         let disk = disk.map(|disk| disk.rated(self.load_levels));
         if disk != self.disk {
             self.disk = disk;
+            self.workspace_update |= LAYOUT_WORKSPACE;
             self.refresh_client_view();
         }
     }
@@ -5055,7 +5099,7 @@ impl Application {
             changed
         };
         if changed {
-            self.retain_chrome_focus();
+            self.workspace_update |= LAYOUT_WORKSPACE;
             self.presentation.invalidate();
             self.refresh_client_view();
         }
@@ -5346,7 +5390,7 @@ impl Application {
         let workspace = self.workspace_scene();
         self.visible_link(
             self.links.unshifted,
-            self.presentation_candidate(workspace.as_ref()),
+            self.presentation_candidate(workspace.as_deref()),
         )
     }
 
@@ -5363,7 +5407,7 @@ impl Application {
             return None;
         }
         let workspace = self.workspace_scene();
-        let identity = self.presentation_candidate(workspace.as_ref());
+        let identity = self.presentation_candidate(workspace.as_deref());
         self.visible_link(self.links.unshifted, identity)
             .filter(|_| self.presented(focus, identity))
     }
@@ -5507,7 +5551,7 @@ impl Application {
         }
         let workspace = self.workspace_scene();
         let Some(uri) = self
-            .link_scene(self.presentation_candidate(workspace.as_ref()))
+            .link_scene(self.presentation_candidate(workspace.as_deref()))
             .and_then(|scene| scene.hyperlink_at(row, column, self.detect_local_hosts))
             .map(|link| link.uri.into_owned())
         else {
@@ -5599,7 +5643,30 @@ impl Application {
         }
     }
 
+    fn dispatch(&mut self, route: impl FnOnce(&mut Self)) {
+        let deferred = std::mem::replace(&mut self.defer_refresh, true);
+        route(self);
+        self.defer_refresh = deferred;
+        self.settle_client_view();
+    }
+
     fn refresh_client_view(&mut self) {
+        self.refresh_pending = true;
+        self.settle_client_view();
+    }
+
+    fn settle_client_view(&mut self) {
+        if self.defer_refresh || !std::mem::take(&mut self.refresh_pending) {
+            return;
+        }
+        self.defer_refresh = true;
+        self.prepare_workspace();
+        if self.workspace_update & RESIZE_WORKSPACE != 0 {
+            self.workspace_update &= !RESIZE_WORKSPACE;
+            self.send_resize();
+        }
+        self.defer_refresh = false;
+        self.refresh_pending = false;
         if let Some(reporter) = &self.focus_reporter {
             reporter.report(keyboard_focus_report(
                 self.window_focused,
@@ -5609,9 +5676,9 @@ impl Application {
                 &self.terminal,
             ));
         }
-        self.measure_dialog_texts();
+        let dialog = self.prepare_dialog();
         let workspace = self.workspace_scene();
-        let candidate = self.presentation_candidate(workspace.as_ref());
+        let candidate = self.presentation_candidate(workspace.as_deref());
         if !self.link_surface_available(self.links.unshifted) {
             self.links.pressed = None;
         }
@@ -5632,26 +5699,8 @@ impl Application {
         }
         let link_generation = self.link_scene(candidate).map(|_| candidate.generation);
         let status = self.status_for(self.links.unshifted, candidate);
-        // Wake when a visible row's age next changes its label; every change to the rows or
-        // their visibility refreshes the view. Ages are not part of the presented content's
-        // identity, so a refresh at or past the deadline marks the content changed.
-        if let Some(scene) = &workspace {
-            self.sidebar_scroll = scene.sidebar_scroll();
-        }
-        let now = Instant::now();
-        if self.next_age.is_some_and(|due| now >= due) {
-            self.presentation.content_changed();
-        }
-        let dialog = self.dialog_scene();
-        self.next_age = workspace
-            .as_ref()
-            .and_then(WorkspaceScene::sidebar_age_wait)
-            .into_iter()
-            .chain(dialog.as_ref().and_then(DialogScene::attention_age_wait))
-            .min()
-            .map(|wait| now + Duration::from_millis(wait));
-        let scrollback_label = self.scrollback_label(workspace.as_ref());
-        let scrollback_rect = self.scrollback_rect(workspace.as_ref());
+        let scrollback_label = self.scrollback_label(workspace.as_deref());
+        let scrollback_rect = self.scrollback_rect(workspace.as_deref());
         let workspace_focus = self.workspace_focus;
         let ime_allowed = !self.dialog_open()
             && ime_allowed(
@@ -5677,7 +5726,7 @@ impl Application {
             .and_then(|scene| scene.cursor)
             .map(|cursor| {
                 let metrics = state.renderer.metrics();
-                let origin = workspace.as_ref().map_or((0.0, 0.0), |workspace| {
+                let origin = workspace.as_deref().map_or((0.0, 0.0), |workspace| {
                     (workspace.terminal.left, workspace.terminal.top)
                 });
                 let left =
@@ -5690,19 +5739,21 @@ impl Application {
             });
         state.native.sync_ime(ime_allowed, caret);
         state.native.set_cursor(pointer_icon);
-        state.accessibility.update(
-            state.native.adapter(),
-            self.terminal.model.scene(),
-            workspace.as_ref(),
-            dialog.as_ref(),
-            workspace_focus,
-            &status,
-            scrollback_label.as_deref(),
-            scrollback_rect,
-            state.renderer.size(),
-            state.renderer.metrics(),
-            link_generation,
-        );
+        if let Some((accessibility, adapter)) = state.native.accessibility() {
+            accessibility.update(
+                Some(adapter),
+                self.terminal.model.scene(),
+                workspace.as_deref(),
+                dialog.as_deref(),
+                workspace_focus,
+                &status,
+                scrollback_label.as_deref(),
+                scrollback_rect,
+                state.renderer.size(),
+                state.renderer.metrics(),
+                link_generation,
+            );
+        }
         self.native_requests.redraw = true;
     }
 
@@ -5761,10 +5812,14 @@ impl Application {
         bench_trace("terminal_queue", "attempt");
         if let Err(error) = transport.send(message) {
             bench_trace("input_rejected", error);
+            let detail = error.to_string();
+            let changed = self.terminal.model.notice() != Some(detail.as_str());
             self.terminal
                 .model
-                .set_venus_notice(LocalNoticeSource::Queue, error.to_string());
-            self.refresh_client_view();
+                .set_venus_notice(LocalNoticeSource::Queue, detail);
+            if changed {
+                self.refresh_client_view();
+            }
             return false;
         }
         bench_trace("terminal_queued", "");
@@ -5938,6 +5993,7 @@ impl Application {
     }
 
     fn send_resize(&mut self) {
+        self.prepare_workspace();
         self.send_column_resizes();
         let Some(state) = &self.window else {
             return;
@@ -5966,7 +6022,7 @@ impl Application {
         let workspace = self.workspace_scene();
         self.status_for(
             self.links.unshifted,
-            self.presentation_candidate(workspace.as_ref()),
+            self.presentation_candidate(workspace.as_deref()),
         )
     }
 
@@ -6050,6 +6106,7 @@ impl Application {
     }
 
     fn render(&mut self) {
+        self.prepare_workspace();
         bench_trace("render_begin", "");
         self.sync_images();
         if self.window_focused && !self.window_occluded {
@@ -6071,17 +6128,18 @@ impl Application {
         });
         let unshifted = scroll_offset == 0.0;
         let scene_started = crate::frame_time();
-        let mut workspace = self.workspace_scene();
-        if let Some(workspace) = &mut workspace {
-            workspace.column_backgrounds = self
-                .workspace_model
-                .column_backgrounds(workspace.popup_label().is_some() && self.zoomed());
+        let workspace = self.workspace_scene();
+        if let Some(workspace) = &workspace {
+            workspace.column_backgrounds.replace(
+                self.workspace_model
+                    .column_backgrounds(workspace.popup_label().is_some() && self.zoomed()),
+            );
         }
-        let dialog = self.dialog_scene();
+        let dialog = self.prepare_dialog();
         let scene_ns = crate::frame_elapsed(scene_started);
-        let candidate = self.presentation_candidate(workspace.as_ref());
+        let candidate = self.presentation_candidate(workspace.as_deref());
         // The frame drawn now carries its own hover, so output does not blink the highlight.
-        let hover_changed = self.hover_link(unshifted, workspace.as_ref());
+        let hover_changed = self.hover_link(unshifted, workspace.as_deref());
         let shown = self
             .visible_link(unshifted, candidate)
             .and(self.links.focus.clone());
@@ -6098,8 +6156,8 @@ impl Application {
         let link_generation = (candidate.revision.is_some()
             && self.link_surface_available(unshifted))
         .then_some(candidate.generation);
-        let scrollback_label = self.visible_scrollback_label(workspace.as_ref());
-        let prior_scrollback_target = self.scrollback_rect(workspace.as_ref());
+        let scrollback_label = self.visible_scrollback_label(workspace.as_deref());
+        let prior_scrollback_target = self.scrollback_rect(workspace.as_deref());
         let highlighted_link = shown.as_ref().map(|link| (link.row, link.column));
         let hovering = dialog.is_none()
             && self.window_focused
@@ -6198,13 +6256,13 @@ impl Application {
             self.terminal.model.scene(),
             self.terminal.model.scroll_preview(),
             scroll_offset,
-            workspace.as_ref(),
+            workspace.as_deref(),
             &column_scenes(
                 &self.workspace_model,
                 &self.column_views,
-                workspace.as_ref(),
+                workspace.as_deref(),
             ),
-            dialog.as_ref(),
+            dialog.as_deref(),
             workspace_focus,
             status,
             self.blink_visible,
@@ -6232,7 +6290,7 @@ impl Application {
                 // `dialog` is the scene this call built and drew, so its list is now on screen.
                 if let Some(prompt) = &mut self.close_prompt {
                     prompt.presented(
-                        dialog.as_ref().map(DialogScene::kind),
+                        dialog.as_deref().map(DialogScene::kind),
                         Instant::now(),
                         self.turns,
                     );
@@ -6252,11 +6310,13 @@ impl Application {
                 }
                 self.links.unshifted = unshifted;
                 self.links.shown = shown;
-                state.accessibility.present_links(
-                    state.native.adapter(),
-                    self.terminal.model.scene(),
-                    link_generation,
-                );
+                if let Some((accessibility, adapter)) = state.native.accessibility() {
+                    accessibility.present_links(
+                        adapter,
+                        self.terminal.model.scene(),
+                        link_generation,
+                    );
+                }
                 if kinetic_active {
                     state.native.request_redraw();
                 }
@@ -6281,12 +6341,13 @@ impl Application {
                     error,
                     |title| state.native.set_title(title),
                     |message| report(message),
-                ) {
-                    state.accessibility.update(
-                        state.native.adapter(),
+                ) && let Some((accessibility, adapter)) = state.native.accessibility()
+                {
+                    accessibility.update(
+                        Some(adapter),
                         self.terminal.model.scene(),
-                        workspace.as_ref(),
-                        dialog.as_ref(),
+                        workspace.as_deref(),
+                        dialog.as_deref(),
                         workspace_focus,
                         notice,
                         scrollback_label.as_deref(),
@@ -6330,7 +6391,7 @@ impl Application {
                     ),
                 );
             }
-            self.inspect_pointer_link(workspace.as_ref());
+            self.inspect_pointer_link(workspace.as_deref());
         }
     }
 }
@@ -6416,6 +6477,8 @@ impl Application {
                 self.native_requests.exit = true;
                 return false;
             }
+        } else if state.scale_factor == scale_factor {
+            return false;
         }
         state.scale_factor = scale_factor;
         report(format_args!("window scale factor {scale_factor}"));
@@ -6424,17 +6487,24 @@ impl Application {
 
     fn handle_window_event(&mut self, window_id: WindowId, event: WindowEvent) {
         let _bench_input = BenchInput::start(&event);
+        let Some(state) = &mut self.window else {
+            return;
+        };
+        if !state.native.is(window_id)
+            || matches!(event, WindowEvent::Focused(focused) if focused == self.window_focused)
+            || matches!(event, WindowEvent::Occluded(occluded) if occluded == self.window_occluded)
+        {
+            return;
+        }
+        state.native.process_event(&event);
+        self.dispatch(|app| app.route_window_event(event));
+    }
+
+    fn route_window_event(&mut self, event: WindowEvent) {
         if local_input(&event) {
             self.pending_pane = None;
         }
         PendingClose::on_window(&mut self.pending_close, &event);
-        let Some(state) = &mut self.window else {
-            return;
-        };
-        if !state.native.is(window_id) {
-            return;
-        }
-        state.native.process_event(&event);
         let workspace_focus = self.workspace_focus;
         let dialog_open = self.dialog_open();
         let presentation_current = self.presentation.has_presented_geometry();
@@ -6468,23 +6538,28 @@ impl Application {
                 self.native_requests.exit = true;
             }
             WindowEvent::Resized(size) => {
+                if state.native.id().is_some()
+                    && !self.initial_scale_pending
+                    && size == state.renderer.size()
+                    && state.renderer.metrics_at_scale(state.scale_factor)
+                        == state.renderer.metrics()
+                {
+                    return;
+                }
                 self.next_animation = None;
                 self.input.reset_scroll();
                 self.terminal
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.resize(size, state.scale_factor);
+                self.dialog = None;
                 #[cfg(target_os = "linux")]
                 state.native.ime_resized(state.scale_factor);
                 self.cancel_native_pointer_sequence();
                 self.reveal_workspace_selection();
-                if self.attention_inbox.open {
-                    self.reveal_inbox_highlight();
-                }
+                self.attention_inbox.reveal = self.attention_inbox.open;
                 self.presentation.invalidate();
                 self.send_resize();
-                // A sidebar or workspace label hidden for width gives up its focus.
-                self.retain_chrome_focus();
                 self.refresh_client_view();
             }
             WindowEvent::ScaleFactorChanged {
@@ -6513,14 +6588,15 @@ impl Application {
             WindowEvent::RedrawRequested => self.render(),
             WindowEvent::ModifiersChanged(modifiers) => {
                 self.cancel_terminal_scroll();
+                let previous = self.input.modifiers();
                 self.input.set_modifiers(modifiers.state());
-                if !dialog_open {
+                if !dialog_open && previous != self.input.modifiers() {
                     let workspace = (self.links.pointer_inside
                         && !self.input.pointer_busy()
                         && self.link_surface_available(self.links.unshifted))
                     .then(|| self.workspace_scene())
                     .flatten();
-                    self.hover_link(self.links.unshifted, workspace.as_ref());
+                    self.hover_link(self.links.unshifted, workspace.as_deref());
                     self.refresh_client_view();
                 }
             }
@@ -6636,16 +6712,17 @@ impl Application {
                             && self.window_menu.highlighted.as_ref() != Some(&action)
                         {
                             self.window_menu.hover(action);
+                            self.dialog = None;
                             self.refresh_client_view();
                         }
                     }
                     return;
                 }
                 let workspace = self.workspace_scene();
-                let scrollback_rect = self.scrollback_rect(workspace.as_ref());
+                let scrollback_rect = self.scrollback_rect(workspace.as_deref());
                 let state = self.window.as_ref().expect("native event has a window");
                 let header_at = |position: PhysicalPosition<f64>| {
-                    workspace.as_ref().and_then(|scene| {
+                    workspace.as_deref().and_then(|scene| {
                         match scene.hit_test(position.x as f32, position.y as f32) {
                             hit @ Some(
                                 WorkspaceHit::Tab(_)
@@ -6700,9 +6777,9 @@ impl Application {
                     }
                     return;
                 }
-                let motion = move_terminal_pointer(&mut self.input, position, workspace.as_ref());
+                let motion = move_terminal_pointer(&mut self.input, position, workspace.as_deref());
                 if self.input.is_selecting() {
-                    let screen = terminal_screen(workspace.as_ref(), state.renderer.size());
+                    let screen = terminal_screen(workspace.as_deref(), state.renderer.size());
                     let size = surface_size(screen, state.renderer.metrics());
                     if let Some(message) = size.and_then(|size| self.input.selection_motion(size)) {
                         self.send_or_defer_selection(message, presentation_current);
@@ -6717,7 +6794,7 @@ impl Application {
                         self.terminal.pending_viewport,
                     );
                 } else if presented_revision.is_some()
-                    && workspace.as_ref().is_none_or(|workspace| {
+                    && workspace.as_deref().is_none_or(|workspace| {
                         matches!(
                             workspace.hit_test(position.x as f32, position.y as f32),
                             Some(WorkspaceHit::Terminal)
@@ -6730,19 +6807,19 @@ impl Application {
                 if !self.input.is_selecting() {
                     self.terminal.selection_scroll.cancel();
                 }
-                self.inspect_pointer_link(workspace.as_ref());
+                self.inspect_pointer_link(workspace.as_deref());
                 if was_scrollback != over_scrollback {
                     self.refresh_client_view();
                 }
             }
             WindowEvent::CursorLeft { .. } => {
-                self.links.pointer_inside = false;
-                self.terminal.scrollback_press = None;
-                state.native.request_redraw();
+                let inside = std::mem::take(&mut self.links.pointer_inside);
+                let link = self.links.focus.take();
                 self.cancel_terminal_scroll();
                 self.cancel_pointer_sequence();
-                self.links.focus = None;
-                self.refresh_client_view();
+                if inside || link.is_some() {
+                    self.refresh_client_view();
+                }
             }
             WindowEvent::MouseInput {
                 state: button_state,
@@ -6796,15 +6873,19 @@ impl Application {
                     return;
                 }
                 let workspace = self.workspace_scene();
-                let candidate = self.presentation_candidate(workspace.as_ref());
-                let scrollback_rect = self.scrollback_rect(workspace.as_ref());
+                let candidate = self.presentation_candidate(workspace.as_deref());
+                let scrollback_rect = self.scrollback_rect(workspace.as_deref());
                 let state = self.window.as_mut().expect("native event has a window");
                 if button_state == ElementState::Pressed {
+                    let scrolling = self
+                        .terminal
+                        .terminal_scroll
+                        .active(self.terminal.pending_viewport);
                     self.terminal
                         .terminal_scroll
                         .cancel(&mut self.terminal.pending_viewport);
                     let navigation = matches!(
-                        workspace.as_ref().and_then(|scene| {
+                        workspace.as_deref().and_then(|scene| {
                             scene.hit_test(self.cursor.x as f32, self.cursor.y as f32)
                         }),
                         Some(
@@ -6816,10 +6897,13 @@ impl Application {
                                 | WorkspaceHit::Control(_)
                         )
                     );
+                    let animation = !navigation && state.renderer.cursor_animation_active();
                     if !navigation {
                         state.renderer.reset_cursor_animation();
                     }
-                    state.native.request_redraw();
+                    if animation || scrolling {
+                        state.native.request_redraw();
+                    }
                 }
                 let renderer_size = state.renderer.size();
                 let metrics = state.renderer.metrics();
@@ -6846,19 +6930,21 @@ impl Application {
                     self.refresh_client_view();
                     return;
                 }
-                if self.handle_link_button(button_state, button, workspace.as_ref()) {
+                if self.handle_link_button(button_state, button, workspace.as_deref()) {
                     return;
                 }
                 if button_state == ElementState::Pressed {
-                    self.links.focus = None;
-                    self.links.notice = None;
-                    self.refresh_client_view();
+                    let focus = self.links.focus.take();
+                    let notice = self.links.notice.take();
+                    if focus.is_some() || notice.is_some() {
+                        self.refresh_client_view();
+                    }
                 }
                 bench_trace(
                     "hit",
                     format_args!("geometry={presentation_current} dialog={dialog_open}"),
                 );
-                let hit = workspace.as_ref().and_then(|workspace| {
+                let hit = workspace.as_deref().and_then(|workspace| {
                     workspace.hit_test(self.cursor.x as f32, self.cursor.y as f32)
                 });
                 if button == MouseButton::Left
@@ -6981,8 +7067,8 @@ impl Application {
                     }
                     return;
                 }
-                let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_ref());
-                let screen = terminal_screen(workspace.as_ref(), renderer_size);
+                let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_deref());
+                let screen = terminal_screen(workspace.as_deref(), renderer_size);
                 let size = surface_size(screen, metrics);
                 let selection = size.and_then(|size| {
                     self.input.selection_button(
@@ -7019,7 +7105,7 @@ impl Application {
                 let workspace = self.workspace_scene();
                 let state = self.window.as_mut().expect("native event has a window");
                 let metrics = state.renderer.metrics();
-                let hit = workspace.as_ref().and_then(|workspace| {
+                let hit = workspace.as_deref().and_then(|workspace| {
                     workspace.hit_test(self.cursor.x as f32, self.cursor.y as f32)
                 });
                 if !matches!(hit, Some(WorkspaceHit::Terminal)) && workspace.is_some() {
@@ -7032,8 +7118,8 @@ impl Application {
                         .cancel(&mut self.terminal.pending_viewport);
                     if scrolling {
                         state.renderer.reset_cursor_animation();
+                        state.native.request_redraw();
                     }
-                    state.native.request_redraw();
                 }
                 if let Some(scroll) = workspace
                     .as_ref()
@@ -7041,12 +7127,13 @@ impl Application {
                 {
                     if self.sidebar_scroll != scroll {
                         self.sidebar_scroll = scroll;
+                        self.workspace_update |= LAYOUT_WORKSPACE;
                         self.presentation.invalidate();
                         self.refresh_client_view();
                     }
                     return;
                 }
-                if workspace.as_ref().is_some_and(|scene| {
+                if workspace.as_deref().is_some_and(|scene| {
                     scene
                         .tab_viewport
                         .contains(self.cursor.x as f32, self.cursor.y as f32)
@@ -7058,7 +7145,7 @@ impl Application {
                 }
                 // Header scrolling belongs to the selected column; other columns' headers ignore the wheel.
                 if let (Some(WorkspaceHit::Pane(id) | WorkspaceHit::PaneAction(id, _)), Some(scene)) =
-                    (hit, workspace.as_ref())
+                    (hit, workspace.as_deref())
                     && scene.panes.iter().any(|pane| pane.id == id)
                 {
                     if presentation_current {
@@ -7072,7 +7159,7 @@ impl Application {
                 if presented_revision.is_none() {
                     return;
                 }
-                let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_ref());
+                let _ = move_terminal_pointer(&mut self.input, self.cursor, workspace.as_deref());
                 let (horizontal, vertical) = match delta {
                     MouseScrollDelta::LineDelta(horizontal, vertical) => (
                         MouseScrollDelta::LineDelta(horizontal, 0.0),
@@ -7112,6 +7199,14 @@ impl Application {
     fn handle_user_event(
         &mut self,
         event: UserEvent,
+        native: impl FnMut(&mut Self, NativeRequest),
+    ) {
+        self.dispatch(|app| app.route_user_event(event, native));
+    }
+
+    fn route_user_event(
+        &mut self,
+        event: UserEvent,
         mut native: impl FnMut(&mut Self, NativeRequest),
     ) {
         match event {
@@ -7130,6 +7225,7 @@ impl Application {
                     Instant::now(),
                     READING_INTERVAL,
                 ) {
+                    self.workspace_update |= LAYOUT_WORKSPACE;
                     self.refresh_client_view();
                 }
             }
@@ -7163,9 +7259,9 @@ impl Application {
                         // As `forget_pending`, by field: `state` borrows the window.
                         self.pending_pane = None;
                         self.pending_close = None;
-                        let target = state
-                            .accessibility
-                            .action_target(request.target_node, request.action);
+                        let target = state.native.accessibility().and_then(|(accessibility, _)| {
+                            accessibility.action_target(request.target_node, request.action)
+                        });
                         let click = request.action == accesskit::Action::Click;
                         match target {
                             Some(AccessibilityTarget::WindowMenu { action, activate }) => {
@@ -7196,7 +7292,7 @@ impl Application {
                             }
                             Some(AccessibilityTarget::ReturnToLive)
                                 if self
-                                    .scrollback_rect(self.workspace_scene().as_ref())
+                                    .scrollback_rect(self.workspace_scene().as_deref())
                                     .is_some() =>
                             {
                                 self.send(ClientMessage::ReturnToLive);
@@ -7371,6 +7467,10 @@ fn present_admitted(window_focused: bool, has_window: bool) -> bool {
 
 /// The local wall-clock time, or none rather than UTC when the local time zone is unknown.
 fn local_now() -> Option<jiff::Zoned> {
+    #[cfg(test)]
+    if let Some(now) = TEST_LOCAL_TIME.with(|time| time.borrow().clone()) {
+        return Some(now);
+    }
     Some(jiff::Timestamp::now().to_zoned(jiff::tz::TimeZone::try_system().ok()?))
 }
 

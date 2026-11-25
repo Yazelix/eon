@@ -4979,6 +4979,86 @@ fn q_paces(m: &crate::WorkspaceModel, items: &[BarItem]) -> Vec<Option<f32>> {
 }
 
 #[test]
+fn quota_formats_only_changed_facts_and_arms_visible_boundaries_without_clock() {
+    use eon_workspace_protocol::v50::{QuotaFailure, QuotaFailureReason, Response};
+    use std::time::Duration;
+
+    let zone = jiff::tz::TimeZone::fixed(jiff::tz::offset(-3));
+    let midnight = jiff::civil::date(2026, 11, 4)
+        .to_zoned(zone.clone())
+        .unwrap();
+    let day = 86_400;
+    let observed = midnight.timestamp().as_second() as u64;
+    let reset = observed + 7 * day + 3_600;
+    let mut model = crate::WorkspaceModel::default();
+    push_q(
+        &mut model,
+        c7(observed, 50, reset),
+        Some((observed, vec![qw(10_080, 55, None, Some("Gemini Models"))])),
+    );
+    let items = [
+        BarItem::CodexQuota7d,
+        BarItem::GoogleQuota {
+            scope: "Gemini Models".into(),
+            duration_minutes: 10_080,
+        },
+    ];
+    let render = |model: &crate::WorkspaceModel, seconds: u64, width, formats| {
+        let now = quota_timestamp(seconds).unwrap().to_zoned(zone.clone());
+        QUOTA_FORMATS.with(|calls| calls.set(0));
+        let scene = WorkspaceScene::from_snapshot_with_bar(
+            model.snapshot().unwrap(),
+            EonBar {
+                items: &items,
+                now: Some(&now),
+                quota_pace: Some(model.quota_pace()),
+                ..EonBar::default()
+            },
+            PhysicalSize::new(width, 800),
+            CellMetrics::for_scale(1.0),
+            0.0,
+            0.0,
+            |_, text| (text.to_owned(), text.len() as f32 * 8.0),
+            None,
+        );
+        assert_eq!(QUOTA_FORMATS.with(|calls| calls.get()), formats);
+        assert!(scene.clock.is_none());
+        let wait = scene.quota_reset_wait(&now);
+        (scene, wait)
+    };
+    let (wide, wait) = render(&model, observed, 1280, 2);
+    assert_eq!(wait, Some(Duration::from_secs(day)));
+    assert!(wide.quotas[0].tooltip.contains("Resets 11 Nov"));
+    assert_eq!(render(&model, observed, 30, 0).1, None);
+
+    let mut next = model.snapshot().unwrap().clone();
+    next.codex_quota_failure = Some(QuotaFailure {
+        at: observed + 1,
+        reason: QuotaFailureReason::Deadline,
+    });
+    model.apply(Response::Snapshot(next.clone()));
+    assert_eq!(
+        render(&model, observed + 1, 1728, 0).0.quotas[0].tooltip,
+        wide.quotas[0].tooltip
+    );
+    next.google_quota.as_mut().unwrap().windows[0].remaining_percent = 45;
+    model.apply(Response::Snapshot(next));
+    render(&model, observed + 1, 1728, 1);
+    for (seconds, line, wait) in [
+        (observed + day, "Resets Wed 01:00", Some(6 * day)),
+        (observed + 7 * day, "Resets at 01:00", Some(3_600)),
+        (reset, "Has reset since this reading", None),
+    ] {
+        let (scene, due) = render(&model, seconds, 1280, 1);
+        assert!(scene.quotas[0].tooltip.contains(line));
+        assert_eq!(due, wait.map(Duration::from_secs));
+    }
+    model.mark_unavailable("test transport loss", false);
+    assert!(render(&model, reset, 1280, 0).0.quotas.is_empty());
+    assert!(model.quota_pace().rendered.lock().unwrap().is_empty());
+}
+
+#[test]
 fn quota_reanchor_survives_blips_and_prunes_after_expiry() {
     use CodexQuotaState::{Blocked, Fresh, Unknown};
     let g_item = BarItem::GoogleQuota {

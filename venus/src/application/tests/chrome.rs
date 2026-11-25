@@ -1454,31 +1454,7 @@ fn quit_progress_follows_workspace_events() {
             detail: "window cleanup is incomplete; retry `eon window stop 00000007`".into(),
         }))
     };
-    let effects = |refresh, step| QuitEffects { refresh, step };
-
-    // An open quit prompt is refreshed by a busy-only or count-only change, and by nothing else.
     let mut quit = QuitProgress::Idle;
-    assert_eq!(
-        quit.on_workspace(Some(&busy), true, &snapshot(&idle)),
-        effects(true, None)
-    );
-    let mut fewer = busy.clone();
-    fewer.running.as_mut().unwrap().this.live_terminals = Some(2);
-    assert_eq!(
-        quit.on_workspace(Some(&busy), true, &snapshot(&fewer)),
-        effects(true, None)
-    );
-    assert_eq!(
-        quit.on_workspace(Some(&busy), false, &snapshot(&idle)),
-        effects(false, None)
-    );
-    let mut moved = busy.clone();
-    moved.active_tab = "t2".into();
-    assert_eq!(
-        quit.on_workspace(Some(&busy), true, &snapshot(&moved)),
-        effects(false, None)
-    );
-    assert_eq!(quit, QuitProgress::Idle);
 
     // A busy window asks at once.
     assert_eq!(quit.begin(Some(&busy)), Some(QuitStep::Ask));
@@ -1488,15 +1464,15 @@ fn quit_progress_follows_workspace_events() {
     assert_eq!(quit, QuitProgress::Pending);
     assert_eq!(quit.begin(Some(&idle)), None);
     assert_eq!(
-        quit.on_workspace(Some(&idle), false, &snapshot(&busy)),
-        effects(false, Some(QuitStep::Ask))
+        quit.on_workspace(Some(&idle), &snapshot(&busy)),
+        Some(QuitStep::Ask)
     );
     assert_eq!(quit, QuitProgress::Idle);
     // Still idle: Stop for this generation.
     quit.begin(Some(&idle));
     assert_eq!(
-        quit.on_workspace(Some(&idle), false, &snapshot(&idle)),
-        effects(false, Some(QuitStep::Stop(stop_g7())))
+        quit.on_workspace(Some(&idle), &snapshot(&idle)),
+        Some(QuitStep::Stop(stop_g7()))
     );
 
     // While that Stop is in flight, quitting does nothing and Enter is held.
@@ -1505,29 +1481,23 @@ fn quit_progress_follows_workspace_events() {
     assert_eq!(quit.begin(Some(&idle)), None);
     assert!(quit.holds_key(KeyCode::Enter, session::Modifiers::empty()));
     assert!(!quit.holds_key(KeyCode::Escape, session::Modifiers::empty()));
-    assert_eq!(
-        quit.on_workspace(Some(&idle), false, &failure()),
-        effects(false, None)
-    );
+    assert_eq!(quit.on_workspace(Some(&idle), &failure()), None);
     let answered = |ticket| WorkspaceEvent::Answered {
         ticket,
         accepted: false,
     };
-    assert_eq!(
-        quit.on_workspace(Some(&idle), false, &answered(4)),
-        effects(false, None)
-    );
+    assert_eq!(quit.on_workspace(Some(&idle), &answered(4)), None);
     assert_eq!(quit, QuitProgress::Stopping(5));
     // Its failure answer allows a retry, though every refresh now fails: the pending quit
     // decides on the snapshot Venus keeps and sends another Stop.
-    quit.on_workspace(Some(&idle), false, &answered(5));
+    quit.on_workspace(Some(&idle), &answered(5));
     assert_eq!(quit, QuitProgress::Idle);
     assert!(quit.may_stop());
     assert!(!quit.holds_key(KeyCode::Enter, session::Modifiers::empty()));
     assert_eq!(quit.begin(Some(&idle)), None);
     assert_eq!(
-        quit.on_workspace(Some(&idle), false, &failure()),
-        effects(false, Some(QuitStep::Stop(stop_g7())))
+        quit.on_workspace(Some(&idle), &failure()),
+        Some(QuitStep::Stop(stop_g7()))
     );
 
     // Any other failure, such as an attention jump's no-attention answer, says nothing about
@@ -1537,14 +1507,11 @@ fn quit_progress_follows_workspace_events() {
         code: "no-attention".into(),
         detail: "no agent needs attention".into(),
     }));
-    assert_eq!(
-        quit.on_workspace(Some(&idle), false, &no_attention),
-        effects(false, None)
-    );
+    assert_eq!(quit.on_workspace(Some(&idle), &no_attention), None);
     assert_eq!(quit, QuitProgress::Pending);
     assert_eq!(
-        quit.on_workspace(Some(&idle), false, &snapshot(&busy)),
-        effects(false, Some(QuitStep::Ask))
+        quit.on_workspace(Some(&idle), &snapshot(&busy)),
+        Some(QuitStep::Ask)
     );
 
     // Losing the workspace drops a pending quit; a later snapshot decides nothing.
@@ -1552,19 +1519,15 @@ fn quit_progress_follows_workspace_events() {
     assert_eq!(
         quit.on_workspace(
             Some(&idle),
-            false,
             &WorkspaceEvent::Unavailable {
                 notice: "Eon is not answering.".into(),
                 detail: None,
             }
         ),
-        effects(false, None)
+        None
     );
     assert_eq!(quit, QuitProgress::Idle);
-    assert_eq!(
-        quit.on_workspace(Some(&idle), false, &snapshot(&idle)),
-        effects(false, None)
-    );
+    assert_eq!(quit.on_workspace(Some(&idle), &snapshot(&idle)), None);
     // eonbase has no running window to quit.
     let mut eonbase = idle.clone();
     eonbase.running = None;

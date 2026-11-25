@@ -21,11 +21,13 @@ use orbit_protocol::{
 };
 use std::{
     borrow::Cow,
+    cell::RefCell,
     ffi::OsStr,
     fmt::Write,
     ops::{Range, RangeInclusive},
     os::unix::ffi::OsStrExt,
     path::Path,
+    sync::{Arc, Mutex, PoisonError},
 };
 use winit::dpi::PhysicalSize;
 
@@ -200,6 +202,19 @@ pub struct SidebarRow {
 }
 
 impl SidebarRow {
+    fn reveal_scroll(&self, viewport: SceneRect, scroll: f32, limit: f32) -> f32 {
+        if self.rect.height > viewport.height && self.rect.intersection(viewport).is_some() {
+            return scroll;
+        }
+        let top = self.rect.top - viewport.top;
+        let delta = if top < 0.0 {
+            top
+        } else {
+            (self.rect.bottom() - viewport.bottom()).min(top).max(0.0)
+        };
+        (scroll + delta).clamp(0.0, limit)
+    }
+
     fn shift(&mut self, delta: f32) {
         self.rect.top += delta;
         self.glyph.rect.top =
@@ -503,6 +518,7 @@ pub(crate) struct WorkspaceQuota {
     pub(crate) tooltip: String,
     /// The accessible description: every fact, including what the chip shows.
     pub(crate) description: String,
+    resets_at: Option<jiff::Timestamp>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -676,6 +692,7 @@ impl ReleaseStage {
 }
 
 /// The Eon Bar items in order, and the values Venus has for them.
+#[derive(Clone, Copy)]
 pub struct EonBar<'a> {
     pub items: &'a [BarItem],
     pub version: Option<&'a str>,
@@ -2120,41 +2137,45 @@ impl DialogScene {
     /// Scroll just far enough to reveal the highlighted row, keeping its top on tiny surfaces.
     #[must_use]
     pub fn attention_highlight_scroll(&self) -> f32 {
-        let Some(row) = self.attention_rows.iter().find(|row| row.focused) else {
-            return self.scroll;
-        };
-        // An oversized row is already as visible as possible; keep its scrolled message visible.
-        if row.rect.height > self.content.height && row.rect.intersection(self.content).is_some() {
-            return self.scroll;
-        }
-        let delta = if row.rect.top < self.content.top {
-            row.rect.top - self.content.top
-        } else {
-            (row.rect.bottom() - self.content.bottom())
-                .min(row.rect.top - self.content.top)
-                .max(0.0)
-        };
-        (self.scroll + delta).clamp(0.0, self.max_scroll)
+        self.attention_rows
+            .iter()
+            .find(|row| row.focused)
+            .map_or(self.scroll, |row| {
+                row.reveal_scroll(self.content, self.scroll, self.max_scroll)
+            })
+    }
+
+    pub(crate) fn reveal_attention(&mut self) {
+        let scroll = self.attention_highlight_scroll();
+        shift_sidebar(&mut [], &mut self.attention_rows, self.scroll - scroll);
+        self.scroll = scroll;
     }
 
     /// Scrolling keeps the highlight on the nearest visible entry.
     #[must_use]
-    pub fn attention_scrolled_target(&self) -> Option<(&str, &str)> {
+    pub fn attention_scrolled_target(&self, scroll: f32) -> Option<(&str, &str)> {
         let current = self.attention_rows.iter().find(|row| row.focused)?;
+        let delta = self.scroll - scroll;
         let visible = |row: &&SidebarRow| {
-            row.rect.top >= self.content.top && row.rect.bottom() <= self.content.bottom()
+            row.rect.top + delta >= self.content.top
+                && row.rect.bottom() + delta <= self.content.bottom()
         };
-        let row = if current.rect.top < self.content.top {
+        let row = if current.rect.top + delta < self.content.top {
             self.attention_rows.iter().find(visible)
-        } else if current.rect.bottom() > self.content.bottom() {
+        } else if current.rect.bottom() + delta > self.content.bottom() {
             self.attention_rows.iter().rev().find(visible)
         } else {
             Some(current)
         }
         .or_else(|| {
-            self.attention_rows
-                .iter()
-                .find(|row| row.rect.intersection(self.content).is_some())
+            self.attention_rows.iter().find(|row| {
+                SceneRect {
+                    top: row.rect.top + delta,
+                    ..row.rect
+                }
+                .intersection(self.content)
+                .is_some()
+            })
         })?;
         Some((&row.tab, &row.target))
     }
@@ -2362,7 +2383,7 @@ pub struct WorkspaceScene {
     stack_close: Option<SceneRect>,
     pub other_columns: Vec<WorkspaceColumn>,
     /// Paint input for live pane colors when their terminal scenes are absent.
-    pub(crate) column_backgrounds: Vec<Option<Color>>,
+    pub(crate) column_backgrounds: RefCell<Vec<Option<Color>>>,
     pub tab_viewport: SceneRect,
     /// The area every card shares: the columns', the popup's and the agent sidebar's.
     pub pane_viewport: SceneRect,
@@ -2387,8 +2408,6 @@ pub struct WorkspaceScene {
     pane_scroll: f32,
     tab_scroll_limit: f32,
     pane_scroll_limit: f32,
-    active_tab_scroll: f32,
-    selected_pane_scroll: f32,
     popup_label: Option<String>,
     /// The Hide buttons in the popup and Agents headings' title rows, while each fits.
     popup_hide: Option<SceneRect>,
@@ -2792,13 +2811,17 @@ fn sidebar_contents(
     } else {
         0.0
     };
-    for heading in &mut headings {
-        heading.rect.top -= scroll;
-    }
-    for row in &mut rows {
-        row.shift(-scroll);
-    }
+    shift_sidebar(&mut headings, &mut rows, -scroll);
     (headings, rows, list, scroll, max_scroll)
+}
+
+fn shift_sidebar(headings: &mut [SidebarHeading], rows: &mut [SidebarRow], delta: f32) {
+    for heading in headings {
+        heading.rect.top += delta;
+    }
+    for row in rows {
+        row.shift(delta);
+    }
 }
 
 /// The area `count` cards share: inset from the content area's sides by the card gap, starting
@@ -3169,12 +3192,31 @@ fn ordered_quota_windows(
 
 /// Tracks per-window quota reset anchors in memory per running Venus window so mid-window
 /// reset-time moves drop prior usage instead of extrapolating it over the shifted window.
-#[derive(Clone, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Debug, Default)]
 pub struct QuotaPaceHistory {
     tracks: Vec<QuotaWindowTrack>,
+    rendered: Arc<Mutex<Vec<(QuotaTextKey, QuotaText)>>>,
 }
 
+impl PartialEq for QuotaPaceHistory {
+    fn eq(&self, other: &Self) -> bool {
+        self.tracks == other.tracks
+    }
+}
+
+impl Eq for QuotaPaceHistory {}
+
 impl QuotaPaceHistory {
+    pub(crate) fn time_changed(&self, now: Option<&jiff::Zoned>) -> bool {
+        self.rendered
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .any(|((provider, _, _, window, _, before), _)| {
+                *before != quota_time(*provider, window.as_ref(), now)
+            })
+    }
+
     /// Update tracked window anchors from `snapshot`, keeping unexpired tracks across transient
     /// reading blips and bounding retained tracks per provider.
     pub fn observe(&mut self, snapshot: &Snapshot) {
@@ -3382,7 +3424,18 @@ fn google_scope_markers(items: &[BarItem]) -> Vec<(&str, String)> {
         .collect()
 }
 
+type QuotaTime = (jiff::tz::TimeZone, Option<&'static str>);
+type QuotaTextKey = (
+    QuotaProvider,
+    CodexQuotaState,
+    u64,
+    Option<QuotaWindow>,
+    Option<QuotaRebaseAnchor>,
+    Option<QuotaTime>,
+);
+
 /// One provider chip's label with its pace, its hover list, and its accessible text.
+#[derive(Clone, Debug)]
 struct QuotaText {
     label: String,
     /// The chip's name for assistive technology: the provider, the full scope and the label.
@@ -3393,28 +3446,48 @@ struct QuotaText {
     description: String,
 }
 
-/// When a window resets, in `now`'s local time: the time alone today, with the weekday within
-/// the next six days, and with the date after that, or none once it has passed. Being absolute,
-/// it stays true however old the reading is.
+fn quota_timestamp(seconds: u64) -> Option<jiff::Timestamp> {
+    jiff::Timestamp::from_second(i64::try_from(seconds).ok()?).ok()
+}
+
+fn quota_time(
+    provider: QuotaProvider,
+    window: Option<&QuotaWindow>,
+    now: Option<&jiff::Zoned>,
+) -> Option<QuotaTime> {
+    let resets_at = window.and_then(|window| window.resets_at);
+    let now = now.filter(|_| resets_at.is_some() || provider == QuotaProvider::Google)?;
+    let zone = now.time_zone().clone();
+    let band = resets_at
+        .and_then(quota_timestamp)
+        .and_then(|at| quota_reset_format(&at.to_zoned(zone.clone()), now));
+    Some((zone, band))
+}
+
+fn quota_reset_format(reset: &jiff::Zoned, now: &jiff::Zoned) -> Option<&'static str> {
+    if reset.timestamp() <= now.timestamp() {
+        None
+    } else if reset.date() == now.date() {
+        Some("at %H:%M")
+    } else if reset.date() <= now.date().saturating_add(jiff::Span::new().days(6)) {
+        Some("%a %H:%M")
+    } else {
+        Some("%-d %b %H:%M")
+    }
+}
+
+/// When a window resets, in the current local date band. Expired resets omit the time.
 fn quota_reset(resets_at: u64, now: &jiff::Zoned) -> Option<String> {
-    let Some(reset) = i64::try_from(resets_at)
-        .ok()
-        .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
-    else {
+    let Some(reset) = quota_timestamp(resets_at) else {
         return Some("Reset time unavailable".into());
     };
-    if reset <= now.timestamp() {
-        return None;
-    }
     let reset = reset.to_zoned(now.time_zone().clone());
-    let format = if reset.date() == now.date() {
-        "at %H:%M"
-    } else if reset.date() <= now.date().saturating_add(jiff::Span::new().days(6)) {
-        "%a %H:%M"
-    } else {
-        "%-d %b %H:%M"
-    };
-    Some(format!("Resets {}", reset.strftime(format)))
+    quota_reset_format(&reset, now).map(|format| format!("Resets {}", reset.strftime(format)))
+}
+
+#[cfg(test)]
+thread_local! {
+    static QUOTA_FORMATS: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
 }
 
 fn quota_text(
@@ -3425,6 +3498,8 @@ fn quota_text(
     rebase: Option<QuotaRebaseAnchor>,
     now: Option<&jiff::Zoned>,
 ) -> QuotaText {
+    #[cfg(test)]
+    QUOTA_FORMATS.with(|calls| calls.set(calls.get() + 1));
     let (mut text, remaining_percent) = match state {
         CodexQuotaState::Fresh | CodexQuotaState::Stale => {
             let window = window.expect("EONW requires a quota window for fresh and stale states");
@@ -3558,10 +3633,7 @@ fn quota_text(
     if provider == QuotaProvider::Google {
         let read = now
             .and_then(|now| {
-                i64::try_from(observed_at)
-                    .ok()
-                    .and_then(|seconds| jiff::Timestamp::from_second(seconds).ok())
-                    .map(|timestamp| timestamp.to_zoned(now.time_zone().clone()))
+                quota_timestamp(observed_at).map(|at| at.to_zoned(now.time_zone().clone()))
             })
             .map_or_else(
                 || "Read time unavailable".into(),
@@ -3693,8 +3765,8 @@ impl WorkspaceScene {
         snapshot: &Snapshot,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
-        tab_scroll: f32,
-        pane_scroll: f32,
+        tab_scroll: impl Into<Option<f32>>,
+        pane_scroll: impl Into<Option<f32>>,
         header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
     ) -> Self {
         Self::from_snapshot_with_bar(
@@ -3716,8 +3788,8 @@ impl WorkspaceScene {
         bar: EonBar<'_>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
-        tab_scroll: f32,
-        pane_scroll: f32,
+        tab_scroll: impl Into<Option<f32>>,
+        pane_scroll: impl Into<Option<f32>>,
         header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
     ) -> Self {
@@ -3756,13 +3828,14 @@ impl WorkspaceScene {
         bar: EonBar<'_>,
         size: PhysicalSize<u32>,
         metrics: CellMetrics,
-        tab_scroll: f32,
-        pane_scroll: f32,
+        tab_scroll: impl Into<Option<f32>>,
+        pane_scroll: impl Into<Option<f32>>,
         mut header_text: impl FnMut(HeaderText<'_>, &str) -> (String, f32),
         hints: Option<ShortcutHintsScene>,
         zoom: bool,
         sidebar_view: SidebarView<'_>,
     ) -> Self {
+        let pane_scroll = pane_scroll.into();
         let width = size.width as f32;
         let height = size.height as f32;
         let pane_height = header_heights(metrics).1;
@@ -3838,6 +3911,38 @@ impl WorkspaceScene {
         );
         let google_markers = google_scope_markers(bar.items);
         let google_markers = &google_markers;
+        let quota_cache = bar.quota_pace.map(|history| {
+            history
+                .rendered
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+        });
+        let mut rendered = Vec::new();
+        let mut text = |provider, state, observed_at, window: Option<&QuotaWindow>, rebase| {
+            let build = || quota_text(provider, state, observed_at, window, rebase, bar.now);
+            let Some(previous) = &quota_cache else {
+                return build();
+            };
+            let observed = window.map_or(0, |_| observed_at);
+            let key = (
+                provider,
+                state,
+                observed,
+                window.cloned(),
+                rebase,
+                quota_time(provider, window, bar.now),
+            );
+            if let Some((_, text)) = rendered.iter().find(|(cached, _)| *cached == key) {
+                return QuotaText::clone(text);
+            }
+            let text = previous
+                .iter()
+                .find(|(cached, _)| *cached == key)
+                .map(|(_, text)| text.clone())
+                .unwrap_or_else(build);
+            rendered.push((key, text.clone()));
+            text
+        };
         let quota_texts = bar
             .items
             .iter()
@@ -3860,7 +3965,8 @@ impl WorkspaceScene {
                             item.clone(),
                             provider,
                             None,
-                            quota_text(provider, state, observed_at, None, None, bar.now),
+                            text(provider, state, observed_at, None, None),
+                            None,
                         )]
                     } else {
                         Vec::new()
@@ -3875,14 +3981,8 @@ impl WorkspaceScene {
                         let rebase = bar.quota_pace.and_then(|history| {
                             history.rebase_for(&entry.key(provider), entry.window, observed_at)
                         });
-                        let mut text = quota_text(
-                            provider,
-                            state,
-                            observed_at,
-                            Some(entry.window),
-                            rebase,
-                            bar.now,
-                        );
+                        let mut text =
+                            text(provider, state, observed_at, Some(entry.window), rebase);
                         if provider == QuotaProvider::Google
                             && let Some((_, marker)) = google_markers
                                 .iter()
@@ -3890,14 +3990,23 @@ impl WorkspaceScene {
                         {
                             text.label = format!("{marker} {}", text.label);
                         }
-                        (item.clone(), provider, Some(entry.identity), text)
+                        (
+                            item.clone(),
+                            provider,
+                            Some(entry.identity),
+                            text,
+                            entry.window.resets_at.and_then(quota_timestamp),
+                        )
                     })
                     .collect()
             })
             .collect::<Vec<_>>();
+        if let Some(mut cache) = quota_cache {
+            *cache = rendered;
+        }
         let mut quotas = quota_texts
             .into_iter()
-            .map(|(item, provider, window, text)| {
+            .map(|(item, provider, window, text, resets_at)| {
                 let (label, width) = header_text(HeaderText::Fact, &text.label);
                 let quota_padding = metrics.padding * 2.0
                     + tokens::chip_dot_reserve(metrics)
@@ -3918,6 +4027,7 @@ impl WorkspaceScene {
                     pace: text.pace,
                     tooltip: text.tooltip,
                     description: text.description,
+                    resets_at,
                 }
             })
             .collect::<Vec<_>>();
@@ -4247,28 +4357,7 @@ impl WorkspaceScene {
         controls[1].centre += left + grow - controls[1].rect.left;
         controls[1].rect.left = left;
         controls[1].rect.width += grow;
-        let clock = hints
-            .as_ref()
-            .and_then(|hints| hints.clock)
-            .zip(bar.clock)
-            .map(|(rect, clock)| WorkspaceLabel {
-                rect,
-                label: clock.label.clone(),
-                tooltip: clock.tooltip.clone(),
-                description: clock.description.clone(),
-                load: Load::Normal,
-            });
-        let version = hints
-            .as_ref()
-            .and_then(|hints| hints.version)
-            .zip(bar.version)
-            .map(|(rect, version)| WorkspaceLabel {
-                rect,
-                label: bar.release_stage.version_label(version),
-                tooltip: bar.release_stage.version_name(version),
-                description: String::new(),
-                load: Load::Normal,
-            });
+        let (clock, version) = Self::hint_labels(hints.as_ref(), &bar);
         let tab_scroll_limit = (tab_end - tab_viewport.right()).max(0.0);
         let active = tabs[active_tab].rect;
         // Revealing the first tab never scrolls.
@@ -4278,11 +4367,13 @@ impl WorkspaceScene {
             (active.left - tab_viewport.left - (tab_viewport.width - active.width).max(0.0) / 2.0)
                 .clamp(0.0, tab_scroll_limit)
         };
-        let tab_scroll = if tab_scroll.is_finite() {
-            tab_scroll.clamp(0.0, tab_scroll_limit)
-        } else {
-            0.0
-        };
+        let tab_scroll = tab_scroll.into().map_or(active_tab_scroll, |scroll| {
+            if scroll.is_finite() {
+                scroll.clamp(0.0, tab_scroll_limit)
+            } else {
+                0.0
+            }
+        });
         for tab in &mut tabs {
             tab.rect.left -= tab_scroll;
             if let Some(badge) = &mut tab.badge {
@@ -4341,7 +4432,7 @@ impl WorkspaceScene {
                 panes: Vec::new(),
                 selected_column: 0,
                 other_columns: Vec::new(),
-                column_backgrounds: Vec::new(),
+                column_backgrounds: RefCell::default(),
                 terminal: SceneRect {
                     left: pane_viewport.left + horizontal_inset,
                     top: pane_viewport.top + vertical_inset + title_gutter,
@@ -4374,8 +4465,6 @@ impl WorkspaceScene {
                 pane_scroll: 0.0,
                 tab_scroll_limit,
                 pane_scroll_limit: 0.0,
-                active_tab_scroll,
-                selected_pane_scroll: 0.0,
                 popup_label: popup.map(|popup| {
                     snapshot
                         .entries
@@ -4463,12 +4552,16 @@ impl WorkspaceScene {
             let expanded_scroll = (expanded as f32 * pane_height).clamp(0.0, pane_scroll_limit);
             // Only the selected column follows the user's header scroll; others reveal
             // their expanded pane.
-            let column_scroll = if index != selected_column {
-                expanded_scroll
-            } else if pane_scroll.is_finite() {
-                pane_scroll.clamp(0.0, pane_scroll_limit)
+            let column_scroll = if index == selected_column {
+                pane_scroll.map_or(expanded_scroll, |scroll| {
+                    if scroll.is_finite() {
+                        scroll.clamp(0.0, pane_scroll_limit)
+                    } else {
+                        0.0
+                    }
+                })
             } else {
-                0.0
+                expanded_scroll
             };
             let panes = column
                 .panes
@@ -4526,14 +4619,7 @@ impl WorkspaceScene {
                 height: terminal_height,
             };
             if index == selected_column {
-                selected_layout = Some((
-                    panes,
-                    terminal,
-                    chrome,
-                    column_scroll,
-                    pane_scroll_limit,
-                    expanded_scroll,
-                ));
+                selected_layout = Some((panes, terminal, chrome, column_scroll, pane_scroll_limit));
             } else {
                 other_columns.push(WorkspaceColumn {
                     index,
@@ -4545,7 +4631,7 @@ impl WorkspaceScene {
                 });
             }
         }
-        let (panes, terminal, chrome, pane_scroll, pane_scroll_limit, selected_pane_scroll) =
+        let (panes, terminal, chrome, pane_scroll, pane_scroll_limit) =
             selected_layout.expect("the selected column is laid out");
         let stack_label = label(selected_column);
 
@@ -4574,7 +4660,7 @@ impl WorkspaceScene {
             stack_label,
             stack_close: None,
             other_columns,
-            column_backgrounds: Vec::new(),
+            column_backgrounds: RefCell::default(),
             tab_viewport,
             pane_viewport,
             header_viewport,
@@ -4591,8 +4677,6 @@ impl WorkspaceScene {
             pane_scroll,
             tab_scroll_limit,
             pane_scroll_limit,
-            active_tab_scroll,
-            selected_pane_scroll,
             popup_label: None,
             popup_hide: None,
             sidebar_hide: None,
@@ -4739,22 +4823,13 @@ impl WorkspaceScene {
     /// Reveal only on a navigation request; focus styling alone never moves the viewport.
     #[must_use]
     pub fn sidebar_reveal_scroll(&self, target: &str) -> f32 {
-        let Some(row) = self.sidebar_row(target) else {
-            return self.sidebar_scroll;
-        };
-        if row.rect.height > self.sidebar_list.height
-            && row.rect.intersection(self.sidebar_list).is_some()
-        {
-            return self.sidebar_scroll;
-        }
-        let delta = if row.rect.top < self.sidebar_list.top {
-            row.rect.top - self.sidebar_list.top
-        } else {
-            (row.rect.bottom() - self.sidebar_list.bottom())
-                .min(row.rect.top - self.sidebar_list.top)
-                .max(0.0)
-        };
-        (self.sidebar_scroll + delta).clamp(0.0, self.sidebar_max_scroll)
+        self.sidebar_row(target).map_or(self.sidebar_scroll, |row| {
+            row.reveal_scroll(
+                self.sidebar_list,
+                self.sidebar_scroll,
+                self.sidebar_max_scroll,
+            )
+        })
     }
 
     /// Keep the first surviving visible row at its old displacement, then nearby survivors.
@@ -4779,6 +4854,15 @@ impl WorkspaceScene {
                 })
             })
             .unwrap_or(self.sidebar_scroll)
+    }
+
+    pub(crate) fn set_sidebar_scroll(&mut self, scroll: f32) {
+        shift_sidebar(
+            &mut self.sidebar_headings,
+            &mut self.sidebar_rows,
+            self.sidebar_scroll - scroll,
+        );
+        self.sidebar_scroll = scroll;
     }
 
     /// A gutter outside row fills/outlines, between the list's edge and the card border.
@@ -4829,6 +4913,62 @@ impl WorkspaceScene {
     #[must_use]
     pub fn sidebar_row(&self, target: &str) -> Option<&SidebarRow> {
         self.sidebar_rows.iter().find(|row| row.target == target)
+    }
+
+    pub(crate) fn set_hints(&mut self, hints: Option<ShortcutHintsScene>, bar: &EonBar<'_>) {
+        (self.clock, self.version) = Self::hint_labels(hints.as_ref(), bar);
+        self.hints = hints;
+    }
+
+    fn hint_labels(
+        hints: Option<&ShortcutHintsScene>,
+        bar: &EonBar<'_>,
+    ) -> (Option<WorkspaceLabel>, Option<WorkspaceLabel>) {
+        let clock = hints
+            .and_then(|hints| hints.clock)
+            .zip(bar.clock)
+            .map(|(rect, clock)| WorkspaceLabel {
+                rect,
+                label: clock.label.clone(),
+                tooltip: clock.tooltip.clone(),
+                description: clock.description.clone(),
+                load: Load::Normal,
+            });
+        let version =
+            hints
+                .and_then(|hints| hints.version)
+                .zip(bar.version)
+                .map(|(rect, version)| WorkspaceLabel {
+                    rect,
+                    label: bar.release_stage.version_label(version),
+                    tooltip: bar.release_stage.version_name(version),
+                    description: String::new(),
+                    load: Load::Normal,
+                });
+        (clock, version)
+    }
+
+    pub(crate) fn quota_reset_wait(&self, now: &jiff::Zoned) -> Option<std::time::Duration> {
+        let current = now.timestamp();
+        self.quotas
+            .iter()
+            .filter_map(|quota| quota.resets_at)
+            .filter(|reset| *reset > current)
+            .map(|reset| {
+                let date = reset.to_zoned(now.time_zone().clone()).date();
+                let first = date.saturating_sub(jiff::Span::new().days(6));
+                let boundary = if now.date() < first { first } else { date };
+                boundary
+                    .to_zoned(now.time_zone().clone())
+                    .ok()
+                    .map(|time| time.timestamp())
+                    .filter(|at| *at > current)
+                    .map_or(reset, |at| reset.min(at))
+            })
+            .min()?
+            .duration_since(current)
+            .try_into()
+            .ok()
     }
 
     /// Milliseconds until a row's age next changes its label.
@@ -5171,16 +5311,6 @@ impl WorkspaceScene {
     #[must_use]
     pub fn popup_label(&self) -> Option<&str> {
         self.popup_label.as_deref()
-    }
-
-    #[must_use]
-    pub fn active_tab_scroll(&self) -> f32 {
-        self.active_tab_scroll
-    }
-
-    #[must_use]
-    pub fn selected_pane_scroll(&self) -> f32 {
-        self.selected_pane_scroll
     }
 
     #[must_use]

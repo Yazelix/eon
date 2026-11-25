@@ -327,17 +327,9 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     };
     let size = PhysicalSize::new(800, 600);
     let metrics = CellMetrics::for_scale(1.0);
-    let initial = WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+    let scene = WorkspaceScene::from_snapshot(&snapshot, size, metrics, None, None, |_, text| {
         (text.to_owned(), text.chars().count() as f32 * 10.0)
     });
-    let scene = WorkspaceScene::from_snapshot(
-        &snapshot,
-        size,
-        metrics,
-        initial.active_tab_scroll(),
-        initial.selected_pane_scroll(),
-        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
-    );
 
     assert_eq!(
         scene
@@ -401,9 +393,9 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
     assert!(scene.terminal.height > metrics.height);
     assert_eq!(scene.terminal.top, scene.panes[1].rect.bottom());
     assert_eq!(
-        initial.hit_test(
-            initial.panes[0].rect.left + 1.0,
-            initial.panes[0].rect.top + 1.0
+        scene.hit_test(
+            scene.panes[0].rect.left + 1.0,
+            scene.panes[0].rect.top + 1.0
         ),
         Some(WorkspaceHit::Pane("pane-1"))
     );
@@ -467,14 +459,10 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
             .iter()
             .all(|pane| pane.rect.height == scene.panes[0].rect.height)
     );
-    let revealed = WorkspaceScene::from_snapshot(
-        &overflow_snapshot,
-        size,
-        metrics,
-        0.0,
-        unscrolled.selected_pane_scroll(),
-        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
-    );
+    let revealed =
+        WorkspaceScene::from_snapshot(&overflow_snapshot, size, metrics, 0.0, None, |_, text| {
+            (text.to_owned(), text.chars().count() as f32 * 10.0)
+        });
     let selected = revealed
         .panes
         .iter()
@@ -493,20 +481,12 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
 
     let mut second_tab = snapshot.clone();
     second_tab.active_tab = "t2".into();
-    let narrow = WorkspaceScene::from_snapshot(
-        &second_tab,
-        PhysicalSize::new(100, 600),
-        metrics,
-        0.0,
-        0.0,
-        |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
-    );
     let revealed = WorkspaceScene::from_snapshot(
         &second_tab,
         PhysicalSize::new(100, 600),
         metrics,
-        narrow.active_tab_scroll(),
-        narrow.selected_pane_scroll(),
+        None,
+        None,
         |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
     );
     assert_eq!(
@@ -1874,13 +1854,13 @@ fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
             |_, text| (text.to_owned(), text.chars().count() as f32 * 10.0),
         )
     };
-    let clipped = small(0.0);
+    let clipped = small(Some(0.0));
     assert!(clipped.visible_terminal().unwrap().height < clipped.terminal.height);
-    let restored = small(clipped.selected_pane_scroll());
+    let restored = small(None);
     assert_eq!(restored.visible_terminal(), Some(restored.terminal));
     println!(
         "unzoom reveals the selected pane at scroll {}",
-        clipped.selected_pane_scroll()
+        restored.pane_scroll()
     );
 
     for (scale, font_size, height) in [

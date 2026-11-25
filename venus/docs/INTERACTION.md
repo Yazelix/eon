@@ -38,6 +38,17 @@ fractional-scale proof remain open.
 
 ## Workspace and terminal interaction
 
+Native events admit input and send ordered actions through the shared
+application. Workspace wakes apply attachment changes in order and settle
+the final projection before requesting a redraw. Hit testing and
+unsolicited paints reuse that projection. A real geometry change
+withdraws pointer admission until a compatible frame is drawn.
+
+The workspace and dialog each track their visible age transitions. Quota
+chips reuse the label and hover text for each selected window during
+layout changes. A visible chip schedules its next local date-band or reset
+transition even when the clock chip is hidden.
+
 The accepted Eon snapshot supplies the authoritative terminal endpoints: the
 active tab's selected popup, otherwise the expanded Orbit pane of each of its
 columns. Input goes to the popup or the selected pane. An empty body

@@ -938,7 +938,8 @@ fn card_backdrops(
 ) -> Vec<(Option<CardFill>, SceneColor)> {
     let popup = workspace.popup_label().is_some();
     let fallback = palette::DARK.terminal_fallback;
-    let column = |index: usize| workspace.column_backgrounds.get(index).copied().flatten();
+    let backgrounds = workspace.column_backgrounds.borrow();
+    let column = |index| backgrounds.get(index).copied().flatten();
     let scenes = std::iter::once(scene).chain(columns.iter().copied());
     let mut cards: Vec<_> = workspace
         .column_cards()
@@ -1109,9 +1110,10 @@ fn push_frameless_backdrop(
     let mut strips;
     let (popup, popup_color) = cards[0];
     let bands = if let Some(fill) = popup.filter(|_| workspace.popup_label().is_some()) {
-        let count = workspace.column_backgrounds.len().max(1);
+        let backgrounds = workspace.column_backgrounds.borrow();
+        let count = backgrounds.len().max(1);
         let content_width = width - workspace.sidebar().map_or(0.0, SceneRect::right);
-        let colors = workspace.column_backgrounds.iter().copied().chain([None]);
+        let colors = backgrounds.iter().copied().chain([None]);
         strips = crate::scene::column_rects(workspace.pane_viewport, content_width, count, metrics)
             .zip(colors.map(|color| color.unwrap_or(palette::DARK.terminal_fallback)))
             .collect::<Vec<_>>();
@@ -2404,8 +2406,9 @@ impl Renderer {
                 .iter()
                 .map(|scene| scene.map(|scene| scene.revision))
                 .collect(),
-            column_backgrounds: workspace
-                .map_or_else(Vec::new, |workspace| workspace.column_backgrounds.clone()),
+            column_backgrounds: workspace.map_or_else(Vec::new, |workspace| {
+                workspace.column_backgrounds.borrow().clone()
+            }),
             scroll_offset,
             workspace_focus,
             text_blink_visible,

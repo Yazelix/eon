@@ -1055,7 +1055,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             );
             app.input
                 .set_modifiers(winit::keyboard::ModifiersState::CONTROL);
-            app.inspect_pointer_link(app.workspace_scene().as_ref());
+            app.inspect_pointer_link(app.workspace_scene().as_deref());
             assert!(
                 app.focused_link().is_some() && app.current_link().is_none(),
                 "unpresented target is inert"
@@ -1064,7 +1064,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 !app.handle_link_button(
                     ElementState::Pressed,
                     MouseButton::Left,
-                    app.workspace_scene().as_ref()
+                    app.workspace_scene().as_deref()
                 ),
                 "an unpresented target cannot capture a press"
             );
@@ -1091,7 +1091,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             assert!(app.handle_link_button(
                 ElementState::Pressed,
                 MouseButton::Left,
-                app.workspace_scene().as_ref()
+                app.workspace_scene().as_deref()
             ));
             for revision in 8..11 {
                 app.handle_transport(linked_frame(revision, kept));
@@ -1106,7 +1106,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             assert!(app.handle_link_button(
                 ElementState::Released,
                 MouseButton::Left,
-                app.workspace_scene().as_ref()
+                app.workspace_scene().as_deref()
             ));
             assert_eq!(
                 app.links.notice(),
@@ -1166,7 +1166,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 app.links.notice.is_none(),
                 "a success clears at its deadline"
             );
-            app.inspect_pointer_link(app.workspace_scene().as_ref());
+            app.inspect_pointer_link(app.workspace_scene().as_deref());
             // Metadata repaints bar and sidebar controls, not the terminal link beneath a
             // still pointer. Exercise pane and popup with the sidebar both visible and hidden.
             let original_snapshot = app.workspace_model.snapshot().unwrap().clone();
@@ -1236,7 +1236,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 assert!(app.handle_link_button(
                     ElementState::Pressed,
                     MouseButton::Left,
-                    app.workspace_scene().as_ref()
+                    app.workspace_scene().as_deref()
                 ));
                 for progress in [1, 2, 3] {
                     snapshot.tabs[0].columns[0].panes[0].attention = Some(workspace::Attention {
@@ -1304,7 +1304,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 assert!(app.handle_link_button(
                     ElementState::Released,
                     MouseButton::Left,
-                    app.workspace_scene().as_ref()
+                    app.workspace_scene().as_deref()
                 ));
                 assert_eq!(
                     app.links.notice(),
@@ -1324,7 +1324,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
                 assert!(app.handle_link_button(
                     state,
                     MouseButton::Left,
-                    app.workspace_scene().as_ref()
+                    app.workspace_scene().as_deref()
                 ));
             };
             press(app, ElementState::Pressed);
@@ -1371,7 +1371,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             assert!(app.handle_link_button(
                 ElementState::Released,
                 MouseButton::Left,
-                app.workspace_scene().as_ref()
+                app.workspace_scene().as_deref()
             ));
             assert!(
                 app.links.notice.is_none(),
@@ -1396,7 +1396,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             assert!(!app.handle_link_button(
                 ElementState::Pressed,
                 MouseButton::Left,
-                app.workspace_scene().as_ref()
+                app.workspace_scene().as_deref()
             ));
             assert!(
                 app.links.pressed.is_none(),
@@ -1445,12 +1445,12 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             tick_frame.scroll_position.history_rows = 13;
             app.handle_transport(TransportEvent::Server(ServerMessage::Frame(scrolled)));
             assert!(
-                app.scrollback_rect(app.workspace_scene().as_ref())
+                app.scrollback_rect(app.workspace_scene().as_deref())
                     .is_none()
             );
             app.render();
             let pill = app
-                .scrollback_rect(app.workspace_scene().as_ref())
+                .scrollback_rect(app.workspace_scene().as_deref())
                 .expect("the presented scrollback pill is actionable");
             assert!(
                 app.send(ClientMessage::Selection(SelectionAction::Autoscroll {
@@ -1838,7 +1838,7 @@ fn live_output_keeps_application_input_admitted_before_repaint() {
             assert!(app.status().contains("selected Eon pane is offline"));
             assert_eq!(app.presented_revision(), None);
             assert!(
-                app.pointer_link(app.links.unshifted, app.workspace_scene().as_ref())
+                app.pointer_link(app.links.unshifted, app.workspace_scene().as_deref())
                     .is_none()
             );
             check_sidebar_wheel_bursts(app, event_loop, id);
@@ -2768,7 +2768,7 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
     use winit::keyboard::ModifiersState;
 
     run_quit_probe("quit", |app, event_loop, busy, actions, _| {
-        let described = |app: &Application| app.window.as_ref().unwrap().accessibility.dialog();
+        let described = described_dialog;
         // Alt+Shift+Q opens the quit prompt while p1 is busy.
         app.input
             .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
@@ -2777,7 +2777,7 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
         app.input.set_modifiers(ModifiersState::empty());
         assert!(quit_prompt_open(app));
         let asked = described(app);
-        assert_eq!(asked, app.dialog_scene());
+        assert_eq!(asked.as_ref(), app.dialog_scene().as_deref());
 
         // p1's command ends: only `busy` changes, and the prompt is drawn and described again.
         let generation = app.presentation.generation;
@@ -2795,8 +2795,8 @@ fn quit_prompt_refreshes_and_a_stop_in_flight_holds_enter() {
         );
         assert_ne!(described(app), asked);
         assert_eq!(
-            described(app),
-            app.dialog_scene(),
+            described(app).as_ref(),
+            app.dialog_scene().as_deref(),
             "AccessKit reads the new prompt"
         );
 
@@ -3161,7 +3161,16 @@ fn quit_prompt_shown(app: &Application) -> bool {
         && shown
             .as_ref()
             .is_some_and(|dialog| dialog.filters.is_empty())
-        && app.window.as_ref().unwrap().accessibility.dialog() == shown
+        && described_dialog(app).as_ref() == shown.as_deref()
+}
+
+#[cfg(target_os = "linux")]
+fn described_dialog(app: &Application) -> Option<DialogScene> {
+    match &app.window.as_ref()?.native {
+        NativeWindow::Winit { accessibility, .. } => accessibility.dialog(),
+        #[cfg(feature = "candidate-rune")]
+        NativeWindow::Rune(_) => None,
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -3635,7 +3644,8 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
             };
             let accessible = |app: &mut Application, action, target: AccessibilityTarget| {
                 use accesskit::ActivationHandler;
-                let accessibility = &app.window.as_ref().unwrap().accessibility;
+                let (accessibility, _) =
+                    app.window.as_mut().unwrap().native.accessibility().unwrap();
                 let tree = accessibility.activation().request_initial_tree().unwrap();
                 let target_node = tree
                     .nodes
@@ -3711,7 +3721,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
             assert_eq!(app.workspace_focus, Focus::Terminal);
             let shortcuts = WorkspaceHeaderControl::Shortcuts;
             let window_menu = WorkspaceHeaderControl::WindowMenu;
-            click(app, scene.window_menu.unwrap().rect);
+            click(app, scene.window_menu.as_ref().unwrap().rect);
             assert!(app.window_menu.open);
             assert!(press_shortcut(app, event_loop, KeyCode::Escape));
             release_shortcut(app, event_loop, KeyCode::Escape);

@@ -215,13 +215,12 @@ fn sidebar_scroll_preserves_visible_rows_across_refresh() {
     let mut inserted = snapshot.tabs[0].columns[0].panes[0].clone();
     inserted.id = "inserted".into();
     snapshot.tabs[0].columns[0].panes.insert(0, inserted);
-    let next = scrolled_sidebar(&snapshot, metrics, before.sidebar_scroll(), None);
-    let stable = scrolled_sidebar(
-        &snapshot,
-        metrics,
-        next.sidebar_preserved_scroll(&before),
-        None,
-    );
+    let mut stable = scrolled_sidebar(&snapshot, metrics, before.sidebar_scroll(), None);
+    let scroll = stable.sidebar_preserved_scroll(&before);
+    stable.set_sidebar_scroll(scroll);
+    let rebuilt = scrolled_sidebar(&snapshot, metrics, scroll, None);
+    assert_eq!(stable.sidebar_rows, rebuilt.sidebar_rows);
+    assert_eq!(stable.sidebar_headings, rebuilt.sidebar_headings);
     assert_eq!(
         stable.sidebar_row(&anchor.target).unwrap().rect.top,
         anchor.rect.top

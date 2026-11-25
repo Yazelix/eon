@@ -2,6 +2,9 @@
 
 ## Unreleased
 
+- Visible quota chips update their reset text at the next local date boundary
+  or reset time, including when the clock chip is hidden (`eon-vtby5`).
+
 - VEN-C8, VEN-C18 and VEN-C30: Workspace controls keep terminal keyboard focus
   on pointer activation. F6 and AccessKit Focus enter the controls. Losing the
   focused control returns focus to the terminal (`eon-6xybm`).

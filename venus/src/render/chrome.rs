@@ -6031,13 +6031,13 @@ mod tests {
             } else {
                 (&right_scene, &peers[..])
             };
-            let mut ws =
-                WorkspaceScene::from_snapshot(snapshot, size, metrics, 0.0, 0.0, |_, text| {
-                    (text.into(), text.len() as f32 * metrics.width)
-                });
+            let ws = WorkspaceScene::from_snapshot(snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                (text.into(), text.len() as f32 * metrics.width)
+            });
             model.apply(Response::Snapshot(snapshot.clone()));
             model.record_pane_background(Some(b"/tmp/u1.sock"), Some(&popup_scene));
-            ws.column_backgrounds = model.column_backgrounds(zoom);
+            ws.column_backgrounds
+                .replace(model.column_backgrounds(zoom));
             renderer.rebuild_if_needed(
                 Some(scene),
                 None,
@@ -6067,7 +6067,7 @@ mod tests {
                             .is_some_and(|r| r.width > 0.01 && r.height > 0.01)
                     }));
                 }
-                let outside = match ws.column_backgrounds.len() {
+                let outside = match ws.column_backgrounds.borrow().len() {
                     0 => [palette::DARK.terminal_fallback; 2],
                     1 => [right; 2],
                     _ => [left, right],

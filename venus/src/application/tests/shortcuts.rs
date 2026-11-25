@@ -876,7 +876,8 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     );
     let mut tag_presentation = PresentationState::default();
     inbox.scroll = 17.0;
-    inbox.refresh(model.snapshot().unwrap(), index, &mut tag_presentation);
+    inbox.reconcile(model.snapshot().unwrap(), index);
+    tag_presentation.invalidate();
     assert_eq!(inbox.filter, AttentionFilter::Error);
     assert_eq!(inbox.target(), Some(("t2", "p2")));
     assert_eq!(inbox.scroll, 17.0);
@@ -902,7 +903,8 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     );
     let mut presentation = PresentationState::default();
     presentation.publish(presentation.candidate(None));
-    assert!(inbox.refresh(model.snapshot().unwrap(), index, &mut presentation));
+    inbox.reconcile(model.snapshot().unwrap(), index);
+    presentation.invalidate();
     assert!(
         !presentation.has_presented_geometry(),
         "queue-only refresh retires dialog hit targets and redraws"
@@ -941,7 +943,8 @@ fn attention_inbox_keeps_the_queue_filter_and_entry_across_refreshes() {
     );
     let index = inbox.index(&snapshot).unwrap();
     snapshot.attention_queue.remove(1);
-    inbox.refresh(&snapshot, index, &mut presentation);
+    inbox.reconcile(&snapshot, index);
+    presentation.invalidate();
     assert_eq!(
         inbox.activation(&presentation),
         None,

@@ -473,6 +473,209 @@ fn a_scale_change_at_the_same_size_resizes_the_grid() {
 }
 
 #[test]
+fn equal_window_events_leave_refresh_and_pending_close_alone() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.window_event(WindowEvent::Focused(true));
+    host.finish(&mut Tx::default());
+    host.app.pending_close = Some(PendingClose {
+        pane: "p1".into(),
+        ticket: 1,
+        consented: false,
+        answer: None,
+    });
+    for event in [
+        WindowEvent::Focused(true),
+        WindowEvent::Occluded(false),
+        WindowEvent::ModifiersChanged(Default::default()),
+        WindowEvent::Ime(winit::event::Ime::Preedit(String::new(), None)),
+        WindowEvent::CursorLeft {
+            device_id: DeviceId::dummy(),
+        },
+    ] {
+        host.window_event(event);
+        assert!(!host.finish(&mut Tx::default()));
+        assert!(host.app.pending_close.is_some());
+    }
+    host.window_event(WindowEvent::Focused(false));
+    assert!(host.finish(&mut Tx::default()));
+    assert!(host.app.pending_close.is_none());
+}
+
+#[test]
+fn a_warm_workspace_is_reused_until_the_compositor_changes_geometry() {
+    let mut host = busy_host(|| {});
+    let before = host.app.workspace_scene().unwrap();
+    host.window_event(WindowEvent::ModifiersChanged(Default::default()));
+    host.app.refresh_client_view();
+    assert!(Rc::ptr_eq(&before, &host.app.workspace_scene().unwrap()));
+
+    let half = SlotGeometry::new([0.0, 0.0, 480.0, 600.0], 1.0);
+    host.prepare_grid(half);
+    let resized = host.app.workspace_scene().unwrap();
+    assert!(resized.pane_viewport.width < before.pane_viewport.width);
+    host.prepare_grid(half);
+    assert!(Rc::ptr_eq(&resized, &host.app.workspace_scene().unwrap()));
+}
+
+#[test]
+fn a_workspace_wake_projects_the_last_snapshot_and_recovers_focus_in_one_build() {
+    let mut host = busy_host(|| {});
+    let app = &mut host.app;
+    app.initial_scale_pending = false;
+    app.workspace_focus = WorkspaceFocus::Header(WorkspaceHeaderControl::WindowMenu);
+    let mut first = app.workspace_model.snapshot().unwrap().clone();
+    first.tabs[0].directory = "/intermediate".into();
+    let mut last = first.clone();
+    last.tabs[0].directory = "/final".into();
+    last.running = None;
+    let events =
+        [first, last].map(|snapshot| WorkspaceEvent::Response(Response::Snapshot(snapshot)));
+    WORKSPACE_BUILDS.with(|calls| calls.set(0));
+    app.dispatch(|app| app.apply_workspace_events(events.into()));
+    assert_eq!(WORKSPACE_BUILDS.with(|calls| calls.get()), 1);
+    let scene = app.workspace_scene().unwrap();
+    assert!(scene.tabs[0].label().contains("final"));
+    assert!(scene.window_menu.is_none());
+    assert_eq!(app.workspace_focus, WorkspaceFocus::Terminal);
+}
+
+#[test]
+fn unrelated_snapshots_preserve_warm_dialogs_and_the_next_sidebar_scroll() {
+    use eon_workspace_protocol::v50::{
+        Attention, AttentionState, QuotaFailure, QuotaFailureReason,
+    };
+    let mut host = busy_host(|| {});
+    host.window_event(WindowEvent::Resized(PhysicalSize::new(1280, 600)));
+    let app = &mut host.app;
+    let mut next = app.workspace_model.snapshot().unwrap().clone();
+    let tab = &mut next.tabs[0];
+    tab.attention_rollup = Some(AttentionState::Unavailable);
+    let mut row = tab.columns[0].panes[0].clone();
+    row.attention = Some(Attention {
+        state: AttentionState::Unavailable,
+        record: None,
+    });
+    tab.columns[0].panes = (1..=20)
+        .map(|index| {
+            let mut row = row.clone();
+            row.id = format!("p{index}");
+            row
+        })
+        .collect();
+    app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next.clone())));
+    app.initial_scale_pending = false;
+    app.sidebar_scroll = 42.0;
+    app.build_workspace(true, true);
+    next.busy = None;
+    app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next.clone())));
+    let sidebar = app.workspace_scene().unwrap().sidebar().unwrap();
+    app.cursor =
+        PhysicalPosition::new(f64::from(sidebar.left + 5.0), f64::from(sidebar.top + 30.0));
+    app.presentation.publish(app.presentation.candidate(None));
+    host.window_event(WindowEvent::MouseWheel {
+        device_id: DeviceId::dummy(),
+        delta: MouseScrollDelta::PixelDelta(PhysicalPosition::new(0.0, -21.0)),
+        phase: TouchPhase::Moved,
+    });
+    let app = &mut host.app;
+    assert_eq!(app.sidebar_scroll, 63.0);
+    app.set_shortcut_viewer(true);
+    app.dialog = app.dialog_scene();
+    DIALOG_BUILDS.with(|calls| calls.set(0));
+    next.codex_quota_failure = Some(QuotaFailure {
+        at: 1,
+        reason: QuotaFailureReason::Deadline,
+    });
+    app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next)));
+    app.pointer_outside_viewer();
+    assert_eq!(DIALOG_BUILDS.with(|calls| calls.get()), 0);
+}
+
+#[test]
+fn peer_updates_leave_closed_menu_geometry_published() {
+    let mut host = busy_host(|| {});
+    let app = &mut host.app;
+    app.initial_scale_pending = false;
+    app.presentation.publish(app.presentation.candidate(None));
+    let scene = app.workspace_scene().unwrap();
+    let mut next = app.workspace_model.snapshot().unwrap().clone();
+    next.running.as_mut().unwrap().others = Some(Vec::new());
+    app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next.clone())));
+    assert!(app.presentation.has_presented_geometry());
+    assert!(Rc::ptr_eq(&scene, &app.workspace_scene().unwrap()));
+    app.set_window_menu(true);
+    app.dialog = app.dialog_scene();
+    let before = app.dialog.as_ref().unwrap().menu_rows().count();
+    let running = next.running.as_mut().unwrap();
+    running.others = Some(vec![running.this.clone()]);
+    app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next)));
+    assert_eq!(app.dialog_scene().unwrap().menu_rows().count(), before + 1);
+    assert!(Rc::ptr_eq(&scene, &app.workspace_scene().unwrap()));
+}
+
+#[test]
+fn rune_inbox_updates_and_resize_do_not_build_the_legacy_dialog() {
+    let mut host = busy_host(|| {});
+    host.app.set_attention_inbox(true);
+    DIALOG_BUILDS.with(|calls| calls.set(0));
+    host.window_event(WindowEvent::Resized(PhysicalSize::new(900, 600)));
+    assert_eq!(DIALOG_BUILDS.with(|calls| calls.get()), 0);
+}
+
+#[test]
+fn quota_clock_changes_settle_without_the_clock_chip() {
+    use eon_workspace_protocol::v50::{CodexQuota, CodexQuotaState, QuotaWindow};
+    let mut host = busy_host(|| {});
+    let app = &mut host.app;
+    app.bar_items = vec![BarItem::CodexQuota5h];
+    let start = jiff::Timestamp::from_second(1_800_014_400).unwrap();
+    let local = |at: jiff::Timestamp, offset| {
+        at.to_zoned(jiff::tz::TimeZone::fixed(jiff::tz::offset(offset)))
+    };
+    TEST_LOCAL_TIME.with(|time| time.replace(Some(local(start, 0))));
+    let reset = start
+        .checked_add(jiff::SignedDuration::from_hours(1))
+        .unwrap();
+    let mut next = app.workspace_model.snapshot().unwrap().clone();
+    next.codex_quota = Some(CodexQuota {
+        observed_at: start.as_second() as u64,
+        state: CodexQuotaState::Fresh,
+        windows: vec![QuotaWindow {
+            duration_minutes: 300,
+            remaining_percent: 50,
+            resets_at: Some(reset.as_second() as u64),
+            scope: None,
+        }],
+    });
+    app.handle_workspace(WorkspaceEvent::Response(Response::Snapshot(next)));
+    app.initial_scale_pending = false;
+    let before = app.workspace_scene().unwrap().quotas[0].tooltip.clone();
+    let tick = Instant::now();
+    TEST_LOCAL_TIME.with(|time| time.replace(Some(local(start, 1))));
+    assert_eq!(
+        app.advance_deadlines(tick),
+        tick.checked_add(Duration::from_secs(3600))
+    );
+    assert_ne!(app.workspace_scene().unwrap().quotas[0].tooltip, before);
+    let later = start
+        .checked_add(jiff::SignedDuration::from_mins(30))
+        .unwrap();
+    TEST_LOCAL_TIME.with(|time| time.replace(Some(local(later, 1))));
+    assert_eq!(
+        app.advance_deadlines(tick),
+        tick.checked_add(Duration::from_secs(1800))
+    );
+    TEST_LOCAL_TIME.with(|time| time.replace(Some(local(reset, 1))));
+    app.advance_deadlines(tick);
+    assert!(
+        app.workspace_scene().unwrap().quotas[0]
+            .tooltip
+            .contains("Has reset")
+    );
+    TEST_LOCAL_TIME.with(|time| time.replace(None));
+}
+
+#[test]
 fn output_loss_withdraws_input_and_regain_redraws_at_the_same_size() {
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     let on_output = Geometry {
