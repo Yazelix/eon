@@ -12,12 +12,12 @@ use crate::{
 };
 use libghostty_vt::{
     Terminal,
+    color::Rgb as RgbColor,
+    effect::{ClipboardLocation as GhosttyClipboardLocation, ClipboardWrite, ClipboardWriteError},
+    mode::Mode,
+    report::SizeReportSize,
     screen::Screen as GhosttyScreen,
-    style::RgbColor,
-    terminal::{
-        ClipboardLocation as GhosttyClipboardLocation, ClipboardWrite, ClipboardWriteError, Mode,
-        ScrollViewport, SizeReportSize,
-    },
+    terminal::ScrollViewport,
 };
 use orbit_protocol::{
     Frame,
@@ -215,7 +215,7 @@ impl Orbit {
         // read only from the escape sequence itself, and with no PNG decoder
         // installed decodes none (ORB-C16).
         terminal
-            .set_kitty_image_storage_limit(10_000_000)
+            .set_kitty_image_storage_limit(Some(10_000_000))
             .and_then(|terminal| terminal.set_kitty_image_from_file_allowed(false))
             .and_then(|terminal| terminal.set_kitty_image_temp_file_dir(None))
             .and_then(|terminal| terminal.set_kitty_image_from_shared_mem_allowed(false))
@@ -245,7 +245,7 @@ impl Orbit {
         terminal
             .on_clipboard_write(move |_, write| {
                 let result = captured.borrow_mut().capture(&write);
-                write.reply(result, false);
+                write.reply(result).finish();
             })
             .map_err(|_| errno(libc::EIO))?;
         // Setting the callback also makes libghostty answer the OSC 7501
@@ -681,7 +681,9 @@ impl Orbit {
                 .map_err(|_| errno(libc::EIO))
         };
         let before = offset(&self.terminal)?;
-        self.terminal.scroll_viewport(ScrollViewport::Delta(rows));
+        self.terminal
+            .scroll_viewport(ScrollViewport::Delta(rows))
+            .map_err(|_| errno(libc::EIO))?;
         Ok(i128::from(offset(&self.terminal)?) - i128::from(before))
     }
 
@@ -741,7 +743,7 @@ impl Orbit {
     /// Moves the viewport to live output once and publishes one frame at
     /// `revision`. No PTY input is sent.
     pub(crate) fn return_to_live(&mut self, revision: u64) -> io::Result<ServerMessage> {
-        self.bottom();
+        self.bottom()?;
         Ok(ServerMessage::Frame(Box::new(self.frame(revision)?)))
     }
 
@@ -900,8 +902,10 @@ impl Orbit {
     }
 
     /// Moves the viewport to live output; the next frame shows it.
-    pub(crate) fn bottom(&mut self) {
-        self.terminal.scroll_viewport(ScrollViewport::Bottom);
+    pub(crate) fn bottom(&mut self) -> io::Result<()> {
+        self.terminal
+            .scroll_viewport(ScrollViewport::Bottom)
+            .map_err(|_| errno(libc::EIO))
     }
 }
 
@@ -952,7 +956,7 @@ mod tests {
             .on_clipboard_write(move |_, write| {
                 let result = sink.borrow_mut().capture(&write);
                 error_sink.set(result.err());
-                write.reply(result, false);
+                write.reply(result).finish();
             })
             .unwrap();
         let writes = || clipboard.borrow().writes.clone();

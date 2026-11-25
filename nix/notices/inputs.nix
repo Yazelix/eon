@@ -281,7 +281,7 @@ import ./default.nix {
       embedded = [ "system-linker-runtime" "rust-standard-library" "ghostty-vt" ];
       notice_files = map (notice: "${notice}") [ ../../orbit/LICENSE ../../licenses/libghostty-rs-MIT ];
       cargo_source_licenses = {
-        "git+https://github.com/Uzaaft/libghostty-rs.git?rev=9b598d6528c08c013407052767bb2e885ba869ba#9b598d6528c08c013407052767bb2e885ba869ba" = [ "MIT" ];
+        "git+https://github.com/Uzaaft/libghostty-rs.git?rev=4466c0f45f51f964f86d1974a50502dbec7cb0de#4466c0f45f51f964f86d1974a50502dbec7cb0de" = [ "MIT" ];
       };
     };
     ${animaPackage.name}.embedded = [

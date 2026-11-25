@@ -169,7 +169,9 @@ mod tests {
         let mut terminal = Terminal::new(8, 2).unwrap();
         terminal.set_scrollback_max_bytes(Some(4096)).unwrap();
         terminal.vt_write(b"one\r\ntwo\r\nthree\r\nfour");
-        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Top);
+        terminal
+            .scroll_viewport(libghostty_vt::terminal::ScrollViewport::Top)
+            .unwrap();
         let before = terminal.scrollbar().unwrap();
         assert_eq!(text(&terminal).text, "one\ntwo\nthree\nfour");
         let after = terminal.scrollbar().unwrap();

@@ -3,7 +3,7 @@
 //! [--ansi-palette-v1 RGB,...] [--default-colors-v1 FG,BG] [-- COMMAND ...]`.
 
 use crate::management::Launch;
-use libghostty_vt::style::RgbColor;
+use libghostty_vt::color::Rgb as RgbColor;
 use std::{
     env,
     ffi::{OsStr, OsString},

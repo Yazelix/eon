@@ -7,11 +7,11 @@ use crate::errno;
 use libghostty_vt::{
     Terminal,
     fmt::{Format, Formatter},
+    point::{Coordinate, Point},
     selection::gesture::{
         Autoscroll, AutoscrollTickEvent, Behavior, Behaviors, DragEvent, Geometry, Gesture,
         PressEvent, ReleaseEvent,
     },
-    terminal::{Point, PointCoordinate},
 };
 use orbit_protocol::session::{
     self, SelectionAction, SelectionPosition, SurfaceSize, VerticalDirection,
@@ -134,9 +134,7 @@ impl Pointer {
                     .and_then(|press| press.set_time(Duration::from_nanos(time_ns)))
                     .and_then(|press| press.set_repeat_distance(f64::from(size.cell_width)))
                     .and_then(|press| press.set_repeat_interval(CLICK_REPEAT_INTERVAL))
-                    .and_then(|press| {
-                        press.apply(&mut gestures.gesture, terminal, grid_ref.clone())
-                    })
+                    .and_then(|press| press.apply(&mut gestures.gesture, terminal, grid_ref))
             }
             _ => {
                 let drag = if gestures.is_span(terminal).map_err(|_| PhaseFailed)? {
@@ -145,19 +143,12 @@ impl Pointer {
                     &mut gestures.drag
                 };
                 drag.set_position(x, y).and_then(|drag| {
-                    drag.apply(
-                        &mut gestures.gesture,
-                        terminal,
-                        grid_ref.clone(),
-                        geometry(size),
-                    )
+                    drag.apply(&mut gestures.gesture, terminal, grid_ref, geometry(size))
                 })
             }
         }
         .map_err(|_| PhaseFailed)?;
-        terminal
-            .set_selection(selected.as_ref())
-            .map_err(|_| PhaseFailed)?;
+        terminal.set_selection(selected).map_err(|_| PhaseFailed)?;
         let presented = selected.is_some();
         if let SelectionAction::Finish { .. } = action {
             gestures
@@ -250,9 +241,7 @@ impl Pointer {
                 autoscroll.apply(&mut gestures.gesture, terminal, point, geometry(size))
             })
             .map_err(|_| PhaseFailed)?;
-        terminal
-            .set_selection(selected.as_ref())
-            .map_err(|_| PhaseFailed)?;
+        terminal.set_selection(selected).map_err(|_| PhaseFailed)?;
         Ok(selected.is_some())
     }
 
@@ -315,7 +304,7 @@ pub(crate) fn selection_tick_point(
     direction: VerticalDirection,
     position: SelectionPosition,
     size: SurfaceSize,
-) -> Option<PointCoordinate> {
+) -> Option<Coordinate> {
     let point = viewport_point(position, size)?;
     let row = match direction {
         VerticalDirection::Up => 0,
@@ -325,15 +314,12 @@ pub(crate) fn selection_tick_point(
 }
 
 /// The viewport cell under a surface position, or None outside the grid.
-pub(crate) fn viewport_point(
-    position: SelectionPosition,
-    size: SurfaceSize,
-) -> Option<PointCoordinate> {
+pub(crate) fn viewport_point(position: SelectionPosition, size: SurfaceSize) -> Option<Coordinate> {
     let x = f64::from(position.x) - f64::from(size.padding_left);
     let y = f64::from(position.y) - f64::from(size.padding_top);
     let grid_width = f64::from(size.cols) * f64::from(size.cell_width);
     let grid_height = f64::from(size.rows) * f64::from(size.cell_height);
-    (x >= 0.0 && x < grid_width && y >= 0.0 && y < grid_height).then_some(PointCoordinate {
+    (x >= 0.0 && x < grid_width && y >= 0.0 && y < grid_height).then_some(Coordinate {
         x: (x / f64::from(size.cell_width)) as u16,
         y: (y / f64::from(size.cell_height)) as u32,
     })
@@ -341,9 +327,12 @@ pub(crate) fn viewport_point(
 
 /// The selection as plain unwrapped, trimmed text, or None if it is empty to
 /// libghostty or longer than one maximum copy.
-fn format_selection(terminal: &Terminal<'static, 'static>) -> Option<String> {
-    let mut formatter = Formatter::new_selection(terminal).ok()??;
+pub(crate) fn format_selection(terminal: &Terminal<'static, 'static>) -> Option<String> {
+    let selection = terminal.selection().ok()??;
+    let mut formatter = Formatter::new(terminal).ok()?;
     formatter
+        .set_selection(Some(selection))
+        .ok()?
         .set_format(Format::Plain)
         .ok()?
         .set_unwrap(true)
@@ -646,7 +635,7 @@ mod tests {
             let mut terminal = terminal(12, 4);
             terminal.vt_write(lines.join("\r\n").as_bytes());
             if !up {
-                terminal.scroll_viewport(ScrollViewport::Top);
+                terminal.scroll_viewport(ScrollViewport::Top).unwrap();
             }
             let mut pointer = Pointer::default();
             let modifiers = session::Modifiers::empty();

@@ -618,7 +618,8 @@ device attributes while one is, and receive each answer.
 No reply returns text a program chose, except one bounded id. libghostty keeps
 title reports (CSI 21t) and screen checksums (DECRQCRA) off, and Orbit installs
 no answerback, version, colour-scheme or clipboard-read callback, so those
-requests and OSC 52 reads get no answer and XTVERSION names `libghostty`. The
+requests, OSC 52 reads and OSC 72 drag-and-drop requests, which libghostty's
+C API ignores, get no answer, and XTVERSION names `libghostty`. The
 other replies carry numbers, colours as `rgb:` values, fixed text, or names
 from fixed tables. The Kitty clipboard protocol (OSC 5522) echoes the
 request's `id` inside its reply after libghostty reduces it to letters,

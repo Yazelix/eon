@@ -36,7 +36,7 @@
     # carries; it supplies Orbit's Zig and nothing else (eon-a9tr.1).
     nixpkgs-zig.url = "github:NixOS/nixpkgs/02c087f3fe673c9e317f206a627cb6b910336dbe";
     ghostty = {
-      url = "github:ghostty-org/ghostty/0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
+      url = "github:ghostty-org/ghostty/573c4a21e02311ae87844af26b6a7a179f82858e";
       flake = false;
     };
     # Orbit's build-time Bend compiler (orbit/build.rs).
@@ -246,7 +246,7 @@
           workspaceCargoLock = {
             lockFile = ./Cargo.lock;
             outputHashes."dpi-0.1.1" = "sha256-hVTGymDtJZFu0sGp34WI3fLOBi2BoT6XEHJXLm4BfJk=";
-            outputHashes."libghostty-vt-0.2.1" = "sha256-wkBrC+C/VOlallPH1m6Rtl81ys7HE67WamKFXrxpQ1o=";
+            outputHashes."libghostty-vt-0.2.1" = "sha256-Wl/JOS2KD/s+fiUz5W2bgXt07gLhwWO9MkPWik/9/gs=";
             outputHashes."rune-0.0.1" = "sha256-YzugFz3uEg7vGK/+N/YfJyGm0nHfmkSy/ZFmPzudNQg=";
           };
           candidateRuneGraphCheck = pkgs.stdenvNoCC.mkDerivation {
@@ -528,7 +528,7 @@
           # (nix/test-sandbox.nix) runs tests/lifecycle.rs with setsid from
           # util-linux pinned in nix/test-tools.nix.
           orbitPackage =
-            assert ghostty.rev == "0fa3d577a5614150ff8e2c152de5fb9d5c6d2dec";
+            assert ghostty.rev == "573c4a21e02311ae87844af26b6a7a179f82858e";
             assert bend.rev == "624dd9f4607cd29b0871a9b96d413bfb11e92f52";
             buildWorkspacePackage {
               pname = workspacePackages.orbit;

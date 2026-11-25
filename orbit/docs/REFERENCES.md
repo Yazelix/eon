@@ -86,10 +86,10 @@ Mars, Mars Next, or another project by default.
 - [libghostty-vt 0.2.1](https://docs.rs/libghostty-vt/0.2.1/libghostty_vt/) is the
   terminal-semantics owner under test. Study `Terminal`, `RenderState`, effects,
   input encoding, thread ownership, and the
-  [pinned upstream Formatter](https://github.com/Uzaaft/libghostty-rs/blob/9b598d6528c08c013407052767bb2e885ba869ba/crates/libghostty-vt/src/fmt.rs).
-  The current upstream git pin builds Ghostty vt-1.0.0 `0fa3d577`;
-  `Formatter::new_selection` snapshots the active selection, while a row-local
-  `set_selection` requires endpoints from the same borrowed terminal/screen.
+  [pinned upstream Formatter](https://github.com/Uzaaft/libghostty-rs/blob/4466c0f45f51f964f86d1974a50502dbec7cb0de/crates/libghostty-vt/src/fmt.rs).
+  The current upstream git pin builds Ghostty vt-1.0.2 `573c4a21`;
+  `Formatter::set_selection` takes a snapshot of `Terminal::selection` or a
+  row-local `Terminal::select`, and refuses one from another terminal.
   Orbit explicitly disables formatter trimming for visible/history reads to
   preserve combining marks on spaces (`eon-9rtt.9`).
   The Formatter proof records why hidden terminal state cannot form an exact

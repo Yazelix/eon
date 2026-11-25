@@ -430,6 +430,10 @@ impl HistoryCompression {
             Ok(CompressionResult::Pending) => self.at = Some(Instant::now() + COMPRESSION_STEP),
             Ok(CompressionResult::Complete) => {}
             Ok(CompressionResult::Unsupported) => self.disabled = true,
+            Ok(other) => {
+                self.disabled = true;
+                eprintln!("orbit: history compression disabled: unknown result {other:?}");
+            }
             Err(error) => self.disable(error),
         }
     }
@@ -1522,7 +1526,7 @@ impl Host {
                 Decision::Release => {
                     self.orbit.release()?;
                 }
-                Decision::Bottom => self.orbit.bottom(),
+                Decision::Bottom => self.orbit.bottom()?,
                 Decision::WheelAnswer { routed, revision } => self.send_wheel(routed, revision)?,
                 Decision::SelectHost => self.select_host()?,
                 Decision::SelectTerminal => self.select_terminal()?,
@@ -2069,7 +2073,7 @@ mod tests {
         for steps in 0..1000 {
             let Some(at) = compression.at else {
                 assert!(!compression.disabled);
-                assert!(terminal.memory_usage().unwrap().primary_compressed_pages > 0);
+                assert!(terminal.memory_usage().unwrap().primary.compressed_pages > 0);
                 eprintln!("history compression: {steps} steps, longest step {longest:?}");
                 return;
             };
@@ -2125,7 +2129,7 @@ mod tests {
         assert_eq!(at, start + COMPRESSION_IDLE);
         assert_eq!(compression.deadline(&terminal, at), Some(at));
         compression.step(&mut terminal, at - Duration::from_millis(1));
-        assert_eq!(terminal.memory_usage().unwrap().primary_compressed_pages, 0);
+        assert_eq!(terminal.memory_usage().unwrap().primary.compressed_pages, 0);
         compression.postpone(at);
         assert_eq!(compression.at, Some(at + COMPRESSION_IDLE));
         finish_compression(&mut compression, &mut terminal);
@@ -2138,7 +2142,7 @@ mod tests {
         let token = terminal.compression_activity().unwrap();
         let text = history::read(&terminal, 0).unwrap().text;
         assert_eq!(terminal.compression_activity().unwrap(), token);
-        assert_eq!(terminal.memory_usage().unwrap().primary_compressed_pages, 0);
+        assert_eq!(terminal.memory_usage().unwrap().primary.compressed_pages, 0);
         compression.postpone(Instant::now());
         finish_compression(&mut compression, &mut terminal);
         assert_eq!(terminal.scrollback_rows().unwrap(), retained);

@@ -290,8 +290,9 @@ Runtime escapes notification body markup
 
 Orbit forwards libghostty's terminal replies to the PTY
 (`orbit/src/pty.rs:232`). An audit of every reply producer at the pinned
-libghostty (Ghostty `0fa3d577`) found no reply that returns program-chosen
-control bytes, whitespace or shell syntax. libghostty keeps title reports off
+libghostty (Ghostty `573c4a21`, vt-1.0.2) found no reply that returns
+program-chosen control bytes, whitespace or shell syntax; its C API ignores
+Kitty drag and drop (OSC 72). libghostty keeps title reports off
 because a reported title can inject input; Orbit leaves them off and installs
 no answerback, version, colour-scheme or clipboard-read callback. Other replies
 carry numbers, `rgb:` colours, fixed text or names from fixed tables. The one

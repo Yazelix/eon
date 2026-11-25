@@ -7,9 +7,8 @@ use crate::frame::title_and_directory;
 use libghostty_vt::{
     Terminal,
     fmt::{Format, Formatter},
+    point::{Coordinate, Point},
     screen::Screen as GhosttyScreen,
-    selection::Selection,
-    terminal::{Point, PointCoordinate},
 };
 use orbit_protocol::{
     management::{MAX_VISIBLE_TEXT_BYTES, Screen, VisibleText},
@@ -52,17 +51,16 @@ pub(crate) fn read(terminal: &Terminal<'static, '_>, revision: u64) -> Option<Vi
 }
 
 /// One row of the active area as plain trimmed text.
-#[allow(unsafe_code)]
 fn row_text(terminal: &Terminal<'static, '_>, y: u16, columns: u16) -> Option<String> {
     if columns == 0 {
         return Some(String::new());
     }
     let at = |x: u16| {
         terminal
-            .grid_ref(Point::Active(PointCoordinate { x, y: y.into() }))
+            .grid_ref(Point::Active(Coordinate { x, y: y.into() }))
             .ok()
     };
-    let selection = Selection::new(at(0)?, at(columns - 1)?, false);
+    let selection = terminal.select(at(0)?, at(columns - 1)?, false);
     let mut formatter = Formatter::new(terminal).ok()?;
     formatter
         .set_format(Format::Plain)
@@ -73,9 +71,7 @@ fn row_text(terminal: &Terminal<'static, '_>, y: u16, columns: u16) -> Option<St
         // only real spaces are trimmed below.
         .set_trim(false)
         .ok()?;
-    // SAFETY: Both endpoints came from this terminal's active screen; its
-    // shared borrow prevents mutation until formatting finishes.
-    unsafe { formatter.set_selection(Some(&selection)) }.ok()?;
+    formatter.set_selection(Some(selection)).ok()?;
     let bytes = formatter.format_alloc(None).ok()?;
     let text = std::str::from_utf8(&bytes).ok()?;
     Some(sanitized(
@@ -145,7 +141,9 @@ mod tests {
         let mut terminal = Terminal::new(8, 2).unwrap();
         terminal.set_scrollback_max_bytes(Some(4096)).unwrap();
         terminal.vt_write(b"one\r\ntwo\r\nthree\r\nfour");
-        terminal.scroll_viewport(libghostty_vt::terminal::ScrollViewport::Top);
+        terminal
+            .scroll_viewport(libghostty_vt::terminal::ScrollViewport::Top)
+            .unwrap();
         let before = terminal.scrollbar().unwrap();
         assert_eq!(text(&terminal).text, "three\nfour");
         let after = terminal.scrollbar().unwrap();

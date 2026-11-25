@@ -7,12 +7,12 @@ use libghostty_vt::{
         Action as GhosttyKeyAction, Encoder as KeyEncoder, Event as GhosttyKeyEvent, Key,
         Mods as GhosttyModifiers,
     },
+    mode::Mode,
     mouse::{
         Action as GhosttyMouseAction, Button as GhosttyMouseButton, Encoder as MouseEncoder,
         EncoderSize as MouseEncoderSize, Event as GhosttyMouseEvent, Position as MousePosition,
     },
     paste,
-    terminal::Mode,
 };
 use orbit_protocol::session::{self, ClientMessage, VerticalDirection};
 use std::io;

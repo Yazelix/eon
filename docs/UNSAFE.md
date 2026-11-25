@@ -3,7 +3,7 @@
 Most of Eon's Rust code forbids `unsafe`. The rest keeps it in a few private modules. They call
 the operating system where neither the standard library nor
 [rustix](https://github.com/bytecodealliance/rustix) has a safe call. They also call macOS
-frameworks and the terminal engine's formatter.
+frameworks.
 
 ## Rules
 
@@ -34,7 +34,6 @@ only for tests.
 | --- | --- | --- | --- |
 | `orbit/src/lib.rs` | none | mod platform | Declares Orbit's platform module. |
 | `orbit/src/platform.rs` | 12 blocks, 1 test block | none | Setup in the forked child before `exec`, which needs `pre_exec`. The termination signal handler: installing it, saving errno and waking the main loop. macOS process and peer queries (libproc, `getpeereid`). Linux peer credentials and the macOS foreground group, which can be PID 0; rustix's safe types cannot hold PID 0. |
-| `orbit/src/visible.rs` | 1 block | fn row_text | libghostty-vt formats a chosen range only through an unsafe call. The safe route would change the terminal's shared selection. |
 | `runtime/crates/eon-runtime/src/lib.rs` | none | mod platform | Declares the Runtime's platform module. |
 | `runtime/crates/eon-runtime/src/platform.rs` | 28 blocks, 2 test blocks | none | Inspecting and taking exact inherited descriptors, CLOEXEC auditing and fresh-launch isolation (`PROC_PIDLISTFDS`, `F_GETFD`, `F_SETFD`), child-only display descriptor inheritance, same-PID execve, Darwin listener inspection. Signal handlers and dispositions, `_exit` from a handler, and a new session before `exec`. Peer credentials. A macOS monotonic clock and libproc queries. `localtime_r`. The unsent-bytes `ioctl`. The home-directory lookup (`getpwuid_r`). |
 | `eon/crates/eon/src/main.rs` | 1 block | mod platform, in fn main: 1 statement | Declares the platform module, and clears launch variables once at single-threaded startup. |

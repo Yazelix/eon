@@ -6,7 +6,7 @@
 //! blocked ones (src/status.bend). Management's `ProgramStatus` reply reads
 //! them.
 
-use libghostty_vt::terminal::{
+use libghostty_vt::effect::{
     ProgramStatus, ProgramStatusKind, ProgramStatusState, PromptKind, SemanticPrompt,
     SemanticPromptKind,
 };

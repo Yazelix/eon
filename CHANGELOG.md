@@ -18,6 +18,10 @@ installation, and proven contract changes.
 - Clicking tabs, pane titles and workspace buttons keeps keyboard focus on the
   terminal. F6 and assistive-technology focus requests can focus workspace
   controls (`eon-6xybm`).
+- Terminals run on the Ghostty vt-1.0.2 core: prompts and scrollback stay
+  correct across width changes, inserted and deleted lines keep soft wraps,
+  a chunked Kitty image keeps the image it replaces until it finishes, and
+  skin-tone emoji take their correct width (`eon-zw2qz`).
 
 ## v0.1.29 (2026-11-24)
 

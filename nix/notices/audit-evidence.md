@@ -54,6 +54,32 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### libghostty-rs vt-1.0.2 pin (eon-zw2qz)
+
+For `eon-zw2qz` over `2acd356a`, the Eon, Orbit and Venus contexts change
+through the `libghostty-vt` and `libghostty-vt-sys` git source records, which
+move from `9b598d65` to `4466c0f4`; Orbit also carries them in its native
+package records and binary audit. No registry crate, version, checksum,
+dependency list or feature selection changes, and the other eight producers'
+graphs are unchanged. Replacing the new revision with the old one, in both
+its full and its short `#` form, in each candidate canonical `graph.json`
+reproduces the accepted `graph_sha256` byte for byte: `408ad9b3` →
+`3fbd74f7` for Eon, `20812e3b` → `3865499b` for Orbit and `1825ea83` →
+`d2b3ae73` for Venus. Every host-only and unselected classification therefore
+carries over unchanged (Eon 9/2, Orbit 6/1, Venus 15/4).
+
+Independent `inspect-audit` replays against the actual Eon, Orbit and Venus
+binaries reproduce their saved `graph.json` and `observation.json` byte for
+byte. Zoxide's `prove-audit-omission` accepts the retained root under the
+root-only baseline and rejects omitted `anyhow 1.0.98` with the renewed
+exception data. The strict `propose-audit-renewal` proposal changes only these
+six `graph_sha256` fields, and parsed, it equals the checked-in file.
+
+- Eon: `408ad9b3ee0ae820177c757f96efd2980863c3acbe071c95537173db6cb8eb3b`.
+- Orbit: `20812e3b23a089b08bc13daa4b22095520c0fbd749ddbfe35be92cd0c87fce90`.
+- Venus: `1825ea83e4542c471e211d9d7d503165d5dc5421a8d61e5f27c8210ca4fcf59e`.
+- Proposal input at `/nix/store/8milc0j12y5amnncb8zdgm58id0dgf83-eon-archive-notice-input.json` (candidate `c869e43c`, before this renewal).
+
 ### Rust 1.100.0 upgrade (eon-tfrjz)
 
 For `eon-tfrjz` over `3028262e` (Rust `1.96.1` → `1.100.0`), all eleven

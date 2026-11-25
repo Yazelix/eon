@@ -88,15 +88,8 @@ fn corpus(got: &HashMap<String, String>, phase: &str, da: &[u8], clipboard_write
     );
     // Kitty graphics messages are fixed text; Glyph Protocol is off.
     exactly(got, &case("graphics"), &[b"\x1b_Gi=31;OK\x1b\\", da]);
-    exactly(
-        got,
-        &case("dnd"),
-        &[
-            b"\x1b]72;t=q\x1b\\",
-            b"\x1b]72;t=R:x=1:m=0;ENOENT:no drop data available\x1b\\",
-            da,
-        ],
-    );
+    // libghostty's C API ignores Kitty drag and drop (OSC 72): no reply.
+    exactly(got, &case("dnd"), &[da]);
     exactly(got, &case("stray"), &[]);
 }
 

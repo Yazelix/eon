@@ -3,14 +3,17 @@
 use crate::errno;
 use libghostty_vt::{
     Error as GhosttyError, RenderState, Terminal,
+    color::Rgb as RgbColor,
+    grid_ref::GridRef,
     kitty::graphics::{Graphics as Storage, Image, ImageFormat},
+    point::{Coordinate, Point},
     render::{
-        CellIterator, CursorVisualStyle as GhosttyCursorShape, ImageIterator,
-        ImageLayer as GhosttyImageLayer, ImageProtocol, RowIterator, Snapshot,
+        CellIterator, ImageIterator, ImageLayer as GhosttyImageLayer, ImageProtocol, RowIterator,
+        Snapshot,
     },
-    screen::{CellContentTag, CellWide as GhosttyCellWidth, GridRef, Screen as GhosttyScreen},
-    style::{RgbColor, Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
-    terminal::{Point, PointCoordinate},
+    screen::{CellContentTag, CellWide as GhosttyCellWidth, Screen as GhosttyScreen},
+    style::{Style, StyleColor as GhosttyStyleColor, Underline as GhosttyUnderline},
+    terminal::CursorStyle as GhosttyCursorShape,
 };
 use orbit_protocol::{
     Capabilities, Cell as ProtocolCell, CellStyle, CellWidth, Colors, Cursor, CursorShape,
@@ -184,10 +187,7 @@ impl FrameExtractor {
             terminal.active_screen().map_err(|_| errno(libc::EIO))?,
             GhosttyScreen::Alternate
         );
-        let storage = terminal
-            .kitty_graphics()
-            .map_err(|_| errno(libc::EIO))?
-            .ok_or(errno(libc::EIO))?;
+        let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
         let resources = &mut self.resources;
         if resources.started.len() + retiring >= MAX_UNRETIRED {
             return Err(errno(libc::EPROTO));
@@ -480,7 +480,7 @@ impl FrameExtractor {
     fn row(&self, terminal: &Terminal<'static, '_>, screen_y: u32, cols: u16) -> io::Result<Row> {
         let at = |x| {
             terminal
-                .grid_ref(Point::Screen(PointCoordinate { x, y: screen_y }))
+                .grid_ref(Point::Screen(Coordinate { x, y: screen_y }))
                 .map_err(|_| errno(libc::EIO))
         };
         let raw_row = at(0)?.row().map_err(|_| errno(libc::EIO))?;
@@ -631,10 +631,7 @@ fn graphics(
     terminal: &Terminal<'static, '_>,
     serial: u64,
 ) -> io::Result<Graphics> {
-    let storage = terminal
-        .kitty_graphics()
-        .map_err(|_| errno(libc::EIO))?
-        .ok_or(errno(libc::EIO))?;
+    let storage = terminal.kitty_graphics().map_err(|_| errno(libc::EIO))?;
     let alternate = matches!(
         terminal.active_screen().map_err(|_| errno(libc::EIO))?,
         GhosttyScreen::Alternate
@@ -835,7 +832,7 @@ fn first_codepoint_len(text: &str) -> usize {
 
 fn hyperlink(terminal: &Terminal<'static, '_>, x: u16, y: u16) -> io::Result<String> {
     let reference = terminal
-        .grid_ref(Point::Viewport(PointCoordinate { x, y: u32::from(y) }))
+        .grid_ref(Point::Viewport(Coordinate { x, y: u32::from(y) }))
         .map_err(|_| errno(libc::EIO))?;
     hyperlink_uri(&reference)
 }
@@ -1113,8 +1110,8 @@ mod tests {
     #[test]
     fn compression_preserves_rich_history_selection_and_images() {
         use libghostty_vt::{
-            fmt::Formatter,
-            terminal::{CompressionMode, CompressionResult, Mode},
+            mode::Mode,
+            terminal::{CompressionMode, CompressionResult},
         };
 
         fn compress(terminal: &mut Terminal<'_, '_>) {
@@ -1122,10 +1119,10 @@ mod tests {
                 match terminal.compress(CompressionMode::Incremental).unwrap() {
                     CompressionResult::Pending => {}
                     CompressionResult::Complete => {
-                        assert!(terminal.memory_usage().unwrap().primary_compressed_pages > 0);
+                        assert!(terminal.memory_usage().unwrap().primary.compressed_pages > 0);
                         return;
                     }
-                    CompressionResult::Unsupported => panic!("Linux compression is unsupported"),
+                    result => panic!("Linux compression did not finish: {result:?}"),
                 }
             }
             panic!("compression did not finish");
@@ -1156,7 +1153,7 @@ mod tests {
             .map(|y| (y, extractor.row(&terminal, y as u32, 80).unwrap()))
             .collect();
         let text = crate::history::read(&terminal, 0).unwrap().text;
-        terminal.scroll_viewport(ScrollViewport::Top);
+        terminal.scroll_viewport(ScrollViewport::Top).unwrap();
         let top = extractor.frame(0, &terminal).unwrap();
         assert!(!graphics(&top).placements.is_empty());
         assert!(
@@ -1210,26 +1207,16 @@ mod tests {
                 size,
             )
             .unwrap();
-        let selected = Formatter::new_selection(&terminal)
-            .unwrap()
-            .unwrap()
-            .format_alloc(None)
-            .unwrap()
-            .to_vec();
+        let selected = crate::pointer::format_selection(&terminal).unwrap();
         assert!(!selected.is_empty());
         let selected_frame = extractor.frame(0, &terminal).unwrap();
-        terminal.scroll_viewport(ScrollViewport::Bottom);
+        terminal.scroll_viewport(ScrollViewport::Bottom).unwrap();
         compress(&mut terminal);
         assert_eq!(
-            Formatter::new_selection(&terminal)
-                .unwrap()
-                .unwrap()
-                .format_alloc(None)
-                .unwrap()
-                .as_ref(),
-            selected
+            crate::pointer::format_selection(&terminal).as_ref(),
+            Some(&selected)
         );
-        terminal.scroll_viewport(ScrollViewport::Top);
+        terminal.scroll_viewport(ScrollViewport::Top).unwrap();
         assert_eq!(extractor.frame(0, &terminal).unwrap(), selected_frame);
         pointer
             .host_phase(
@@ -1243,7 +1230,7 @@ mod tests {
             .unwrap();
         let frozen = pointer.copied.clone();
         pointer.clear(&terminal).unwrap();
-        terminal.scroll_viewport(ScrollViewport::Bottom);
+        terminal.scroll_viewport(ScrollViewport::Bottom).unwrap();
         compress(&mut terminal);
         for (y, row) in &rows {
             assert_eq!(
@@ -1254,7 +1241,7 @@ mod tests {
         }
         assert_eq!(terminal.scrollback_rows().unwrap(), retained);
         assert_eq!(crate::history::read(&terminal, 0).unwrap().text, text);
-        terminal.scroll_viewport(ScrollViewport::Top);
+        terminal.scroll_viewport(ScrollViewport::Top).unwrap();
         assert_eq!(extractor.frame(0, &terminal).unwrap(), top);
         extractor.queued();
         let (announce, pixels) = extractor.start(&terminal, 0).unwrap().unwrap();
@@ -1262,7 +1249,7 @@ mod tests {
         assert_eq!(pixels, [255; 6]);
 
         // Resize restores compressed storage; logical text and the frozen copy survive.
-        terminal.scroll_viewport(ScrollViewport::Bottom);
+        terminal.scroll_viewport(ScrollViewport::Bottom).unwrap();
         compress(&mut terminal);
         terminal.resize(60, 24, 10, 18).unwrap();
         assert_eq!(crate::history::read(&terminal, 0).unwrap().text, text);
@@ -1561,7 +1548,7 @@ mod tests {
         );
         let mut extractor = FrameExtractor::new(false).unwrap();
         let mut frame_at_top = |terminal: &mut Terminal<'static, '_>, revision| {
-            terminal.scroll_viewport(ScrollViewport::Top);
+            terminal.scroll_viewport(ScrollViewport::Top).unwrap();
             let frame = extractor.frame(revision, terminal).unwrap();
             session::encode_server_message(&ServerMessage::Frame(Box::new(frame.clone()))).unwrap();
             for (y, expected) in frame.rows.iter().enumerate() {
@@ -1627,7 +1614,7 @@ mod tests {
         assert_eq!(frame(&terminal).scroll_position, position(0, 97));
 
         // Output below a held viewport keeps its rows and deepens it.
-        terminal.scroll_viewport(ScrollViewport::Delta(-3));
+        terminal.scroll_viewport(ScrollViewport::Delta(-3)).unwrap();
         let held = frame(&terminal);
         assert_eq!(held.scroll_position, position(3, 97));
         terminal.vt_write(b"0000100\r\n0000101\r\n");
@@ -1653,7 +1640,7 @@ mod tests {
         // held at the top. Wider rows fill libghostty's pages in fewer rows,
         // each of which costs about a millisecond in a debug build.
         terminal.resize(80, 4, 8, 16).unwrap();
-        terminal.scroll_viewport(ScrollViewport::Top);
+        terminal.scroll_viewport(ScrollViewport::Top).unwrap();
         let oldest = frame(&terminal);
         for line in 102..1_602 {
             terminal.vt_write(format!("{line:07}\r\n").as_bytes());
@@ -1667,12 +1654,12 @@ mod tests {
         assert_ne!(evicted.rows, oldest.rows);
 
         // CSI 3 J and reset leave no history.
-        terminal.scroll_viewport(ScrollViewport::Bottom);
+        terminal.scroll_viewport(ScrollViewport::Bottom).unwrap();
         assert_eq!(frame(&terminal).scroll_position.rows_from_live, 0);
         terminal.vt_write(b"\x1b[3J");
         assert_eq!(frame(&terminal).scroll_position, position(0, 0));
         terminal.vt_write(b"one\r\ntwo\r\nthree\r\nfour\r\nfive\r\n");
-        terminal.scroll_viewport(ScrollViewport::Delta(-1));
+        terminal.scroll_viewport(ScrollViewport::Delta(-1)).unwrap();
         let refilled = frame(&terminal).scroll_position;
         assert!(refilled.history_rows > 0 && refilled.rows_from_live == 1);
         terminal.vt_write(b"\x1bc");
