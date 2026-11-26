@@ -1739,6 +1739,7 @@ impl Renderer {
     pub fn prepare_hosted(
         &mut self,
         scene: &Scene,
+        (scroll_preview, scroll_offset): (Option<&ScenePreview>, f32),
         blink_visible: bool,
         generation: u64,
         status: &str,
@@ -1748,8 +1749,8 @@ impl Renderer {
         self.prepare_hosted_backdrop(scene);
         self.prepare_frame(
             Some(scene),
-            None,
-            0.0,
+            scroll_preview,
+            scroll_offset,
             None,
             &[],
             None,
@@ -2191,6 +2192,15 @@ impl Renderer {
             self.images.store.derive(&[Some(graphics)], Instant::now())[0].as_slice(),
             [BandItem::Marker(_)]
         )
+    }
+
+    #[cfg(all(test, feature = "candidate-rune"))]
+    pub(crate) fn test_text_placement(&self, ink: orbit_protocol::Rgb) -> Option<(f32, i32)> {
+        let color = Color::rgba(ink.r, ink.g, ink.b, 255);
+        self.text
+            .iter()
+            .find(|text| text.color == color)
+            .map(|text| (text.top, text.bound_top))
     }
 
     /// When a pending image entry of the last drawn frame shows its marker, which needs a redraw.

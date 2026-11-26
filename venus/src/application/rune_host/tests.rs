@@ -1409,6 +1409,125 @@ fn undrawn_dialogs_capture_pointer_without_activating_targets() {
 }
 
 #[test]
+fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal() {
+    use orbit_protocol::{Rgb, StyleColor};
+    use session::{PreviewOutcome, ScrollOutcome, VerticalDirection, VerticalPreview};
+
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    host.apply_geometry(NATIVE);
+    let peer = Peer::new(&mut host, "fractional-scroll");
+    let stream = peer.accept();
+    let size = grid_at(&host, NATIVE);
+    let mut messages = grid_fixture(0, size);
+    let Some(ServerMessage::Frame(frame)) = messages.last_mut() else {
+        unreachable!()
+    };
+    frame.scroll_position.history_rows = 10;
+    let mut frame = frame.clone();
+    peer.send(&stream, &mut host, messages, |host| {
+        host.app.terminal.model.rows_from_live() == Some(0)
+    });
+    let slot = native_slot();
+    let shown = host.prepare_grid(slot).unwrap();
+    present(&mut host, shown);
+    move_to_terminal(&mut host);
+    actions_until_marker(&mut host, &stream);
+
+    fn renderer(host: &Host) -> &Renderer {
+        &host.app.window.as_ref().unwrap().renderer
+    }
+    let metrics = renderer(&host).metrics();
+    let paint = |host: &Host, color| renderer(host).test_text_placement(color);
+    let ink = frame.colors.palette[2];
+    let original = paint(&host, ink).unwrap().0;
+    let rgb = |r, g, b| Rgb { r, g, b };
+    let entering_ink = rgb(0xc7, 0x39, 0x87);
+    let next_ink = rgb(0xf5, 0x32, 0x82);
+    let mut entering = frame.rows[0].clone();
+    let mut next = entering.clone();
+    entering.cells[0].style.foreground = StyleColor::Rgb(entering_ink);
+    next.cells[0].style.foreground = StyleColor::Rgb(next_ink);
+    let cols = frame.dimensions.cols;
+    let viewport = |rows| PreviewOutcome::Viewport {
+        cols,
+        rows,
+        edge_reached: false,
+    };
+    let step = |host: &mut Host, fraction: f32, phase| {
+        let delta = PhysicalPosition::new(0.0, f64::from(metrics.height * fraction / 2.0));
+        host.window_event(WindowEvent::MouseWheel {
+            device_id: DeviceId::dummy(),
+            delta: MouseScrollDelta::PixelDelta(delta),
+            phase,
+        });
+    };
+    step(&mut host, 0.5, TouchPhase::Started);
+    assert_eq!(
+        actions_until_marker(&mut host, &stream),
+        [ClientMessage::PreviewVertical {
+            frame_revision: 1,
+            direction: VerticalDirection::Up
+        }]
+    );
+    peer.send(
+        &stream,
+        &mut host,
+        [ServerMessage::VerticalPreview(VerticalPreview {
+            frame_revision: 1,
+            direction: VerticalDirection::Up,
+            outcome: viewport(vec![entering.clone(), next.clone()]),
+        })],
+        |host| host.app.terminal.model.scroll_preview().is_some(),
+    );
+    assert_eq!(host.prepare_grid(slot).unwrap().revision, Some(1));
+    assert_eq!(host.app.presented_revision(), Some(1));
+    assert!(actions_until_marker(&mut host, &stream).is_empty());
+    assert!((paint(&host, ink).unwrap().0 - original - metrics.height / 2.0).abs() < 0.01);
+    let (top, clip_top) = paint(&host, entering_ink).unwrap();
+    assert!(top < metrics.padding);
+    assert_eq!(clip_top, (metrics.padding - 0.5).ceil() as i32);
+
+    step(&mut host, 0.75, TouchPhase::Moved);
+    assert_eq!(
+        Peer::read(&stream),
+        ClientMessage::ScrollVertical {
+            frame_revision: 1,
+            rows: -1
+        }
+    );
+    assert_eq!(host.prepare_grid(slot).unwrap().revision, Some(1));
+    let before = paint(&host, entering_ink).unwrap().0;
+    frame.revision = 2;
+    frame.scroll_position.rows_from_live = 1;
+    frame.rows.rotate_right(1);
+    frame.rows[0] = entering;
+    peer.send(
+        &stream,
+        &mut host,
+        [ServerMessage::ScrollOutcome(ScrollOutcome::Viewport {
+            requested_rows: -1,
+            applied_rows: -1,
+            next: viewport(vec![next]),
+            frame,
+        })],
+        |host| host.app.terminal.model.rows_from_live() == Some(1),
+    );
+    assert_eq!(host.app.presented_revision(), None);
+    let replacement = host.prepare_grid(slot).unwrap();
+    assert_eq!(replacement.revision, Some(2));
+    assert!((paint(&host, entering_ink).unwrap().0 - before).abs() < 0.01);
+    present(&mut host, replacement);
+    assert_eq!(host.app.presented_revision(), Some(2));
+    assert!(paint(&host, next_ink).is_some());
+    host.withdraw_surface();
+    assert_eq!(host.app.presented_revision(), None);
+    let readmitted = host.prepare_grid(slot).unwrap();
+    assert_eq!(readmitted.revision, Some(2));
+    assert!((paint(&host, entering_ink).unwrap().0 - before + metrics.height / 4.0).abs() < 0.01);
+    assert_eq!(paint(&host, next_ink), None);
+}
+
+#[test]
 fn withdrawn_frames_stop_scroll_even_after_a_late_preview() {
     for (name, outcome, skip) in [
         (
@@ -1431,9 +1550,9 @@ fn withdrawn_frames_stop_scroll_even_after_a_late_preview() {
         let now = Instant::now();
         let height = f64::from(host.app.window.as_ref().unwrap().renderer.metrics().height);
         let motion = &mut host.app.terminal.terminal_scroll;
-        motion.push_pixels(30.0, TouchPhase::Started, now, height);
+        motion.push_pixels(height / 8.0, TouchPhase::Started, now, height);
         motion.push_pixels(
-            30.0,
+            height / 8.0,
             TouchPhase::Ended,
             now + Duration::from_millis(20),
             height,

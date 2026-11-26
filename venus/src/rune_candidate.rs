@@ -432,7 +432,7 @@ pub(crate) mod rune_host {
             let entry = &mut f.rt.state.entry;
             entry.sync_images(renderer);
             if let Err(error) =
-                renderer.prepare_hosted(entry.scene(), true, entry.generation, "", "")
+                renderer.prepare_hosted(entry.scene(), (None, 0.0), true, entry.generation, "", "")
             {
                 self.fail(error.to_string());
                 return None;

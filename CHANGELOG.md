@@ -21,6 +21,8 @@ installation, and proven contract changes.
   `eon session --json` names each running window's `client` (`shipping` or
   `rune-preview`). The preview is temporary: `eon-yp6vg.54` removes the flag
   and the entry when Rune becomes the client (`eon-yp6vg.7.4`).
+- Touchpad scrolling in the Rune preview moves the terminal between Orbit's
+  whole-row updates (`eon-yp6vg.69`).
 - The Agents sidebar shows a pane's tag (`eon pane rename PANE NAME --tag TAG`)
   at the end of its row's second line, such as `1h · p25 · eon-igae.25`. On a
   narrow sidebar only the tag shortens, with `…`, and screen readers hear the

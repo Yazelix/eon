@@ -848,13 +848,26 @@ impl Host {
         app.prepare_workspace();
         let candidate = app.presentation_candidate(app.workspace_scene().as_deref());
         let scene = app.terminal.model.scene()?;
+        let scroll = if candidate.revision.is_some() {
+            (
+                app.terminal.model.scroll_preview(),
+                app.terminal_scroll_offset(),
+            )
+        } else {
+            (None, 0.0)
+        };
         let status = app.status_for(false, candidate);
         let renderer = &mut app.window.as_mut()?.renderer;
         let generation = candidate.generation;
         let preedit = app.input.preedit();
-        if let Err(error) =
-            renderer.prepare_hosted(scene, app.blink_visible, generation, &status, preedit)
-        {
+        if let Err(error) = renderer.prepare_hosted(
+            scene,
+            scroll,
+            app.blink_visible,
+            generation,
+            &status,
+            preedit,
+        ) {
             self.fail(error.to_string());
             return None;
         }

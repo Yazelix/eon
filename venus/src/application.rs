@@ -6225,6 +6225,15 @@ impl Application {
         false
     }
 
+    fn terminal_scroll_offset(&self) -> f32 {
+        self.window.as_ref().map_or(0.0, |state| {
+            self.terminal.terminal_scroll.offset(
+                self.terminal.model.scroll_preview(),
+                f64::from(state.renderer.metrics().height),
+            )
+        })
+    }
+
     fn render(&mut self) {
         self.prepare_workspace();
         bench_trace("render_begin", "");
@@ -6237,12 +6246,7 @@ impl Application {
         {
             self.reset_cursor_animation();
         }
-        let scroll_offset = self.window.as_ref().map_or(0.0, |state| {
-            self.terminal.terminal_scroll.offset(
-                self.terminal.model.scroll_preview(),
-                f64::from(state.renderer.metrics().height),
-            )
-        });
+        let scroll_offset = self.terminal_scroll_offset();
         let unshifted = scroll_offset == 0.0;
         let scene_started = crate::frame_time();
         let workspace = self.workspace_scene();
