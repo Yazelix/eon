@@ -54,6 +54,36 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Benchmark input-method fixtures (eon-33cww.4.1)
+
+For `eon-33cww.4.1` over `70561545`, the Eon, Orbit, Venus and
+`venus-rune-preview` contexts change only through the normalized lock. It gains
+the registry crate `wayland-protocols-misc 0.3.12` and its edge from the
+benchmark-only `eon-bench` stanza, which no shipped producer selects. Each
+producer's context, runtime crates, native packages and binary audit sets are
+byte-identical to the base, and the other nine producers' graphs are unchanged.
+Putting the base lock back into each candidate `graph.json` reproduces the
+accepted `graph_sha256` byte for byte: `58b9cfc7` → `408ad9b3` for Eon,
+`f905a6a6` → `20812e3b` for Orbit, `a9e46774` → `1825ea83` for Venus and
+`a1b8522a` → `1f43ef16` for `venus-rune-preview`.
+
+Each changed producer section records the exact vendor's runtime and
+normal/build Cargo trees and its build log. Every host identity is in the
+normal/build tree only, and every unselected identity is in neither tree and is
+not compiled in the producer's own build phase (Eon 9/2, Orbit 6/1, Venus 15/4,
+`venus-rune-preview` 20/8). Build logs are read with ANSI colour codes removed:
+cargo colours its `Compiling` lines, and a plain-text search finds none. The
+`inspect-audit` replays against the actual binaries reproduce each saved
+`graph.json` and `observation.json`. The strict `propose-audit-renewal`
+proposal changes these eight `graph_sha256` fields, and parsed, it equals the
+checked-in file. Zoxide's `prove-audit-omission` accepts the retained root
+under the root-only baseline and rejects omitted `anyhow 1.0.98` with the
+renewed data.
+
+- Vendor at `/nix/store/6fax4hwf5r2hyg10119zirylzxcpb5hh-cargo-vendor-dir`.
+- Base input at `/nix/store/knxh7iiaj8xk584ikblns1vayv6div1s-eon-archive-notice-input.json` (edge `70561545`).
+- Proposal input at `/nix/store/9rb740r88q26r5s0hh8haw059h6qcl8s-eon-archive-notice-input.json` (candidate tree `1e621696`, before this renewal).
+
 ### libghostty-rs vt-1.0.2 pin (eon-zw2qz)
 
 For `eon-zw2qz` over `2acd356a`, the Eon, Orbit and Venus contexts change
@@ -551,6 +581,26 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-25 for `eon-33cww.4.1` to context
+`58b9cfc776d2a2d6e582c3c5d9a7e1d5ebda18426eae33c3d93ee2ac9249c170`.
+Only `lock` changes. It gains the bench-only `wayland-protocols-misc 0.3.12`
+and its `eon-bench` edge, and restoring the base normalized lock reproduces
+`408ad9b3…` byte for byte. The exact vendor's runtime and normal/build trees
+have 93 and 106 identities. The 9 host identities are in the normal/build tree
+only. The 2 unselected identities are in neither tree, and the
+producer's build log does not compile them.
+
+- Source at `/nix/store/rrvf8x2fzpxj82rhnkazvw5cqmvfi3v6-source` (candidate tree `1e621696` over edge `70561545`, before this renewal's own edits).
+- Vendor at `/nix/store/6fax4hwf5r2hyg10119zirylzxcpb5hh-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `eon/crates/eon/Cargo.toml`;
+  root: `eon`; default features, no added features.
+- Observation at `/nix/store/5avjz0xfkcnnsspvwm6aqpqm5r6qig53-eon-cargo-notices-0.1.29`.
+- Binary at `/nix/store/nnmi9d09xi5p425bafycq6jlh0rm7j1k-eon-rust-0.1.29/bin/eon`
+  with SHA-256 `fd52648c7cd6ccce7707f7ce1d2182bcd6ce40039c124cb8e0934bcc629dcea1`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-tfrjz`):
+
 Renewed on 2026-11-23 for `eon-tfrjz` to context
 `3fbd74f79d03931a7624eb62383b3a2ac7ecc206d29adf4e5bfba9a4056f7dc9`
 in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
@@ -867,6 +917,26 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-25 for `eon-33cww.4.1` to context
+`f905a6a6c166b6df39e0558324eb472c2990b6d008d75495ad3ab9db0b66efe7`.
+Only `lock` changes. It gains the bench-only `wayland-protocols-misc 0.3.12`
+and its `eon-bench` edge, and restoring the base normalized lock reproduces
+`20812e3b…` byte for byte. The exact vendor's runtime and normal/build trees
+have 8 and 15 identities. The 6 host identities are in the normal/build tree
+only. The 1 unselected identity is in neither tree, and the
+producer's build log does not compile it.
+
+- Source at `/nix/store/l2dmr9ny3j6k604k5hfnzn8ynb29wh9m-source` (candidate tree `1e621696` over edge `70561545`, before this renewal's own edits).
+- Vendor at `/nix/store/6fax4hwf5r2hyg10119zirylzxcpb5hh-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `orbit/Cargo.toml`;
+  root: `yazelix-orbit`; default features, no added features.
+- Observation at `/nix/store/3lfsww39d2rm4vmy2914dap16jjjqjfx-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/210ah2gnys5m4mr4xp5253qiwf5dvdb6-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `ecdb10c1dbf30efa63b191be338f9663c0dc12cbfcab832b110926e685788a3c`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-tfrjz`):
+
 Renewed on 2026-11-23 for `eon-tfrjz` to context
 `3865499b6087726fd01c4c1d4d397ec85ae751d03a1428d34786eb388fd8884b`
 in the single archive variant. Only `context.toolchain.rust` changes (`1.96.1` → `1.100.0`);
@@ -1175,6 +1245,26 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-25 for `eon-33cww.4.1` to context
+`a9e4677440f96de7bee418196aaa32877196137ca391a36097dff3395daeccdf`.
+Only `lock` changes. It gains the bench-only `wayland-protocols-misc 0.3.12`
+and its `eon-bench` edge, and restoring the base normalized lock reproduces
+`1825ea83…` byte for byte. The exact vendor's runtime and normal/build trees
+have 185 and 217 identities. The 15 host identities are in the normal/build tree
+only. The 4 unselected identities are in neither tree, and the
+producer's build log does not compile them.
+
+- Source at `/nix/store/8a6si34lczp6asmkysh309v3dwq0hkb6-source` (candidate tree `1e621696` over edge `70561545`, before this renewal's own edits).
+- Vendor at `/nix/store/6fax4hwf5r2hyg10119zirylzxcpb5hh-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features, no added features.
+- Observation at `/nix/store/1jq31c33an6d38a85xkagrh06604dj0r-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/v726gyj7895hzgmgl1xqhfxz20gvf1gn-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `8f4b569c66352a75dce7da918904a2bfe581fd54337904ffe40b7a3e73893f84`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-tfrjz`):
 
 Renewed on 2026-11-23 for `eon-tfrjz` to context
 `d2b3ae735959fe5f29c94b9a8d5712cdf1b83d6b1c29589686d4672bb349c3d1`
@@ -1501,6 +1591,28 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 - Result: 15 exact host exceptions; 4 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus-rune-preview
+
+Renewed on 2026-11-25 for `eon-33cww.4.1` to context
+`a1b8522abfddbefb6138b63e9fc27288787c42adb70a0674c7e1c9efa3a1a170`.
+Only `lock` changes. It gains the bench-only `wayland-protocols-misc 0.3.12`
+and its `eon-bench` edge, and restoring the base normalized lock reproduces
+`1f43ef16…` byte for byte. The exact vendor's runtime and normal/build trees
+have 247 and 284 identities. The 20 host identities are in the normal/build tree
+only. The 8 unselected identities are in neither tree, and the
+producer's build log does not compile them.
+With ANSI colour codes removed, its build log does have `Compiling` lines (123),
+and none of them is an unselected identity.
+
+- Source at `/nix/store/8a6si34lczp6asmkysh309v3dwq0hkb6-source` (candidate tree `1e621696` over edge `70561545`, before this renewal's own edits).
+- Vendor at `/nix/store/6fax4hwf5r2hyg10119zirylzxcpb5hh-cargo-vendor-dir`.
+- Target: `x86_64-unknown-linux-gnu`; manifest: `venus/Cargo.toml`;
+  root: `yazelix-venus`; default features plus `candidate-rune`.
+- Observation at `/nix/store/wwhagakpv72p7j56b0mwz2n7pc2ir9x6-venus-rune-preview-cargo-notices-0.1.0`.
+- Binary at `/nix/store/vi23n1qyzazai13znfixp66mr3pp069v-venus-rune-preview-0.1.0/bin/.venus-rune-candidate-wrapped`
+  with SHA-256 `4abf5d54b67c58c524b0e40aa5e7275dfb529d51f525524c7c5d77241ff446c2`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --features=candidate-rune --package yazelix-venus --bin venus-rune-candidate`.
+
+Historical (`eon-yp6vg.7.4`):
 
 First recorded on 2026-11-25 for `eon-yp6vg.7.4`, which ships the Rune
 candidate entry as the Linux-only `venus-rune-preview` package. The producer

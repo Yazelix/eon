@@ -1395,6 +1395,17 @@ and retained regular evidence files, excluding itself. Store raw evidence in the
 coordinator's evidence store and record identities/hashes in the owning bead;
 add no benchmark tables or charts to the repository.
 
+### Venus event-path fixtures
+
+`eon-bench events` takes the same candidate, tree and `--renderer` flags as
+`frames` and runs six fixtures on the private Sway: static-echo,
+moving-caret-30, moving-caret-60, held-repeat, configure-storm and
+modifier-storm (`--only` selects them). Each uses a virtual keyboard and real
+fcitx5, or a bounded echo input method for static-echo. Each cell writes
+`receipt.json` with pass, fail or error and its window counts, all judged from
+Venus's own `WAYLAND_DEBUG=client` log; `result.json` gathers the cells. A cell
+that leaves private processes behind stops the remaining cells.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

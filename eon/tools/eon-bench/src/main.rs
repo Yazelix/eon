@@ -17,6 +17,7 @@ usage: eon-bench corpus --out DIR [--only ID]...
        eon-bench journey --eon PATH --case NAME --out DIR
        eon-bench terminals --eon PATH --source-tree HASH --out DIR [OPTIONS]
        eon-bench frames --eon LABEL=PATH --revision LABEL=COMMIT --candidate-tree LABEL=TREE --source-tree HASH --out DIR [OPTIONS]
+       eon-bench events --eon LABEL=PATH --revision LABEL=COMMIT --candidate-tree LABEL=TREE --source-tree HASH --out DIR [OPTIONS]
        eon-bench response --eon PATH --out DIR [OPTIONS]
        eon-bench write FILE --report REPORT
        eon-bench COMMAND --help";
@@ -51,6 +52,7 @@ enum Command {
     TerminalWorkload(Vec<String>),
     Frames(frames::Options, bool),
     FrameWorkload(Vec<String>),
+    Events(frames::events::Options, bool),
 }
 
 fn corpus_help() -> String {
@@ -131,6 +133,8 @@ fn main() -> ExitCode {
         Some("frames" | "frames-inner") => frames::options(rest)
             .map(|options| Command::Frames(options, arguments[0] == "frames-inner")),
         Some("frames-workload") => Ok(Command::FrameWorkload(rest.to_vec())),
+        Some("events" | "events-inner") => frames::events::options(rest)
+            .map(|options| Command::Events(options, arguments[0] == "events-inner")),
         Some("response-fixture") if rest.len() == 4 => Ok(Command::Fixture(rest.to_vec())),
         Some("pressure-worker") if rest.len() == 5 => Ok(Command::PressureWorker(rest.to_vec())),
         Some("write") => write_options(rest).map(|(file, report)| Command::Write(file, report)),
@@ -174,6 +178,8 @@ fn main() -> ExitCode {
         Command::Frames(options, false) => frames::run(rest, &options),
         Command::Frames(options, true) => frames::run_inner(&options),
         Command::FrameWorkload(arguments) => frames::workload(&arguments),
+        Command::Events(options, false) => frames::events::run(rest, &options),
+        Command::Events(options, true) => frames::events::run_inner(&options),
     };
     match outcome {
         Ok(()) => ExitCode::SUCCESS,

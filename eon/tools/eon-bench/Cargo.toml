@@ -16,8 +16,10 @@ rustix = { version = "=1.1.4", default-features = false, features = ["event", "f
 orbit-protocol = { path = "../../../orbit/crates/protocol" }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-# Benchmark-only virtual pointer; generated bindings own wheel/pixel/stop encoding.
+# Benchmark-only virtual pointer, keyboard and input method; generated bindings
+# own the wire encoding. The protocol crates move only with wayland-client.
 wayland-client = "=0.31.15"
+wayland-protocols-misc = { version = "=0.3.12", features = ["client"] }
 wayland-protocols-wlr = { version = "=0.3.12", features = ["client"] }
 
 [lints.rust]

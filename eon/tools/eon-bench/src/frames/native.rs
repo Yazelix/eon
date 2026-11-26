@@ -15,7 +15,11 @@ fn load_guard(mode: &str, limit: f64, start: f64, end: f64) -> Result {
     Ok(())
 }
 
-fn wait(deadline: Instant, what: &str, mut ready: impl FnMut() -> Result<bool>) -> Result {
+pub(super) fn wait(
+    deadline: Instant,
+    what: &str,
+    mut ready: impl FnMut() -> Result<bool>,
+) -> Result {
     loop {
         suite::interrupt::check()?;
         if ready()? {
@@ -27,7 +31,7 @@ fn wait(deadline: Instant, what: &str, mut ready: impl FnMut() -> Result<bool>) 
         std::thread::sleep(Duration::from_millis(20));
     }
 }
-fn pause(until: u64, deadline: Instant) -> Result {
+pub(super) fn pause(until: u64, deadline: Instant) -> Result {
     loop {
         suite::interrupt::check()?;
         let now = environment::monotonic_ns();
@@ -40,13 +44,13 @@ fn pause(until: u64, deadline: Instant) -> Result {
         std::thread::sleep(Duration::from_nanos(until - now).min(Duration::from_millis(20)));
     }
 }
-fn eon(launch: &Headless, deadline: Instant, args: &[&str]) -> Result<String> {
+pub(super) fn eon(launch: &Headless, deadline: Instant, args: &[&str]) -> Result<String> {
     terminals::call(launch, deadline, &launch.eon, args)
 }
-fn json(launch: &Headless, deadline: Instant, args: &[&str]) -> Result<Value> {
+pub(super) fn json(launch: &Headless, deadline: Instant, args: &[&str]) -> Result<Value> {
     Value::parse(&eon(launch, deadline, args)?)
 }
-fn directory_workers(dir: &Path) -> Result<Vec<PathBuf>> {
+pub(super) fn directory_workers(dir: &Path) -> Result<Vec<PathBuf>> {
     let mut dirs = fs::read_dir(dir)
         .map_err(error)?
         .filter_map(|e| e.ok())
@@ -98,7 +102,9 @@ pub fn workload(args: &[String]) -> Result {
     child::publish(&dir.join("grid"), &format!("{:?}", child::grid()))?;
     child::publish(&dir.join("ready"), "")?;
     wait(deadline, "fixture go", || Ok(root.join("go").is_file()))?;
-    let result = if name == "cat64" || name.starts_with("kitten-") {
+    let result = if let Some(result) = super::events::payload(name, root, &dir, deadline) {
+        result
+    } else if name == "cat64" || name.starts_with("kitten-") {
         fs::write(dir.join("setup.vt"), b"\x1b[0m\x1b[2J\x1b[HEON FRAMES GO").map_err(error)?;
         terminals::workload(&[
             dir.display().to_string(),
@@ -481,7 +487,7 @@ impl Session {
             .and_then(Value::as_u64)
             .ok_or("candidate lacks selected terminal revision")?;
         let pointer = if cell.scroll() {
-            Some(input::Pointer::new(
+            Some(seat::Pointer::new(
                 launch,
                 cell.columns,
                 cell.width,
@@ -1042,7 +1048,7 @@ pub(super) fn run(options: &Options) -> Result {
     execution
 }
 
-fn write_manifest(dir: &Path) -> Result {
+pub(super) fn write_manifest(dir: &Path) -> Result {
     fn visit(root: &Path, dir: &Path, lines: &mut Vec<String>) -> Result {
         for entry in fs::read_dir(dir).map_err(error)? {
             let entry = entry.map_err(error)?;
