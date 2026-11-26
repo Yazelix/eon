@@ -11,13 +11,13 @@ and consequences for ownership, code shape, and the first check.
 
 ## Change-driven refresh
 
-Rune at `c22cc2d459cc6b80a3f4ecf45b136eed1d205507` queues native accessibility
+Rune at `7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2` queues native accessibility
 activation and exits its tree update before walking the tree while inactive.
 Venus keeps its workspace, dialog, and quota projection inputs in its own
 reducer. Winit owns the Venus accessibility snapshot and its AccessKit
 adapter. The Rune candidate uses the existing native chrome tree route.
-[Rune activation queue](https://github.com/Yazelix/eon-rune/blob/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/crates/rune/src/a11y/mod.rs#L84-L113)
-and [Rune tree guard](https://github.com/Yazelix/eon-rune/blob/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/crates/rune/src/a11y/tree.rs#L142-L170).
+[Rune activation queue](https://github.com/Yazelix/eon-rune/blob/7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2/crates/rune/src/a11y/mod.rs#L107-L128)
+and [Rune tree guard](https://github.com/Yazelix/eon-rune/blob/7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2/crates/rune/src/a11y/tree.rs#L271-L286).
 
 Native window settings follow equality at the effect sink: the state owner
 marks real changes and the sink sends a level only when its value changes

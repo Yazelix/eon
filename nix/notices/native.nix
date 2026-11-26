@@ -52,6 +52,7 @@ in {
     yeslogic-fontconfig-sys = exclusion [ "6.0.1" ] "Rust declarations for fontconfig, which Rune's dlopen feature loads at run time; no bundled native code.";
     wayland-sys = exclusion [ "0.31.10" "0.31.11" ] "Rust bindings to the host Wayland library, excluded by the archive host boundary.";
     rayon-core = exclusion [ "1.13.0" ] "Pure Rust thread pool; links enforces a single Cargo runtime instance.";
+    stacker = exclusion [ "0.1.25" ] "The C shim is compiled only for Windows; the selected Linux build uses separately classified psm assembly.";
     tree-sitter-language = exclusion [ "0.1.7" ] "Rust/C ABI declarations; compiled parsers and the C runtime have separate notice entries.";
     tree-sitter-bash = exclusion [ "0.25.1" ] "Crate-owned generated C parser/scanner uses the crate's MIT terms, accounted by its Cargo notice.";
     tree-sitter-fish = exclusion [ "3.6.0" ] "Crate-owned generated C parser/scanner declares MIT; the Cargo report records its stock original-notice gap.";

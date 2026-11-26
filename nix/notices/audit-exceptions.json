@@ -2,7 +2,7 @@
   "eon": [
     {
       "root": "eon",
-      "graph_sha256": "065c7b2cfab5b925d96e3a42e21c905484c8bf85420d26dc7976d37b933fec0d",
+      "graph_sha256": "562fcad4a51e35ed069fd6b9549144cfab7a4b3cbb37833e2b4df12130c661f1",
       "reason": "Only host proc-macro/build dependency paths in the exact producer graph; no target runtime dependency path.",
       "evidence": "nix/notices/audit-evidence.md#eon",
       "packages": [
@@ -19,7 +19,7 @@
     },
     {
       "root": "eon",
-      "graph_sha256": "065c7b2cfab5b925d96e3a42e21c905484c8bf85420d26dc7976d37b933fec0d",
+      "graph_sha256": "562fcad4a51e35ed069fd6b9549144cfab7a4b3cbb37833e2b4df12130c661f1",
       "reason": "Conservative audit over-report: not selected in the exact producer normal/build graph and not compiled during its build.",
       "evidence": "nix/notices/audit-evidence.md#eon",
       "packages": [
@@ -31,7 +31,7 @@
   "orbit": [
     {
       "root": "yazelix-orbit",
-      "graph_sha256": "8d9eb57d7976f4efad8418ae9cae59bf056c41b12ca5ef87a7b0af08e952f26e",
+      "graph_sha256": "ce72bd78ba6c324b0c384fd023e998f8b9de2f9616b48ca63749decca9174c41",
       "reason": "Only host proc-macro/build dependency paths in the exact producer graph; no target runtime dependency path.",
       "evidence": "nix/notices/audit-evidence.md#orbit",
       "packages": [
@@ -45,7 +45,7 @@
     },
     {
       "root": "yazelix-orbit",
-      "graph_sha256": "8d9eb57d7976f4efad8418ae9cae59bf056c41b12ca5ef87a7b0af08e952f26e",
+      "graph_sha256": "ce72bd78ba6c324b0c384fd023e998f8b9de2f9616b48ca63749decca9174c41",
       "reason": "Conservative audit over-report: not selected in the exact producer normal/build graph and not compiled during its build.",
       "evidence": "nix/notices/audit-evidence.md#orbit",
       "packages": [
@@ -56,7 +56,7 @@
   "venus": [
     {
       "root": "yazelix-venus",
-      "graph_sha256": "669fbd779a65f77ec503152a56657880740adcb4c83f1dbecc4900c33a3658d6",
+      "graph_sha256": "7f495d9fb2e1fc859c6f65d524214e7bf7b65755a1065e3cb77030b183596aa4",
       "reason": "Only host proc-macro/build dependency paths in the exact producer graph; no target runtime dependency path.",
       "evidence": "nix/notices/audit-evidence.md#venus",
       "packages": [
@@ -79,7 +79,7 @@
     },
     {
       "root": "yazelix-venus",
-      "graph_sha256": "669fbd779a65f77ec503152a56657880740adcb4c83f1dbecc4900c33a3658d6",
+      "graph_sha256": "7f495d9fb2e1fc859c6f65d524214e7bf7b65755a1065e3cb77030b183596aa4",
       "reason": "Conservative audit over-report: not selected in the exact producer normal/build graph and not compiled during its build.",
       "evidence": "nix/notices/audit-evidence.md#venus",
       "packages": [
@@ -93,7 +93,7 @@
   "venus-rune-preview": [
     {
       "root": "yazelix-venus",
-      "graph_sha256": "34e1087b12214050153bb117dc1fa65e22b9f97658ee587d93645e823a728401",
+      "graph_sha256": "69114db012ebd2ee59ca61040222f156c85ea4bd89a6b30064782356351894cc",
       "reason": "Only host proc-macro/build dependency paths in the exact producer graph; no target runtime dependency path.",
       "evidence": "nix/notices/audit-evidence.md#venus-rune-preview",
       "packages": [
@@ -121,7 +121,7 @@
     },
     {
       "root": "yazelix-venus",
-      "graph_sha256": "34e1087b12214050153bb117dc1fa65e22b9f97658ee587d93645e823a728401",
+      "graph_sha256": "69114db012ebd2ee59ca61040222f156c85ea4bd89a6b30064782356351894cc",
       "reason": "Conservative audit over-report: not selected in the exact producer normal/build graph and not compiled during its build.",
       "evidence": "nix/notices/audit-evidence.md#venus-rune-preview",
       "packages": [
@@ -130,6 +130,7 @@
         ["defmt-macros", "1.2.0"],
         ["defmt-parser", "1.1.0"],
         ["fax", "0.2.7"],
+        ["spellbook", "0.4.2"],
         ["termcolor", "1.4.1"],
         ["tiff", "0.11.3"],
         ["zlib-rs", "0.6.8"]

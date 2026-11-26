@@ -85,10 +85,11 @@ let
       { name = "LICENSE-MIT"; hash = "sha256-I/GOA9xJ35FiL+KnYXZJdATkbO2KcV2dK2enRGVxzKM="; }
       { name = "LICENSE-APACHE"; hash = "sha256-Yseh419WQGiW16p8pS0MwNJyrAIrXSeW59aQXbijY2o="; }
     ];
-  # eon-rune's crates ship no license file; its repository's MIT terms cover them.
-  runeSource = "git+https://github.com/Yazelix/eon-rune?rev=c22cc2d459cc6b80a3f4ecf45b136eed1d205507#c22cc2d459cc6b80a3f4ecf45b136eed1d205507";
+  # Rune's root notice covers MIT crates that ship no local copy of those terms.
+  # The archive retains crate-local terms, including rune-tiny-skia-path's BSD-3-Clause.
+  runeSource = "git+https://github.com/Yazelix/eon-rune?rev=7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2#7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2";
   runeLicense = pkgs.fetchurl {
-    url = "https://raw.githubusercontent.com/Yazelix/eon-rune/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/LICENSE";
+    url = "https://raw.githubusercontent.com/Yazelix/eon-rune/7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2/LICENSE";
     hash = "sha256-sf5pr+L2/giE78iTbatpu986MZs4KKll7hME+9amACE=";
   };
   # Shipping Venus and the Rune preview build the same crate with different features.

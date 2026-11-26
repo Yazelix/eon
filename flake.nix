@@ -247,9 +247,12 @@
             lockFile = ./Cargo.lock;
             outputHashes."dpi-0.1.1" = "sha256-5PryoOJXKGW/5cGtDynPnyTwk5kZg5azgeDbYSj0Q9k=";
             outputHashes."libghostty-vt-0.2.1" = "sha256-Wl/JOS2KD/s+fiUz5W2bgXt07gLhwWO9MkPWik/9/gs=";
-            outputHashes."rune-0.0.1" = "sha256-YzugFz3uEg7vGK/+N/YfJyGm0nHfmkSy/ZFmPzudNQg=";
+            outputHashes."rune-0.0.1" = "sha256-w1UzPDH2Qcuj9ht1TfeOdYtcI8tXn98VIFS4jvkYE/M=";
           };
-          candidateRuneGraphCheck = pkgs.stdenvNoCC.mkDerivation {
+          candidateRuneGraphCheck = let
+            winitPatch = (builtins.fromTOML (builtins.readFile ./Cargo.toml)).patch.crates-io.winit;
+            winitSource = "${winitPatch.git}?rev=${winitPatch.rev}#${builtins.substring 0 8 winitPatch.rev}";
+          in pkgs.stdenvNoCC.mkDerivation {
             name = "eon-candidate-rune-graph";
             src = crateSource;
             cargoDeps = rustPlatform.importCargoLock workspaceCargoLock;
@@ -262,20 +265,30 @@
                 echo "candidate-rune: could not resolve the locked dependency graph" >&2
                 exit 1
               fi
-              awk -F '[|]' -v linux=${lib.boolToString pkgs.stdenv.isLinux} '
+              awk -F '[|]' -v linux=${lib.boolToString pkgs.stdenv.isLinux} \
+                -v winitSource=${lib.escapeShellArg winitSource} '
                 {
                   split($1, identity, " ")
                   package = identity[1]
                   present[package] = 1
-                  if (package ~ /^(x11|x11-dl|x11rb|x11rb-protocol|as-raw-xcb-connection|xcb|xkbcommon-x11)$/ ||
+                  if (package ~ /^(x11|x11-dl|x11rb|x11rb-protocol|as-raw-xcb-connection|xcb|xkbcommon-x11|sctk-adwaita)$/ ||
                       (linux == "true" && package == "arboard")) {
                     print "candidate-rune: forbidden dependency " package > "/dev/stderr"
                     failed = 1
                   }
-                  if (package == "rune" || package == "winit") {
+                  if ((package == "winit" || package == "dpi") && !seen[$1]++) {
+                    sources[package]++
+                    if (index($1, "(" winitSource ")") == 0) {
+                      print "candidate-rune: expected root-patched " package ", found " $1 > "/dev/stderr"
+                      failed = 1
+                    }
+                  }
+                  if (package ~ /^rune(-|$)/ || package == "winit") {
+                    excludedDefaults = package ~ /^rune(-(gpu|image|media|spell|text))?$/
                     count = split($2, features, ",")
                     for (i = 1; i <= count; i++) {
-                      if (features[i] == "x11" || (package == "rune" && features[i] == "default")) {
+                      if (features[i] == "x11" || (excludedDefaults && features[i] == "default") ||
+                          (package == "winit" && features[i] ~ /^wayland-csd-adwaita/)) {
                         print "candidate-rune: forbidden feature " package "/" features[i] > "/dev/stderr"
                         failed = 1
                       }
@@ -283,8 +296,8 @@
                   }
                 }
                 END {
-                  if (!present["rune"] || !present["winit"]) {
-                    print "candidate-rune: expected Rune and winit in the resolved graph" > "/dev/stderr"
+                  if (!present["rune"] || sources["winit"] != 1 || sources["dpi"] != 1) {
+                    print "candidate-rune: expected Rune and exactly one winit and dpi identity" > "/dev/stderr"
                     failed = 1
                   }
                   exit failed

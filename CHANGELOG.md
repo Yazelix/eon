@@ -40,6 +40,8 @@ installation, and proven contract changes.
   and the entry when Rune becomes the client (`eon-yp6vg.7.4`).
 - Touchpad scrolling in the Rune preview moves the terminal between Orbit's
   whole-row updates (`eon-yp6vg.69`).
+- The packaged Rune preview uses the rebased Rune engine at `7d7bd5e4`, including
+  Rune's upstream window-close handling (`eon-yp6vg.67`).
 - The Agents sidebar shows a pane's tag (`eon pane rename PANE NAME --tag TAG`)
   at the end of its row's second line, such as `1h · p25 · eon-igae.25`. On a
   narrow sidebar only the tag shortens, with `…`, and screen readers hear the

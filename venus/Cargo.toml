@@ -35,9 +35,9 @@ jiff = { version = "=0.2.38", default-features = false, features = ["std", "tz-s
 orbit-protocol = { path = "../orbit/crates/protocol" }
 pollster = { version = "=1.0.1", default-features = false }
 # Only `accessibility`, which the chrome needs. Off: embedded-fonts (Venus registers its own),
-# dbus and svg (unused), x11 (Linux uses Wayland), metal-backend and ogg-audio (refused),
+# dbus, hunspell and svg (unused), x11 (Linux uses Wayland), metal-backend and ogg-audio (refused),
 # tooling and frame-profile (debug builds keep tooling; frame proofs opt in).
-rune = { git = "https://github.com/Yazelix/eon-rune", rev = "c22cc2d459cc6b80a3f4ecf45b136eed1d205507", default-features = false, features = ["accessibility"], optional = true }
+rune = { git = "https://github.com/Yazelix/eon-rune", rev = "7d7bd5e4555a5a7aee4cadbd9f94b9de2bda21e2", default-features = false, features = ["accessibility"], optional = true }
 serde_json = "=1.0.151"
 unicode-script = "=0.5.8"
 # `noop` serves the headless renderer tests; wgpu never uses it unless enabled. Here

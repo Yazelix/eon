@@ -108,13 +108,19 @@ Linux, Eon's package also ships the entry as the separate
 (eon-yp6vg.7.4). The Darwin package and entry are eon-yp6vg.71.
 eon-yp6vg.54 removes the entry.
 
+The candidate uses Rune's upstream `App::on_close_request` from anomalyco/rune#2024.
+Venus defers native close requests to its workspace lifecycle policy. The
+separate AppKit `App::on_quit_request` hook still routes application Quit to
+that policy. Programmatic close and control EOF use the teardown path.
+
 On Linux it requires `WAYLAND_DISPLAY` before creating the event loop. Rune
 uses winit's Wayland backend with X11 disabled. On macOS both hosts use the
 native event loop. The launcher below and the lavapipe check are Linux-only.
 Run `nix develop -c eon-darwin-clippy` from the repository root to lint all
 candidate targets for `aarch64-apple-darwin` after the feature-off workspace
 pass. On Linux the candidate pass and focused invocations use the dev shell's
-pinned Zig for `cc` build scripts such as `blake3`. A non-empty
+pinned Zig for `cc` build scripts such as `blake3` and `psm` (which assembles
+`src/arch/aarch_aapcs64.s` with `-xassembler-with-cpp`). A non-empty
 `CC_aarch64_apple_darwin` or `AR_aarch64_apple_darwin` overrides that tool's
 default. On Apple Silicon the command uses the native C tools. The native
 Darwin preview package and entry are tracked in eon-yp6vg.71.

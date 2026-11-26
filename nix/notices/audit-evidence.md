@@ -54,6 +54,50 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Rune crate split cutover (eon-yp6vg.67)
+
+The cutover over `ffaad90d` moves the optional preview to `7d7bd5e4`.
+Eon, Orbit and shipping Venus change only through the normalized workspace
+lock. Restoring the `lock` field from the landed `17ad5297` audit input
+reproduces all three accepted shipping graphs byte for byte. That input
+records the same base digests as `ffaad90d`. The preview also changes its
+selected runtime and native graphs and binary audit records. The other
+producer digests with exceptions hold.
+
+| Producer | Previous digest prefix | Renewed digest prefix | Host / unselected |
+| --- | --- | --- | --- |
+| eon | `065c7b2c` | `562fcad4` | 9 / 2 |
+| orbit | `8d9eb57d` | `ce72bd78` | 6 / 1 |
+| venus | `669fbd77` | `7f495d9f` | 15 / 4 |
+| venus-rune-preview | `34e1087b` | `69114db0` | 20 / 9 |
+
+The one new preview exception is `spellbook 0.4.2`. Rune disables
+`rune-spell` defaults. The locked Rust graph enables Hunspell only for
+Rune's wasm32 target. The x86_64 Linux preview's offline runtime and
+normal/build trees exclude `spellbook`, and its producer build phase
+contains no `spellbook` compilation. The ELF audit over-reports that
+identity. The exact exception covers only the preview's observed graph.
+
+The replayed `inspect-audit` outputs match the realized graphs and
+observations for all four binaries. Every host exception is absent from the
+runtime tree. Every unselected identity is also absent from the normal/build
+tree and build-phase compile lines. The strict renewal first refused the
+changed exception set. After checking `spellbook`, its proposal changed
+eight hashes and matched the checked-in exception data. The Zoxide
+omission witness still rejects removal of `anyhow 1.0.98`.
+
+`taffy 0.15.0` and `blake3 1.8.7` retain their locked versions and
+checksums in the preview graph. Their original license supplement and
+native CC0 notice entry apply to the same source identities.
+`psm 0.1.31` compiles `src/arch/x86_64.s` into the preview through `stacker`.
+The native catalogue binds the exact locked crate to its original MIT notice.
+`stacker 0.1.25` declares `cc` for its Windows-only C shim. The Linux archive
+keeps its Rust crate notice and excludes the unbuilt shim from native notices.
+
+- Vendor at `/nix/store/9mpkchb2cvjkcaw6b76wvm9r7lb2amp7-cargo-vendor-dir`.
+- Base input at `/nix/store/r56law9kzk8djzdljy9ibi0n16z1yjx6-eon-archive-notice-input.json` (recorded for `17ad5297`, with the digests accepted at `ffaad90d`).
+- Proposal input at `/nix/store/i3zfcirgy1s1g7a7rvpa8x1ps022ai1m-eon-archive-notice-input.json` (before renewal).
+
 ### Eon toml edge (eon-rxdur)
 
 For `eon-rxdur` over `04553be2`, the `eon` crate gains a direct dependency on
@@ -630,6 +674,21 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-26 for `eon-yp6vg.67` to context
+`562fcad4a51e35ed069fd6b9549144cfab7a4b3cbb37833e2b4df12130c661f1`.
+Restoring the base `lock` field reproduces `065c7b2c…`. The 9 host and
+2 unselected identities keep their classes.
+
+- Source at `/nix/store/7n2ng3b37z8zrmqqaf58nidymirvxba3-source`.
+- Vendor at `/nix/store/9mpkchb2cvjkcaw6b76wvm9r7lb2amp7-cargo-vendor-dir`.
+- Base input at `/nix/store/r56law9kzk8djzdljy9ibi0n16z1yjx6-eon-archive-notice-input.json`.
+- Observation at `/nix/store/zmip613qznfi6w9g7l181li32rkapi35-eon-cargo-notices-0.1.29/audit/observation.json`.
+- Binary at `/nix/store/j4qs0q7z1pri6ks5nx63px08ywny49xp-eon-rust-0.1.29/bin/eon`
+  with SHA-256 `b2ba7050b57d2f27c732b3f2c6f5b8eba71bc52c9ef00dba22c2266abbef334b`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-rxdur`, `17ad5297`):
+
 Renewed on 2026-11-26 for `eon-rxdur` to context
 `065c7b2cfab5b925d96e3a42e21c905484c8bf85420d26dc7976d37b933fec0d`.
 Deleting the `eon` lock entry's `toml` edge reproduces `2de28260…`.
@@ -992,6 +1051,21 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-26 for `eon-yp6vg.67` to context
+`ce72bd78ba6c324b0c384fd023e998f8b9de2f9616b48ca63749decca9174c41`.
+Restoring the base `lock` field reproduces `8d9eb57d…`. The 6 host and
+1 unselected identities keep their classes.
+
+- Source at `/nix/store/zapd3psvx18cn0jjf3p2q8hrjbc3mq5n-source`.
+- Vendor at `/nix/store/9mpkchb2cvjkcaw6b76wvm9r7lb2amp7-cargo-vendor-dir`.
+- Base input at `/nix/store/r56law9kzk8djzdljy9ibi0n16z1yjx6-eon-archive-notice-input.json`.
+- Observation at `/nix/store/mv6vsfdyz8wdp5r3gkcwf8sh9j0l387h-orbit-cargo-notices-0.1.0/audit/observation.json`.
+- Binary at `/nix/store/nllvfan32cdkv1826ym09yyvg1c2fwyd-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `b2293388d7e4b74da7da08b7ef457b60b4bdb65acc10c6831d79f88ea3b2fc3f`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-rxdur`, `17ad5297`):
+
 Renewed on 2026-11-26 for `eon-rxdur` to context
 `8d9eb57d7976f4efad8418ae9cae59bf056c41b12ca5ef87a7b0af08e952f26e`.
 Deleting the `eon` lock entry's `toml` edge reproduces `1bfadfd3…`.
@@ -1346,6 +1420,21 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-26 for `eon-yp6vg.67` to context
+`7f495d9fb2e1fc859c6f65d524214e7bf7b65755a1065e3cb77030b183596aa4`.
+Restoring the base `lock` field reproduces `669fbd77…`. The 15 host and
+4 unselected identities keep their classes.
+
+- Source at `/nix/store/q5sndg939535z8ayb54693c30bvraaxh-source`.
+- Vendor at `/nix/store/9mpkchb2cvjkcaw6b76wvm9r7lb2amp7-cargo-vendor-dir`.
+- Base input at `/nix/store/r56law9kzk8djzdljy9ibi0n16z1yjx6-eon-archive-notice-input.json`.
+- Observation at `/nix/store/zs3lq812pswga89d84ikh7q883cyih2k-venus-cargo-notices-0.1.0/audit/observation.json`.
+- Binary at `/nix/store/hdn074a5nzgm2h77qwby1vjnvg5ryz1v-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `d6d2ed404119cb5d29796e9364111f71641ccdc8764f311ce5a3193a23a99a09`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-rxdur`, `17ad5297`):
 
 Renewed on 2026-11-26 for `eon-rxdur` to context
 `669fbd779a65f77ec503152a56657880740adcb4c83f1dbecc4900c33a3658d6`.
@@ -1718,6 +1807,23 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 - Result: 15 exact host exceptions; 4 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus-rune-preview
+
+Renewed on 2026-11-26 for `eon-yp6vg.67` from `34e1087b…` to context
+`69114db012ebd2ee59ca61040222f156c85ea4bd89a6b30064782356351894cc`.
+The split is 20 host and 9 unselected identities. The new unselected
+identity is `spellbook 0.4.2` (MPL-2.0), which Rune selects only for wasm32
+Hunspell. It is absent from both selected Linux Cargo trees and the producer
+build log. The ELF audit reports it, so the exception names that exact version.
+
+- Source at `/nix/store/q5sndg939535z8ayb54693c30bvraaxh-source`.
+- Vendor at `/nix/store/9mpkchb2cvjkcaw6b76wvm9r7lb2amp7-cargo-vendor-dir`.
+- Base input at `/nix/store/r56law9kzk8djzdljy9ibi0n16z1yjx6-eon-archive-notice-input.json`.
+- Observation at `/nix/store/jb8gahd15sf4xhv11y9ah9ra8m1mb4yr-venus-rune-preview-cargo-notices-0.1.0/audit/observation.json`.
+- Binary at `/nix/store/6x99n4x8qa1zi6rp51xx7q3s3wy1z31g-venus-rune-preview-0.1.0/bin/.venus-rune-candidate-wrapped`
+  with SHA-256 `cf5520c38d8cbc1f393a014ba7b9efa806e8abfc29f214c49ad7166c433012d3`.
+- Observed build flags `-j 4 --target x86_64-unknown-linux-gnu --offline --profile release --features=candidate-rune --package yazelix-venus --bin venus-rune-candidate`.
+
+Historical (`eon-rxdur`, `17ad5297`):
 
 Renewed on 2026-11-26 for `eon-rxdur` to context
 `34e1087b12214050153bb117dc1fa65e22b9f97658ee587d93645e823a728401`.
