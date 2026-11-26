@@ -308,14 +308,30 @@ fn the_control_thread_presents_only_while_venus_admits_it() {
 }
 
 #[test]
-fn titles_reach_rune_once_per_change() {
-    let window = RuneWindow::default();
-    window.set_title("a");
-    assert_eq!(window.take_title().as_deref(), Some("a"));
-    window.set_title("a");
-    assert_eq!(window.take_title(), None);
-    window.set_title("b");
-    assert_eq!(window.take_title().as_deref(), Some("b"));
+fn native_settings_reach_rune_once_per_change() {
+    let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    let title = |host: &Host| host.rune_window().unwrap().take_title();
+    host.app.refresh_client_view();
+    assert_eq!(title(&host).as_deref(), Some("Venus"));
+    host.app.refresh_client_view();
+    assert_eq!(title(&host), None, "an equal title reached Rune again");
+    host.app.render_notice = Some("render failed".into());
+    host.app.refresh_client_view();
+    assert_eq!(title(&host).as_deref(), Some("render failed"));
+    let effects = &host.app.window.as_ref().unwrap().effects;
+    assert!(effects.cursor.is_some() && effects.ime.is_some());
+    let (sent, size) = (
+        effects.ime_sends,
+        host.app.window.as_ref().unwrap().renderer.size(),
+    );
+    host.app
+        .handle_window_event(window_id(), WindowEvent::Resized(size));
+    assert_eq!(
+        host.app.window.as_ref().unwrap().effects.ime_sends,
+        sent + 1,
+        "an applied resize sends only the IME setting again"
+    );
+    assert_eq!(title(&host), None);
 }
 
 #[test]

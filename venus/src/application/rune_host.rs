@@ -65,7 +65,6 @@ pub(super) struct RuneWindow {
     pub(super) withdrawn: Cell<bool>,
     redraw: Cell<bool>,
     title: RefCell<Option<String>>,
-    shown_title: RefCell<String>,
     ime_area: Cell<Option<PhysicalCaretArea>>,
     reading_paste: Cell<bool>,
     paste_target: Cell<Option<(u64, u64)>>,
@@ -91,17 +90,14 @@ impl RuneWindow {
         self.redraw.set(true);
     }
 
+    /// Venus's native-effects boundary sends only a changed title.
     pub(super) fn set_title(&self, title: &str) {
-        if *self.shown_title.borrow() != title {
-            *self.title.borrow_mut() = Some(title.to_owned());
-        }
+        *self.title.borrow_mut() = Some(title.to_owned());
     }
 
     /// The title to give the window now, if it changed.
     fn take_title(&self) -> Option<String> {
-        let title = self.title.take()?;
-        *self.shown_title.borrow_mut() = title.clone();
-        Some(title)
+        self.title.take()
     }
 }
 
@@ -706,6 +702,7 @@ impl Host {
             renderer,
             scale_factor,
             native: NativeWindow::Rune(RuneWindow::default()),
+            effects: NativeEffects::default(),
         });
         let early = std::mem::take(&mut self.early);
         if let Some(geometry) = early.geometry {

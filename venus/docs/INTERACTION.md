@@ -63,6 +63,41 @@ Recovery continues only while that exact attachment remains current and live;
 endpoint replacement or authoritative offline state cancels obsolete retry
 state.
 
+### Native effects and feedback edges
+
+Venus sends the window settings it owns through one boundary per window
+(`NativeEffects` on `WindowState`): a title, pointer icon or input-method
+permission and caret area reaches the native host only when it differs from
+the last one sent to that window (VEN-C2). While input-method input is not
+allowed, no caret area is sent. A new window starts with nothing sent, an
+applied size or scale change resends the input-method settings once, a
+Wayland input-method enable resends the caret area once after the next
+successful present, and a Wayland enable that follows a not-allowed send lets
+the next input-method setting through once.
+Every other native call is a one-shot that Venus issues once per admitted
+cause. Each row lists what a call can bring back into Venus and what stops
+that from sending the call again.
+
+| Outgoing call | Wayland inbound | AppKit inbound | Loop break |
+| --- | --- | --- | --- |
+| Window create and show, static attributes | Initial configure, scale, output and focus; showing does nothing on Wayland | Ordering front may bring focus, resize, scale and expose events | Created once per window and shown once after accessibility setup; decorations, opacity, blur and identity are start values. |
+| Window title | `xdg_toplevel.set_title` on every call; no reply event | `setTitle`; no reply event | Boundary equality, including the render-failure notice title. |
+| Pointer icon | `wl_pointer.set_cursor` per pointer on every call; winit reapplies the stored icon on pointer enter and scale change | Cursor-rect reset; winit skips an equal icon | Boundary equality; enter needs no resend because the host keeps the icon. |
+| Input-method permission | Text-input enable or disable and commit; `Ime::Enabled` or `Ime::Disabled` | Disable clears marked text and may queue `Ime::Disabled` | Boundary equality; winit also acts only on a change. An acknowledgement never changes the permission Venus computes. |
+| Input-method caret area | Cursor rectangle and commit; the input method may answer with `Done` and an empty or real preedit | `invalidateCharacterCoordinates`; the input method may query coordinates | Boundary equality. On Wayland the area is written at most once per successful present, and once more after `Ime::Enabled` (the enable resets the rectangle); an unchanged empty preedit refreshes nothing. |
+| Startup size request, scale size writer and Rune instant resize | Configure with the compositor's chosen size | Content-size change, resize and backing-scale events | Sent once at creation and once per scale event before the initial scale is admitted; only an applied size or scale change resizes. |
+| Surface configure and resize | Resize, scale and redraw | Drawable and backing changes | Driven by applied size and scale only; raw changes withdraw pointer input until a compatible frame is drawn. |
+| Redraw request, pre-present notice and present | Frame callback and `RedrawRequested` | Display invalidation and `RedrawRequested` | One request per pending demand, coalesced by the host; the pre-present notice goes only before an actual present; a drawn frame requests no successor by itself. |
+| Native drag | Move serial, configure, focus and pointer leave | Window drag, move, resize and focus | Issued only from an admitted press, never from motion or configure. |
+| Present attention | `xdg_activation_v1` request; the compositor may focus | Informational attention request; the Rune host refuses Present on macOS, where its only request activates the window | Issued once per admitted Present; resulting focus or visibility never requests attention. |
+| Event-loop wait, exit and close, AppKit menu setup | Wakes for events and deadlines; close and destroy | Run-loop wakes, close, quit and menu dispatch | Waits only for real events or due deadlines and exits once; the menu is set up at startup and Quit still asks for consent. |
+| Accessibility tree, clipboard and link opener | Accessibility activation and actions, selection source events | Accessibility queries and actions, pasteboard | A tree update starts no action; clipboard and link results never repeat their operation. |
+
+Before Venus ships on Rune, the Rune host must keep the same equality at its
+final native setter for the title, pointer icon and input-method settings,
+after any conversion of its own (eon-yp6vg.54); today its own input-method
+sync repeats caret-area writes.
+
 ### Input lock
 
 Press Alt+Shift+I (Option+Shift+I on macOS) to toggle the window's input

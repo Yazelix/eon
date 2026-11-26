@@ -613,6 +613,80 @@ struct WindowState {
     renderer: Renderer,
     scale_factor: f64,
     native: NativeWindow,
+    effects: NativeEffects,
+}
+
+impl WindowState {
+    fn set_title(&mut self, title: &str) {
+        if self.effects.title(title) {
+            self.native.set_title(title);
+        }
+    }
+
+    fn set_cursor(&mut self, icon: CursorIcon) {
+        if self.effects.cursor(icon) {
+            self.native.set_cursor(icon);
+        }
+    }
+
+    fn sync_ime(&mut self, allowed: bool, area: Option<PhysicalCaretArea>) {
+        if let Some(area) = self.effects.ime(allowed, area) {
+            self.native.sync_ime(allowed, area);
+        }
+    }
+
+    fn ime_enabled(&mut self) {
+        if self.native.ime_enabled() {
+            self.effects.ime_enabled();
+        }
+    }
+}
+
+/// The window settings Venus last sent to its native host, which get each only when it changes,
+/// so an event a setting causes cannot send it again (VEN-C2; `docs/INTERACTION.md`).
+#[derive(Default)]
+struct NativeEffects {
+    title: Option<String>,
+    cursor: Option<CursorIcon>,
+    ime: Option<(bool, Option<PhysicalCaretArea>)>,
+    #[cfg(test)]
+    ime_sends: usize,
+}
+
+impl NativeEffects {
+    fn title(&mut self, title: &str) -> bool {
+        let changed = self.title.as_deref() != Some(title);
+        if changed {
+            self.title = Some(title.to_owned());
+        }
+        changed
+    }
+
+    fn cursor(&mut self, icon: CursorIcon) -> bool {
+        self.cursor.replace(icon) != Some(icon)
+    }
+
+    /// The caret area to send with `allowed` when the setting changed; none while not allowed.
+    fn ime(
+        &mut self,
+        allowed: bool,
+        area: Option<PhysicalCaretArea>,
+    ) -> Option<Option<PhysicalCaretArea>> {
+        let ime = (allowed, area.filter(|_| allowed));
+        let changed = self.ime.replace(ime) != Some(ime);
+        #[cfg(test)]
+        {
+            self.ime_sends += usize::from(changed);
+        }
+        changed.then_some(ime.1)
+    }
+
+    /// A host IME epoch can follow a setting sent while IME was not allowed: send it again then.
+    fn ime_enabled(&mut self) {
+        if !matches!(self.ime, Some((true, _))) {
+            self.ime = None;
+        }
+    }
 }
 
 type PhysicalCaretArea = (PhysicalPosition<f64>, PhysicalSize<f64>);
@@ -749,16 +823,20 @@ impl NativeWindow {
         }
     }
 
-    fn ime_enabled(&mut self) {
-        #[cfg(target_os = "linux")]
+    /// Whether the enable starts a new host IME epoch, as a Wayland enable does.
+    fn ime_enabled(&mut self) -> bool {
         match self {
+            #[cfg(target_os = "linux")]
             Self::Winit { window, ime, .. } => {
                 if ime.enabled() {
                     window.request_redraw();
                 }
+                true
             }
+            #[cfg(not(target_os = "linux"))]
+            Self::Winit { .. } => false,
             #[cfg(feature = "candidate-rune")]
-            Self::Rune(_) => {}
+            Self::Rune(_) => false,
         }
     }
 
@@ -1956,6 +2034,7 @@ impl Application {
                 #[cfg(target_os = "linux")]
                 ime: WaylandIme::new(scale_factor),
             },
+            effects: NativeEffects::default(),
         });
         if !self.initial_scale_pending {
             self.start_initial_attachment();
@@ -5738,7 +5817,7 @@ impl Application {
         let Some(state) = &mut self.window else {
             return;
         };
-        state.native.set_title(window_title(
+        state.set_title(window_title(
             self.terminal
                 .model
                 .scene()
@@ -5762,12 +5841,12 @@ impl Application {
                     PhysicalSize::new(f64::from(metrics.width * 2.0), f64::from(metrics.height)),
                 )
             });
-        state.native.sync_ime(ime_allowed, caret);
+        state.sync_ime(ime_allowed, caret);
         #[cfg(feature = "candidate-rune")]
         if retire_paste && let NativeWindow::Rune(window) = &state.native {
             window.retire_paste();
         }
-        state.native.set_cursor(pointer_icon);
+        state.set_cursor(pointer_icon);
         if let Some((accessibility, adapter)) = state.native.accessibility() {
             accessibility.update(
                 Some(adapter),
@@ -6370,7 +6449,7 @@ impl Application {
                     &mut self.render_notice,
                     &mut self.presentation,
                     error,
-                    |title| state.native.set_title(title),
+                    |title| state.set_title(title),
                     |message| report(message),
                 ) && let Some((accessibility, adapter)) = state.native.accessibility()
                 {
@@ -6588,6 +6667,7 @@ impl Application {
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.resize(size, state.scale_factor);
                 self.dialog = None;
+                state.effects.ime = None;
                 #[cfg(target_os = "linux")]
                 state.native.ime_resized(state.scale_factor);
                 self.cancel_native_pointer_sequence();
@@ -6691,7 +6771,7 @@ impl Application {
                         self.terminal.model.is_attached(),
                     );
                 if allowed && matches!(event, Ime::Enabled) {
-                    state.native.ime_enabled();
+                    state.ime_enabled();
                 }
                 if !ime_reaches_terminal(allowed, &event) {
                     return;
@@ -6737,8 +6817,8 @@ impl Application {
                                 .menu_target_at(position.x as f32, position.y as f32)
                                 .cloned()
                         });
-                        let state = self.window.as_ref().expect("native event has a window");
-                        state.native.set_cursor(if action.is_some() {
+                        let state = self.window.as_mut().expect("native event has a window");
+                        state.set_cursor(if action.is_some() {
                             CursorIcon::Pointer
                         } else {
                             CursorIcon::Default

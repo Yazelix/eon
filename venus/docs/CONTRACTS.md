@@ -340,10 +340,26 @@ re-proved when that platform or feature is next touched.
   a dead key with Shift held, such as `"` under `us+intl`, reports its text
   with Shift consumed; a program using the kitty keyboard protocol without
   report-all receives the text, not Shift+Space.
+  Venus sends the native settings it owns on its window (the title, the
+  pointer icon, and input-method permission and caret area, with no caret
+  area while input-method input is not allowed) through one boundary per
+  window, which passes a value to the native host only when it differs from
+  the last value sent to that window. Repeated identical requests reach no
+  native host. Three cases send again without a changed value: a new window
+  starts with nothing sent, an applied size or scale change resends the
+  input-method settings once, and a Wayland input-method enable resends the
+  caret area once after the next successful present. Otherwise an
+  event a native call causes, such as an input-method acknowledgement, a
+  configure or a pointer enter, sends that call again only by changing the
+  value Venus would send. `INTERACTION.md` lists each native call, the events
+  it can cause on Wayland and AppKit, and what ends each loop.
 - **Important failures:** Invalid, stale, unsettled, or non-presented geometry
   cannot reach Orbit; capture and focus transitions withdraw obsolete input.
-- **Owner:** Venus native input and geometry owners; Orbit encodes terminal
-  behavior.
+  On the Rune host, pointer and viewport input reach Orbit only once a frame
+  is drawn at the applied window geometry whose Orbit grid matches the grid
+  requested for that geometry.
+- **Owner:** Venus native input and geometry owners, and its native-effects
+  boundary; Orbit encodes terminal behavior.
 - **Consumes:** Orbit `ORB-C5` through canonical ORBS v13.
 - **Boundary:** Letter, digit and punctuation keys stay physical, so letter
   shortcuts stay layout-independent, and keymaps that place letters on
@@ -401,7 +417,12 @@ re-proved when that platform or feature is next touched.
   under `VEN-C16`).
   Re-proof of VEN-C2's Linux semantic-input slice on the beta candidate is
   pending under eon-igae.7.5; the separately listed Mac and input-method
-  gaps remain open.
+  gaps remain open. Native request counts for the native-effects rule on
+  Wayland and AppKit are pending under eon-33cww.4. Before Venus ships on
+  Rune, the Rune host must keep the same equality at its final native setter
+  for the title, pointer icon and input-method settings, after any
+  conversion of its own; that binding and its proof are pending under
+  eon-yp6vg.54.
 
 ## VEN-C3 — Transient client recovery
 

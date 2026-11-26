@@ -4138,3 +4138,69 @@ fn gpu_deadline_stops_when_occluded_and_refreshes_on_visibility() {
     assert!(!gpu_reading_due(false, false, &mut next, now));
     assert_eq!(next, None);
 }
+
+#[test]
+fn native_effects_reach_the_host_once_per_change() {
+    #[derive(Clone, Copy)]
+    enum Op {
+        Title(&'static str),
+        Cursor(CursorIcon),
+        Ime(bool, Option<PhysicalCaretArea>),
+        Resized,
+        Enabled,
+    }
+    let area = |x: f64| Some((PhysicalPosition::new(x, 0.0), PhysicalSize::new(2.0, 1.0)));
+    let ops = [
+        Op::Title("a"),
+        Op::Title("b"),
+        Op::Cursor(CursorIcon::Default),
+        Op::Cursor(CursorIcon::Pointer),
+        Op::Ime(true, area(1.0)),
+        Op::Ime(true, area(2.0)),
+        Op::Ime(true, None),
+        Op::Ime(false, area(1.0)),
+        Op::Ime(false, area(2.0)),
+        Op::Resized,
+        Op::Enabled,
+    ];
+    // Reference: a level is sent when it differs from the last one sent since its epoch began; the
+    // caret area is dropped while not allowed; an enable restarts only after a disallowed send.
+    let mut sequence = Vec::new();
+    for length in 1..=5u32 {
+        for code in 0..ops.len().pow(length) {
+            sequence.clear();
+            let mut rest = code;
+            for _ in 0..length {
+                sequence.push(ops[rest % ops.len()]);
+                rest /= ops.len();
+            }
+            let mut effects = NativeEffects::default();
+            let (mut title, mut cursor, mut ime) = (None, None, None);
+            for &op in &sequence {
+                let (sent, expected) = match op {
+                    Op::Title(value) => (effects.title(value), title.replace(value) != Some(value)),
+                    Op::Cursor(icon) => (effects.cursor(icon), cursor.replace(icon) != Some(icon)),
+                    Op::Ime(allowed, area) => {
+                        let value = (allowed, area.filter(|_| allowed));
+                        let sent = effects.ime(allowed, area);
+                        assert!(sent.is_none_or(|sent| sent == value.1), "{:?}", value);
+                        (sent.is_some(), ime.replace(value) != Some(value))
+                    }
+                    Op::Resized => {
+                        effects.ime = None;
+                        ime = None;
+                        (false, false)
+                    }
+                    Op::Enabled => {
+                        effects.ime_enabled();
+                        if !matches!(ime, Some((true, _))) {
+                            ime = None;
+                        }
+                        (false, false)
+                    }
+                };
+                assert_eq!(sent, expected, "sequence {code} of length {length}");
+            }
+        }
+    }
+}
