@@ -723,6 +723,7 @@ impl<'a> Decoder<'a> {
     }
 }
 
+pub(super) mod recovery;
 pub(crate) mod update;
 
 #[cfg(test)]

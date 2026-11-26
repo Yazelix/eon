@@ -111,7 +111,7 @@ fn checkpoint_nested_v1_field_order_has_independent_golden_bytes() {
     assert_eq!(expected.encode().unwrap(), bytes);
 }
 
-fn fixture() -> Checkpoint {
+pub(super) fn fixture() -> Checkpoint {
     let mut checkpoint = empty();
     checkpoint.core.shown_session = Some("s1".into());
     checkpoint.core.terminal_id_high_water = 50;
