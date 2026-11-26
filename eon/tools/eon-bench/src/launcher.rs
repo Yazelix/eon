@@ -607,6 +607,14 @@ impl Headless {
         self.start_compositor_until(bus, Instant::now() + Duration::from_secs(15))
     }
     pub(crate) fn start_compositor_until(&mut self, bus: BusPolicy, deadline: Instant) -> Result {
+        self.start_sway_until("sway", bus, deadline)
+    }
+    pub(crate) fn start_sway_until(
+        &mut self,
+        sway: &str,
+        bus: BusPolicy,
+        deadline: Instant,
+    ) -> Result {
         let deadline = deadline.min(Instant::now() + Duration::from_secs(15));
         let runtime = PathBuf::from(&self.env["XDG_RUNTIME_DIR"]);
         let sway_config = self.out.join("sway.conf");
@@ -670,7 +678,7 @@ impl Headless {
             }
         }
         self.spawn(
-            "sway",
+            sway,
             &[
                 "--unsupported-gpu",
                 "--config",
@@ -878,7 +886,6 @@ impl Renderer {
             for (source, target) in [
                 ("EON_BENCH_GBM", "GBM_BACKENDS_PATH"),
                 ("EON_BENCH_DRI", "LIBGL_DRIVERS_PATH"),
-                ("EON_BENCH_VULKAN", "VK_DRIVER_FILES"),
             ] {
                 let directory = std::env::var(source)
                     .map_err(|_| format!("missing {source} (use the Nix bench package)"))?;
@@ -887,6 +894,11 @@ impl Renderer {
                 }
                 launch.env.insert(target.into(), directory);
             }
+            let icds = std::env::var_os("EON_BENCH_VULKAN")
+                .ok_or("missing EON_BENCH_VULKAN (use the Nix bench package)")?;
+            launch
+                .env
+                .insert("VK_DRIVER_FILES".into(), hardware_icds(Path::new(&icds))?);
             launch.env.insert("WLR_RENDERER".into(), "gles2".into());
             launch
                 .env
@@ -925,9 +937,50 @@ impl Renderer {
     }
 }
 
+fn hardware_icds(directory: &Path) -> Result<String> {
+    let mut manifests = fs::read_dir(directory)
+        .map_err(failure)?
+        .map(|entry| entry.map(|e| e.path()))
+        .collect::<std::io::Result<Vec<_>>>()
+        .map_err(failure)?;
+    manifests.retain(|path| {
+        path.extension().is_some_and(|ext| ext == "json")
+            && !path
+                .file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .contains("lvp")
+    });
+    manifests.sort();
+    if manifests.is_empty() {
+        return Err("no pinned hardware Vulkan ICD".into());
+    }
+    std::env::join_paths(manifests)
+        .map_err(failure)?
+        .into_string()
+        .map_err(|_| "non-UTF8 Vulkan manifests".into())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn hardware_vulkan_omits_lavapipe_and_requires_a_manifest() {
+        let root = std::env::temp_dir().join(format!("bench-icd-{}", std::process::id()));
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("lvp_icd.json"), "").unwrap();
+        assert!(hardware_icds(&root).is_err());
+        for name in ["z.json", "a.json", "readme"] {
+            fs::write(root.join(name), "").unwrap();
+        }
+        let selected = hardware_icds(&root).unwrap();
+        assert_eq!(
+            std::env::split_paths(&selected).collect::<Vec<_>>(),
+            [root.join("a.json"), root.join("z.json")]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn output_check_requires_one_active_output_at_the_requested_mode_and_scale() {

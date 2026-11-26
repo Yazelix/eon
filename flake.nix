@@ -1832,6 +1832,32 @@
             bench = benchPackage;
             helix-grammar-sources = helix.packages.${system}.grammar-sources;
           } // lib.optionalAttrs pkgs.stdenv.isLinux rec {
+            bench-wayland = let
+              # Aquamarine 0.16 acknowledges the initial configure before presenting.
+              proofPkgs = import (builtins.fetchTarball {
+                url = "https://github.com/NixOS/nixpkgs/archive/2786a2a72088ecf32aea5b3ec52099e6a7cff78f.tar.gz";
+                sha256 = "sha256-f/VVvxf5RsQgWVhUtefoca5ktVg0DA2bnkMOcmSnozo=";
+              }) { inherit system; config = { }; overlays = [ ]; };
+              sway = pkgs.sway-unwrapped.overrideAttrs (old: {
+                pname = "sway-xdg6-proof";
+                postPatch = (old.postPatch or "") + ''
+                  substituteInPlace sway/server.c --replace-fail \
+                    '#define SWAY_XDG_SHELL_VERSION 5' '#define SWAY_XDG_SHELL_VERSION 6'
+                '';
+              });
+            in pkgs.runCommand "eon-bench-wayland" {
+              nativeBuildInputs = [ pkgs.makeWrapper ];
+              meta.mainProgram = "eon-bench";
+            } ''
+              mkdir -p "$out/bin"
+              makeWrapper ${benchPackage}/bin/eon-bench "$out/bin/eon-bench" \
+                --set EON_BENCH_SWAY_XDG6 ${sway}/bin/sway \
+                --set EON_BENCH_HYPRLAND ${proofPkgs.hyprland}/bin/Hyprland \
+                --set EON_BENCH_HYPRCTL ${proofPkgs.hyprland}/bin/hyprctl \
+                --set EON_BENCH_HYPRLAND_EGL ${proofPkgs.mesa}/share/glvnd/egl_vendor.d/50_mesa.json \
+                --set EON_BENCH_HYPRLAND_GBM ${proofPkgs.mesa}/lib/gbm \
+                --set EON_BENCH_HYPRLAND_DRI ${proofPkgs.mesa}/lib/dri
+            '';
             installer = installerPackage;
             manual-bundle = if !archive then
               archivePackages.manual-bundle

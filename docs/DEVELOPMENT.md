@@ -1406,6 +1406,15 @@ fcitx5, or a bounded echo input method for static-echo. Each cell writes
 Venus's own `WAYLAND_DEBUG=client` log; `result.json` gathers the cells. A cell
 that leaves private processes behind stops the remaining cells.
 
+To run the same fixtures on Hyprland nested in the private Sway, use
+`nix run .#bench-wayland -- events --compositor hyprland
+--renderer /dev/dri/renderD128` with the same candidate and output flags.
+Select a render node you can open read/write. The test package pins Hyprland
+0.57.2 with Aquamarine 0.16 for the nested configure fix and a Sway parent
+advertising xdg-shell v6. The configure fixture resizes the private parent and
+checks the size at both compositors. Retire each pin or override once the
+baseline packages pass the same nested receipts.
+
 ## Sources of truth
 
 - [`docs/ARCHITECTURE.md`](ARCHITECTURE.md) — naming, ownership, and sequencing;

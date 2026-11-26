@@ -5,10 +5,17 @@
 // display code that the tests still exercise everywhere.
 #![cfg_attr(not(target_os = "linux"), allow(dead_code, unused_assignments))]
 use super::*;
+use crate::launcher::OutputSize;
 #[cfg(target_os = "linux")]
 use native::{directory_workers, json, pause, wait};
 #[cfg(target_os = "linux")]
 use std::io::Write;
+
+#[cfg(any(target_os = "linux", test))]
+mod hyprland;
+
+const NESTED_HINT: &str =
+    "use nix run .#bench-wayland -- events --compositor hyprland --renderer /dev/dri/renderD<N>";
 
 const USAGE: &str = "eon-bench events --eon LABEL=PATH --revision LABEL=COMMIT --candidate-tree LABEL=TREE --source-tree BENCH_TREE --out NEW_DIR [OPTIONS]";
 const FIXTURES: [&str; 6] = [
@@ -30,6 +37,8 @@ const CARET_MOVES: u64 = 4;
 const TOGGLES: u64 = 20;
 const MODES: u64 = 10;
 const MODIFIER_PAIRS: u64 = 200;
+const REPEAT_DELAY: u64 = 300;
+const REPEAT_RATE: u64 = 25;
 // evdev key codes.
 const KEY_X: u32 = 45;
 const KEY_ENTER: u32 = 28;
@@ -40,6 +49,7 @@ pub struct Options {
     settings: suite::Settings,
     candidates: Vec<Candidate>,
     renderer: Renderer,
+    compositor: &'static str,
     #[cfg(target_os = "linux")]
     source_tree: String,
     #[cfg(any(target_os = "linux", test))]
@@ -51,9 +61,10 @@ pub struct Options {
 fn help() -> String {
     format!(
         "{USAGE}\n\n\
-Linux/Wayland only. Private Sway with real fcitx5 (an echo input method for\n\
+Linux/Wayland only. Private compositor with real fcitx5 (an echo input method for\n\
 static-echo); never the desktop or profile.\n\
   --eon, --revision, --candidate-tree, --source-tree, --renderer  as in frames\n\
+  --compositor NAME       sway (default) or hyprland with .#bench-wayland\n\
   --only FIXTURE           repeat; default all: {}\n\
   --deadline SECONDS       30..600 per cell (default 180)\n\n\
 Each cell writes receipt.json with pass, fail or error and window counts from\n\
@@ -75,11 +86,33 @@ pub fn options(args: &[String]) -> Result<Options> {
             "--candidate-tree",
             "--source-tree",
             "--renderer",
+            "--compositor",
             "--only",
             "--deadline",
         ],
     )?;
-    let (candidates, source_tree, renderer, flags) = super::candidates(flags)?;
+    let mut compositor = None;
+    for (_, value) in flags.iter().filter(|(flag, _)| flag == "--compositor") {
+        let selected = match value.as_str() {
+            "sway" => "sway",
+            "hyprland" => "hyprland",
+            _ => return Err("--compositor must be sway or hyprland".into()),
+        };
+        if compositor.replace(selected).is_some() {
+            return Err("repeated --compositor".into());
+        }
+    }
+    let compositor = compositor.unwrap_or("sway");
+    let (candidates, source_tree, renderer, flags) = super::candidates(flags).map_err(|err| {
+        if compositor == "hyprland" {
+            format!("{err}; {NESTED_HINT}")
+        } else {
+            err
+        }
+    })?;
+    if compositor == "hyprland" && renderer.0 == "lavapipe" {
+        return Err(format!("Hyprland requires a render node; {NESTED_HINT}"));
+    }
     let (mut fixtures, mut deadline) = (Vec::new(), None);
     for (flag, value) in flags {
         if flag == "--only" {
@@ -87,7 +120,8 @@ pub fn options(args: &[String]) -> Result<Options> {
                 return Err("unknown or repeated fixture".into());
             }
             fixtures.push(value);
-        } else if deadline.replace(suite::number(&flag, &value)?).is_some() {
+        } else if flag == "--deadline" && deadline.replace(suite::number(&flag, &value)?).is_some()
+        {
             return Err("repeated --deadline".into());
         }
     }
@@ -104,6 +138,7 @@ pub fn options(args: &[String]) -> Result<Options> {
         settings,
         candidates,
         renderer,
+        compositor,
         #[cfg(target_os = "linux")]
         source_tree,
         #[cfg(any(target_os = "linux", test))]
@@ -127,6 +162,9 @@ pub fn run_inner(options: &Options) -> Result {
     #[cfg(target_os = "linux")]
     {
         let out = &options.settings.out;
+        let tools = (options.compositor == "hyprland")
+            .then(|| hyprland::Tools::preflight(&options.renderer))
+            .transpose()?;
         let mut cells = Vec::new();
         let (mut failed, mut aborted) = (0, None);
         'cells: for fixture in &options.fixtures {
@@ -135,15 +173,18 @@ pub fn run_inner(options: &Options) -> Result {
                 let dir = out.join(&id);
                 fs::create_dir(&dir).map_err(error)?;
                 eprintln!("events: {id}");
-                let (result, counts, failures) = match sample(options, candidate, fixture, &dir) {
-                    Ok(Ok((counts, failures))) if failures.is_empty() => ("pass", counts, failures),
-                    Ok(Ok((counts, failures))) => ("fail", counts, failures),
-                    Ok(Err(e)) => ("error", Value::Null, vec![e]),
-                    Err(e) => {
-                        aborted = Some(format!("{id}: {e}"));
-                        ("error", Value::Null, vec![e])
-                    }
-                };
+                let (result, counts, failures) =
+                    match sample(options, candidate, fixture, &dir, tools.as_ref()) {
+                        Ok(Ok((counts, failures))) if failures.is_empty() => {
+                            ("pass", counts, failures)
+                        }
+                        Ok(Ok((counts, failures))) => ("fail", counts, failures),
+                        Ok(Err(e)) => ("error", Value::Null, vec![e]),
+                        Err(e) => {
+                            aborted = Some(format!("{id}: {e}"));
+                            ("error", Value::Null, vec![e])
+                        }
+                    };
                 failed += usize::from(result != "pass");
                 eprintln!("events: {id} {result} {failures:?}");
                 let cell = object([
@@ -153,6 +194,7 @@ pub fn run_inner(options: &Options) -> Result {
                     ("candidate_revision", candidate.revision.as_str().into()),
                     ("candidate_tree", candidate.tree.as_str().into()),
                     ("renderer", options.renderer.0.as_str().into()),
+                    ("compositor", options.compositor.into()),
                     (
                         "input_method",
                         match fixture.as_str() {
@@ -186,13 +228,16 @@ pub fn run_inner(options: &Options) -> Result {
             (
                 "conditions",
                 object([
-                    ("compositor", "sway".into()),
+                    ("compositor", options.compositor.into()),
                     ("echo_commits", ECHO_COMMITS.into()),
                     ("caret_ticks", CARET_TICKS.into()),
                     ("caret_moves_per_tick", CARET_MOVES.into()),
                     ("repeat_settle_ms", SETTLE_MS.into()),
                     ("hold_ms", HOLD_MS.into()),
-                    ("repeat", "delay 300 ms, rate 25 Hz".into()),
+                    (
+                        "repeat",
+                        format!("delay {REPEAT_DELAY} ms, rate {REPEAT_RATE} Hz").into(),
+                    ),
                     ("fullscreen_toggles", TOGGLES.into()),
                     ("mode_changes", MODES.into()),
                     ("modifier_pairs", MODIFIER_PAIRS.into()),
@@ -296,6 +341,7 @@ fn sample(
     candidate: &Candidate,
     fixture: &str,
     dir: &Path,
+    tools: Option<&hyprland::Tools>,
 ) -> Result<Result<(Value, Vec<String>)>> {
     // The outer error means the environment is no longer clean, so later
     // cells must not run; the inner one is this cell's own error.
@@ -311,8 +357,21 @@ fn sample(
         .append(true)
         .open(dir.join("sway.conf"))
         .map_err(error)?;
-    sway.write_all(b"input type:keyboard repeat_delay 300\ninput type:keyboard repeat_rate 25\n")
+    write!(sway, "input type:keyboard repeat_delay {REPEAT_DELAY}\ninput type:keyboard repeat_rate {REPEAT_RATE}\n").map_err(error)?;
+    if tools.is_some() {
+        fs::write(
+            dir.join("renderer.txt"),
+            format!(
+                "{}\n{}\n",
+                options.renderer.0, launch.env["VK_DRIVER_FILES"]
+            ),
+        )
         .map_err(error)?;
+        launch.env.insert(
+            "EON_VENUS_FRAME_TIMINGS".into(),
+            dir.join("frames.jsonl").display().to_string(),
+        );
+    }
     let shell = [
         std::env::current_exe()
             .map_err(error)?
@@ -332,17 +391,30 @@ fn sample(
         "\x1b[0m\x1b[2J\x1b[HEON EVENTS READY\x1b[999;1H\x1b[?25h\x1b[2 q",
     )
     .map_err(error)?;
-    let measured = drive(&mut launch, fixture, deadline);
+    let mut nested = None;
+    let measured = drive(&mut launch, fixture, deadline, tools, &mut nested);
     let _ = child::publish(&dir.join("finish"), "");
     let _ = child::publish(&dir.join("release"), "");
     let stopped = launch.stop_eon();
-    // Daemonized children leave cleanup's tree; remember every marked one.
-    for entry in fs::read_dir("/proc").map_err(error)?.flatten() {
-        if let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) {
-            launch.processes.remember(pid);
-        }
+    let graceful = nested
+        .as_ref()
+        .map_or(Ok(()), |nested| nested.stop(&mut launch));
+    for err in [&stopped, &graceful]
+        .into_iter()
+        .filter_map(|r| r.as_ref().err())
+    {
+        eprintln!("events cleanup: {err}");
     }
+    // Daemonized children leave cleanup's tree; remember every marked one.
+    let scanned = fs::read_dir("/proc").map(|entries| {
+        for entry in entries.flatten() {
+            if let Some(pid) = entry.file_name().to_str().and_then(|n| n.parse().ok()) {
+                launch.processes.remember(pid);
+            }
+        }
+    });
     let cleaned = launch.processes.cleanup();
+    scanned.map_err(error)?;
     let own = std::process::id();
     let left = || -> Result<Vec<String>> {
         Ok(crate::launcher::namespace_processes()?
@@ -363,10 +435,16 @@ fn sample(
         std::thread::sleep(Duration::from_millis(10));
     }
     let left = left()?;
+    if tools.is_some() {
+        let owned = &launch.processes.known;
+        fs::write(dir.join("cleanup.txt"), format!(
+            "eon_stop={stopped:?}\nhyprland_exit={graceful:?}\nowned={owned:?}\nremaining={left:?}\n"
+        )).map_err(error)?;
+    }
     if !cleaned || !left.is_empty() {
         return Err(format!("private processes remain after cleanup: {left:?}"));
     }
-    Ok(measured.and_then(|m| stopped.map(|()| m)))
+    Ok(measured.and_then(|m| stopped.and(graceful).map(|()| m)))
 }
 
 /// Waits until the log stops growing across two polls 100 ms apart.
@@ -385,18 +463,38 @@ fn quiet(log: &Path, deadline: Instant) -> Result<usize> {
 }
 
 #[cfg(target_os = "linux")]
-fn drive(launch: &mut Headless, fixture: &str, deadline: Instant) -> Result<(Value, Vec<String>)> {
+fn drive<'a>(
+    launch: &mut Headless,
+    fixture: &str,
+    deadline: Instant,
+    tools: Option<&'a hyprland::Tools>,
+    state: &mut Option<hyprland::Nested<'a>>,
+) -> Result<(Value, Vec<String>)> {
     let dir = launch.out.clone();
     let path = dir.join("eon.log");
     let log = || -> Result<Log> { Ok(Log::parse(&fs::read_to_string(&path).map_err(error)?)) };
     let size = || fs::metadata(&path).map(|m| m.len() as usize).map_err(error);
-    launch.start_compositor_until(BusPolicy::Private, deadline)?;
-    let outputs = terminals::sway(launch, deadline, &["-t", "get_outputs", "-r"])?;
-    launch.output_size.check_outputs(&outputs)?;
+    let sway = tools
+        .map_or(Some("sway"), |tools| tools.sway.to_str())
+        .ok_or("non-UTF8 Sway path")?;
+    launch.start_sway_until(sway, BusPolicy::Private, deadline)?;
+    launch.output_size.check_outputs(&terminals::sway(
+        launch,
+        deadline,
+        &["-t", "get_outputs", "-r"],
+    )?)?;
+    if let Some(tools) = tools {
+        hyprland::Nested::start(tools, state, launch, deadline)?;
+    }
+    let nested = state.as_ref();
     // The headless seat has no keyboard until this one joins; without it Venus
     // gets no wl_keyboard and no text input.
     let mut keyboard = seat::Keyboard::new(launch)?;
     launch.start_eon()?;
+    let dispatch = |launch: &Headless, sway: &str, hypr: &str| match nested {
+        Some(nested) => nested.dispatch(launch, deadline, hypr),
+        None => terminals::sway(launch, deadline, &[sway]).map(|_| ()),
+    };
     // The workspace starts its shell once the CLI names the tab's directory.
     let here = dir.to_str().ok_or("non-UTF8 output")?;
     wait(deadline, "candidate workspace CLI", || {
@@ -420,10 +518,17 @@ fn drive(launch: &mut Headless, fixture: &str, deadline: Instant) -> Result<(Val
     // enters text inputs only while an input method exists; 0.1.28 enables
     // its IME only on that focus).
     wait(deadline, "the Venus window", || {
+        if let Some(nested) = nested {
+            return Ok(nested.fullscreen(launch, deadline).is_some());
+        }
         let tree = terminals::sway(launch, deadline, &["-t", "get_tree", "-r"])?;
         Ok(terminals::window(&tree).is_some())
     })?;
-    terminals::sway(launch, deadline, &["workspace away"])?;
+    dispatch(
+        launch,
+        "workspace away",
+        r#"hl.dsp.focus({ workspace = "2" })"#,
+    )?;
     let mut echo = None;
     if fixture == "static-echo" {
         echo = Some(seat::Echo::new(launch)?);
@@ -455,7 +560,11 @@ fn drive(launch: &mut Headless, fixture: &str, deadline: Instant) -> Result<(Val
                 .is_ok_and(|t| t.contains(".get_input_method(")))
         })?;
     }
-    terminals::sway(launch, deadline, &["workspace back_and_forth"])?;
+    dispatch(
+        launch,
+        "workspace back_and_forth",
+        r#"hl.dsp.focus({ workspace = "1" })"#,
+    )?;
     // 0.1.28 applies IME focus only when it draws (P0's pane was streaming),
     // so one echoed Enter makes it draw before any window opens.
     keyboard.key(KEY_ENTER, true)?;
@@ -466,6 +575,9 @@ fn drive(launch: &mut Headless, fixture: &str, deadline: Instant) -> Result<(Val
         None => Ok(fs::read_to_string(dir.join("fcitx5.log")).is_ok_and(|t| activated(&t))),
     })?;
     wait(deadline, "Venus caret publication", || Ok(log()?.ready()))?;
+    if let Some(nested) = nested.filter(|_| fixture == "configure-storm") {
+        nested.capture(launch, deadline)?;
+    }
     let start = quiet(&path, deadline)?;
     let rows = || -> Result<u64> {
         json(launch, deadline, &["pane", "read", "p1", "--json"])?
@@ -525,25 +637,35 @@ fn drive(launch: &mut Headless, fixture: &str, deadline: Instant) -> Result<(Val
         }
         "configure-storm" => {
             child::publish(&dir.join("go"), "")?;
-            for _ in 0..TOGGLES {
+            for step in 0..TOGGLES {
                 let from = size()?;
-                terminals::sway(launch, deadline, &["fullscreen toggle"])?;
+                dispatch(
+                    launch,
+                    "fullscreen toggle",
+                    r#"hl.dsp.window.fullscreen({ mode = "fullscreen", action = "toggle", layout_aware = false })"#,
+                )?;
                 wait(deadline, "an acknowledged same-size configure", || {
-                    Ok(log()?.configured(from, 800))
+                    Ok(log()?.configured(from, launch.output_size)
+                        && nested
+                            .is_none_or(|n| n.fullscreen(launch, deadline) == Some(step % 2 == 0)))
                 })?;
             }
             let middle = quiet(&path, deadline)?;
             let mut end = middle;
             for step in 0..MODES {
-                let height = if step % 2 == 0 { 760 } else { 800 };
+                let mut mode = launch.output_size;
+                if step % 2 == 0 {
+                    mode.height -= 40;
+                }
                 let (rows_before, from) = (rows()?, size()?);
                 let frames = log()?.window(from, usize::MAX).frames;
-                terminals::sway(launch, deadline, &[&format!("output * mode 1280x{height}")])?;
+                terminals::sway(launch, deadline, &[&format!("output * mode {mode}")])?;
                 wait(deadline, "a resized grid and frame", || {
                     let log = log()?;
-                    Ok(rows()? != rows_before
+                    Ok(nested.is_none_or(|n| n.resized(launch, deadline, mode))
+                        && rows()? != rows_before
                         && log.window(from, usize::MAX).frames > frames
-                        && log.configured(from, height))
+                        && log.configured(from, mode))
                 })?;
                 end = quiet(&path, deadline)?;
             }
@@ -742,8 +864,9 @@ enum Kind {
     Publication(u64, Option<[i64; 4]>),
     Done,
     Modifiers,
-    Configure(i64),
-    Ack,
+    Configure(OutputSize),
+    Serial(u32),
+    Ack(u32),
     /// `wl_keyboard.key`: (evdev code, pressed).
     Key(u64, bool),
     Repeat(u64, u64),
@@ -788,7 +911,8 @@ fn message(line: &str) -> Option<(bool, &str, &str, &str, &str)> {
 impl Log {
     fn parse(text: &str) -> Self {
         let mut log = Log::default();
-        let (mut surface, mut attached, mut open, mut enabling) = (None, false, false, false);
+        let (mut surface, mut shell, mut toplevel) = (None, None, None);
+        let (mut attached, mut open, mut enabling) = (false, false, false);
         let (mut rect, mut offset, mut epochs) = (None, 0, 0);
         let numbers = |args: &str| -> Vec<i64> {
             args.split(", ")
@@ -802,14 +926,24 @@ impl Log {
             };
             let kind = match (request, interface, name) {
                 (true, "xdg_wm_base", "get_xdg_surface") if surface.is_none() => {
-                    surface = args.rsplit_once("wl_surface#").map(|(_, s)| s.to_owned());
+                    if let Some((xdg, wl)) = args
+                        .strip_prefix("new id xdg_surface#")
+                        .and_then(|args| args.split_once(", wl_surface#"))
+                    {
+                        shell = Some(xdg);
+                        surface = Some(wl);
+                    }
                     None
                 }
-                (true, "wl_surface", "attach") if surface.as_deref() == Some(id) => {
+                (true, "xdg_surface", "get_toplevel") if shell == Some(id) => {
+                    toplevel = args.strip_prefix("new id xdg_toplevel#");
+                    None
+                }
+                (true, "wl_surface", "attach") if surface == Some(id) => {
                     attached = !args.starts_with("nil");
                     None
                 }
-                (true, "wl_surface", "commit") if surface.as_deref() == Some(id) => {
+                (true, "wl_surface", "commit") if surface == Some(id) => {
                     std::mem::take(&mut attached).then_some(Kind::Frame)
                 }
                 (true, "zwp_text_input_v3", "enable") => {
@@ -851,10 +985,20 @@ impl Log {
                     let n = numbers(args);
                     (n.len() == 2).then(|| Kind::Repeat(n[0].max(0) as u64, n[1].max(0) as u64))
                 }
-                (false, "xdg_toplevel", "configure") => {
-                    Some(Kind::Configure(numbers(args).get(1).copied().unwrap_or(-1)))
+                (false, "xdg_toplevel", "configure") if toplevel == Some(id) => {
+                    let mut fields = args.split(", ");
+                    fields
+                        .next()
+                        .and_then(|w| w.parse().ok())
+                        .zip(fields.next().and_then(|h| h.parse().ok()))
+                        .map(|(width, height)| Kind::Configure(OutputSize { width, height }))
                 }
-                (true, "xdg_surface", "ack_configure") => Some(Kind::Ack),
+                (false, "xdg_surface", "configure") if shell == Some(id) => {
+                    args.parse().ok().map(Kind::Serial)
+                }
+                (true, "xdg_surface", "ack_configure") if shell == Some(id) => {
+                    args.parse().ok().map(Kind::Ack)
+                }
                 _ => None,
             };
             if let Some(kind) = kind {
@@ -918,12 +1062,16 @@ impl Log {
         self.between(from, usize::MAX)
             .any(|k| *k == Kind::Key(key.into(), false))
     }
-    /// A configure to `height` after `from`, acknowledged.
-    fn configured(&self, from: usize, height: i64) -> bool {
-        let mut seen = false;
-        self.between(from, usize::MAX).any(|k| {
-            seen |= *k == Kind::Configure(height);
-            seen && *k == Kind::Ack
+    fn configured(&self, from: usize, size: OutputSize) -> bool {
+        let (mut pending, mut serial) = (false, None);
+        self.between(from, usize::MAX).any(|kind| {
+            match *kind {
+                Kind::Configure(received) => pending = size == received,
+                Kind::Serial(received) => serial = std::mem::take(&mut pending).then_some(received),
+                Kind::Ack(ack) => return serial == Some(ack),
+                _ => {}
+            }
+            false
         })
     }
     /// The last (rate, delay ms) before `before`.
@@ -941,7 +1089,7 @@ impl Log {
 mod tests {
     use super::*;
 
-    const ENABLE: &str = "[1.0]  -> xdg_wm_base#14.get_xdg_surface(new id xdg_surface#29, wl_surface#28)\n[1.1]  -> zwp_text_input_v3#21.enable()\n[1.2]  -> zwp_text_input_v3#21.set_content_type(0, 0)\n[1.3]  -> zwp_text_input_v3#21.commit()\n";
+    const ENABLE: &str = "[1.0]  -> xdg_wm_base#14.get_xdg_surface(new id xdg_surface#29, wl_surface#28)\n[1.0]  -> xdg_surface#29.get_toplevel(new id xdg_toplevel#30)\n[1.1]  -> zwp_text_input_v3#21.enable()\n[1.2]  -> zwp_text_input_v3#21.set_content_type(0, 0)\n[1.3]  -> zwp_text_input_v3#21.commit()\n";
     fn rect(y: u32) -> String {
         format!(
             "[2.0]  -> zwp_text_input_v3#21.set_cursor_rectangle(8, {y}, 10, 19)\n[2.1]  -> zwp_text_input_v3#21.commit()\n"
@@ -1091,7 +1239,7 @@ mod tests {
     fn configure_storm_requires_observed_configures_and_silent_unchanged_phase() {
         let configure = |h: u32| {
             format!(
-                "[7.0] xdg_toplevel#30.configure(1280, {h}, array[4])\n[7.1]  -> xdg_surface#29.ack_configure(9)\n"
+                "[7.0] xdg_toplevel#30.configure(1280, {h}, array[4])\n[7.0] xdg_surface#29.configure(9)\n[7.1]  -> xdg_surface#29.ack_configure(9)\n"
             )
         };
         let same = format!("{ENABLE}{}", configure(800).repeat(TOGGLES as usize));
@@ -1102,8 +1250,18 @@ mod tests {
         let good = format!("{resized}{}", rect(40));
         let windows = [ENABLE.len(), same.len(), good.len()];
         assert!(judged("configure-storm", &good, &windows).is_empty());
-        assert!(Log::parse(&good).configured(same.len(), 760));
-        assert!(!Log::parse(&good).configured(same.len(), 700));
+        let resized_mode = OutputSize {
+            width: 1280,
+            height: 760,
+        };
+        assert!(Log::parse(&good).configured(same.len(), resized_mode));
+        for wrong in [
+            "xdg_surface#29.ack_configure(8)",
+            "xdg_surface#31.ack_configure(9)",
+        ] {
+            let wrong = good.replace("xdg_surface#29.ack_configure(9)", wrong);
+            assert!(!Log::parse(&wrong).configured(same.len(), resized_mode));
+        }
         assert_eq!(
             judged(
                 "configure-storm",
@@ -1196,6 +1354,19 @@ mod tests {
             format!("--out /x --eon edge=/nix/store/c/bin/eon --revision edge={hash} --candidate-tree edge={hash} --source-tree {hash} {extra}").split_whitespace().map(str::to_owned).collect::<Vec<_>>()
         };
         assert_eq!(options(&args("")).unwrap().fixtures.len(), 6);
+        assert_eq!(options(&args("")).unwrap().compositor, "sway");
+        assert!(options(&args("--compositor sway")).is_ok());
+        for bad in [
+            "unknown",
+            "sway --compositor sway",
+            "hyprland",
+            "hyprland --renderer lavapipe",
+        ] {
+            assert!(
+                options(&args(&format!("--compositor {bad}"))).is_err(),
+                "{bad}"
+            );
+        }
         assert_eq!(
             options(&args("--only held-repeat")).unwrap().fixtures,
             ["held-repeat"]

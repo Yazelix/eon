@@ -46,6 +46,8 @@ pub(crate) fn command(out: &Path, tools: &[&Path]) -> Command {
         "DBUS_SESSION_BUS_ADDRESS",
         "--unsetenv",
         "SWAYSOCK",
+        "--unsetenv",
+        "HYPRLAND_INSTANCE_SIGNATURE",
     ]);
     for path in [
         "/home",

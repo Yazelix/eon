@@ -829,13 +829,7 @@ pub(crate) fn call(
     program: &Path,
     args: &[&str],
 ) -> Result<String> {
-    let output = launch
-        .command("timeout")
-        .arg(format!("{}s", remaining(deadline)?.as_secs_f64()))
-        .arg(program)
-        .args(args)
-        .output()
-        .map_err(error)?;
+    let output = launch.output_until(deadline, program, args)?;
     if !output.status.success() {
         return Err(format!(
             "{} {args:?}: {}: {} {}",
@@ -851,22 +845,26 @@ pub(crate) fn sway(launch: &Headless, deadline: Instant, args: &[&str]) -> Resul
     Value::parse(&call(launch, deadline, Path::new("swaymsg"), args)?)
 }
 pub(crate) fn window(tree: &Value) -> Option<(u64, i64, i64)> {
-    if tree.get("app_id").and_then(Value::as_str).is_some() {
-        let rect = tree.get("rect")?;
-        return Some((
-            tree.get("id")?.as_u64()?,
+    find_window(tree, &|node| {
+        node.get("app_id")?.as_str()?;
+        let rect = node.get("rect")?;
+        Some((
+            node.get("id")?.as_u64()?,
             rect.get("width")?.as_u64()? as i64,
             rect.get("height")?.as_u64()? as i64,
-        ));
-    }
-    for key in ["nodes", "floating_nodes"] {
-        for node in tree.get(key).and_then(Value::as_array).unwrap_or(&[]) {
-            if let Some(found) = window(node) {
-                return Some(found);
-            }
-        }
-    }
-    None
+        ))
+    })
+}
+
+pub(crate) fn find_window<T>(tree: &Value, select: &impl Fn(&Value) -> Option<T>) -> Option<T> {
+    select(tree).or_else(|| {
+        ["nodes", "floating_nodes"].into_iter().find_map(|key| {
+            tree.get(key)?
+                .as_array()?
+                .iter()
+                .find_map(|node| find_window(node, select))
+        })
+    })
 }
 pub(crate) fn grid(text: &str) -> Result<(i64, i64)> {
     let text = text
@@ -948,36 +946,6 @@ fn sample_run(
     let dir = dir.as_path();
     let (font, kitten_path) = paths;
     options.renderer.apply(launch)?;
-    if options.renderer.0 != "lavapipe" {
-        let directory = PathBuf::from(&launch.env["VK_DRIVER_FILES"]);
-        let mut manifests = fs::read_dir(directory)
-            .map_err(error)?
-            .collect::<std::io::Result<Vec<_>>>()
-            .map_err(error)?
-            .into_iter()
-            .map(|e| e.path())
-            .filter(|p| {
-                p.extension().is_some_and(|s| s == "json")
-                    && !p
-                        .file_name()
-                        .unwrap_or_default()
-                        .to_string_lossy()
-                        .contains("lvp")
-            })
-            .collect::<Vec<_>>();
-        manifests.sort();
-        if manifests.is_empty() {
-            return Err("no pinned hardware Vulkan ICD".into());
-        }
-        launch.env.insert(
-            "VK_DRIVER_FILES".into(),
-            std::env::join_paths(manifests)
-                .map_err(error)?
-                .to_str()
-                .ok_or("non-UTF8 Vulkan manifests")?
-                .into(),
-        );
-    }
     // GL subjects and Venus's Vulkan use the same pinned Mesa, including software mode.
     for (source, target) in [
         ("EON_BENCH_EGL", "__EGL_VENDOR_LIBRARY_FILENAMES"),
