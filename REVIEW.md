@@ -110,6 +110,35 @@ of the eon-uxgal evidence inventory).
   (R06)
 - **Compatibility shims.** Aliases, fallbacks or polish for older builds;
   Eon keeps no legacy code.
+- **Code bloat, missed deletions, and duplicate tests.** Verify the author's
+  deletion check (and ask *"what can be deleted?"* on large diffs), check
+  production and test net lines against the bead's separate line budgets, and
+  challenge tests whose guarded failure duplicates existing coverage or
+  belongs as a table row. Non-defect deletion, budget-overrun, and
+  duplicate-test findings default to `[should-fix]`. Deleting a guard, an error
+  path, a validation, or a boundary between concepts without naming the check
+  that replaces it is a `[blocker]` that outranks any line saving.
+
+## Plan reviews
+
+When reviewing a plan for a High-tier bead, a new subsystem, or a hot path
+(Venus frame or input path, Orbit publication, transports), check
+[`First-principles plans`](docs/AGENT-RULES.md#first-principles-plans) and
+send the plan back if any required part is missing:
+
+- **LIMITS:** concrete numeric bounds and the bottleneck at that limit, with
+  measurable limits turned into regression checks.
+- **METHOD:** two or three sourced options with the first option
+  dependency-first (exact upstream API in Rune, `libghostty`, or `Cargo.lock`;
+  forked code counts as ours; own code carries a one-line reason) and the
+  picked method scheduled to land in existing docs.
+- **BUTTON** (when adopting, replacing, rewriting, forking, or keeping a
+  dependency, language, or subsystem): both the free-switch judgment (today,
+  1 year, 5 years) and the real transition cost and timing.
+- **PROOF** (when touching discrete decision logic): listed invariants, the
+  strongest affordable checker (Bend, Kani, generated model-based tests, or
+  `"none"` with a one-line reason), and for decision-logic bug fixes, the law
+  that would have caught the bug.
 
 ## Required evidence
 

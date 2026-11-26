@@ -11,6 +11,50 @@ A bead must name its contract, prerequisites, acceptance checks, and scope
 boundary, and its reference gate when the change is consequential (see
 Contract-Driven Method).
 
+- **Per-bead line budgets.** Every code bead states an explicit net-line
+  budget counting production lines and test lines separately, with no
+  fleet-wide cap. Any overrun requires written justification before review. A
+  budget caps growth; it is never a reason to merge distinct concepts, compress
+  clear structure, or drop error handling.
+- **Internal tools.** The first slice of any internal tool, harness, or
+  automation must yield one result that a named owner uses to decide; record
+  that owner in the bead body before building further.
+
+### First-principles plans
+
+High-tier beads, new subsystems, and hot paths (Venus frame and input paths,
+Orbit publication, and transports) require a written plan before code edits;
+small fixes are exempt. Qualifying plans include:
+
+- **LIMITS.** State the theoretical floor or ceiling in numbers (time, bytes,
+  wakeups, syscalls) and identify the bottleneck at that limit, measured where
+  possible ("speed of light" analysis). Measurable limits become regression
+  checks.
+- **METHOD.** List two or three known methods, patterns, or papers with
+  sources, pick one with the reason, and give one line per rejected option.
+  The first option is always dependency-first: name the exact upstream API in
+  Rune, `libghostty`, or a crate already in `Cargo.lock`. Writing our own code
+  needs a one-line reason, and code moved into our own fork counts as ours.
+  Record the picked method and its source in the subsystem's existing docs
+  with no separate ADR folder.
+- **BUTTON** (whenever a plan adopts, replaces, rewrites, forks, or keeps a
+  dependency, language, or subsystem). Picture a button that switches to the
+  end state instantly and for free. First, would we press it, judging the end
+  state alone today, in one year, and in five years? If no, stop. Second, if
+  yes, price the real transition path and decide whether now is the time; Eon
+  is built for the long haul, so a clearly better end state justifies a real
+  transition cost staged so nothing ships broken in between.
+- **PROOF** (whenever a plan touches discrete decision logic: state machines,
+  ordering, admission, tickets, focus or layout rules, or codecs). List the
+  invariants and the strongest affordable checker: a Bend proof for Orbit
+  policy, a Kani harness on real Rust, generated model-based tests, or
+  `"none"` with a one-line reason. Every bug fixed in decision logic adds the
+  law that would have caught it (for example, `eon-04qsk`: an event that
+  changes nothing triggers no refresh).
+
+Plan reviewers send back any qualifying plan that omits a required section or
+leaves a required question unanswered.
+
 ## Contract-Driven Method
 
 Index durable contracts with their owner: `EON-C<number>` in
@@ -193,6 +237,11 @@ crate.
   beyond its finding or crosses a trust boundary. The tier's reviewer
   assignments replace converge's default reviewers for the full review
   and any re-checks. Codex and Neon re-check at their seat's effort.
+- **Deletion pass before review.** Before requesting code review on any code
+  bead, the builder lists what could be deleted in the touched area alongside
+  the check that protects each deletion, or records `"no safe deletion found"`.
+  Reviewers verify this check and flag missed non-defect deletions as
+  should-fix findings.
 - **Checks.** The author runs the checks on the exact staged tree. The
   bead's proof record leads with evidence: the tree, and for each check its
   command, environment, exit status and summary line (nextest's `Summary`
@@ -259,9 +308,10 @@ and trees, pass count and findings from every reviewer.
 
 ## Testing Discipline
 
-Before adding a test, name the meaningful failure it detects beyond existing
-coverage and the supported project harness that runs it. Follow upstream test
-conventions; do not ship ignored tests or bespoke harness scaffolding merely
+Before adding a test, name the distinct failure it detects beyond existing
+coverage and the supported project harness that runs it. Combine equivalent
+cases as table rows inside one test; reviewers challenge duplicate tests.
+Follow upstream test conventions; do not ship ignored tests or bespoke harness scaffolding merely
 to accompany a patch. If no suitable harness exists, retain a runnable
 reproducer and red/green evidence with the issue and report the gap in
 maintained coverage.
