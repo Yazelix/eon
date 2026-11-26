@@ -402,7 +402,7 @@ fn source(root: &Path, inputs: &Inputs) {
     }
     let quota_widget = if update::fault("held-codex") {
         Some("codex_quota_5h")
-    } else if update::fault("held-agy-version") || update::fault("held-agy-usage") {
+    } else if update::fault("held-agy-usage") {
         Some("google_quota:Gemini Models:5h")
     } else {
         None
@@ -610,29 +610,27 @@ done
             .stderr(output);
         if let Some(fault) = fault {
             command.env("EON_UPDATE_TEST_FAULT", fault);
-            if let Some(hold) = fault.strip_prefix("held-") {
+            let helper = fault.strip_prefix("held-").and_then(|hold| match hold {
+                "zoxide" => Some((hold, "zoxide")),
+                "codex" => Some((hold, "codexbar")),
+                "agy-usage" => Some((hold, "agy")),
+                _ => None,
+            });
+            if let Some((hold, executable)) = helper {
                 crate::fixtures::make_fifo(&root.join("helper-gate"));
-                let executable = match hold {
-                    "zoxide" => "zoxide",
-                    "codex" => "codexbar",
-                    _ => "agy",
-                };
                 let helper_bin = bin(&root, "a");
                 sessions::tests::script(
                     &helper_bin.join(executable),
                     &format!(
                         r#"#!/bin/sh
 phase={hold}
-case "$0" in
-  */agy) if [ "$1" = --version ]; then phase=agy-version; else phase=agy-usage; fi ;;
-esac
 root="$EON_TEST_HANDOFF_ROOT"
 echo "$phase" >> "$root/helper-calls"
 if [ "$phase" = {hold} ]; then
     echo "$$" > "$root/helper-pid"
     IFS= read -r release < "$root/helper-gate"
 fi
-if [ "$phase" = agy-version ]; then echo 1.5.6; else echo '{{}}'; fi
+echo '{{}}'
 "#
                     ),
                 );
@@ -1191,8 +1189,7 @@ fn update_waits_for_owned_helpers_then_keeps_the_same_child_on_refusal() {
     for (held, calls) in [
         ("held-zoxide", "zoxide\n"),
         ("held-codex", "codex\n"),
-        ("held-agy-version", "agy-version\nagy-usage\n"),
-        ("held-agy-usage", "agy-version\nagy-usage\n"),
+        ("held-agy-usage", "agy-usage\n"),
     ] {
         let mut fixture = Fixture::start(Some(held), false, false);
         let a = fixture.inspect();

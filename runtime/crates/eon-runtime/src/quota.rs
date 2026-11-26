@@ -5,7 +5,7 @@ use eon_workspace_protocol::v50::{
 };
 
 mod google;
-pub use google::{ACCEPTED_AGY_VERSIONS, AgyCheck, AgyVersion, agy_version_check};
+pub use google::{AgyCheck, AgyVersion, agy_version_check};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{
@@ -2038,7 +2038,7 @@ mod tests {
         script(
             &root.join("agy"),
             &format!(
-                "echo google >> '{}'; echo 1.5.6",
+                "echo google >> '{}'; echo '{{}}'",
                 root.join("calls").display()
             ),
         );
@@ -2088,7 +2088,7 @@ mod tests {
         assert!(!google.exists());
         assert!(!calls().contains("google"));
         advance(300);
-        assert_eq!(calls().lines().filter(|line| *line == "google").count(), 2);
+        assert_eq!(calls().lines().filter(|line| *line == "google").count(), 1);
         drop(quotas);
         fs::remove_dir_all(root).unwrap();
     }
