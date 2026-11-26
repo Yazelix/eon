@@ -79,11 +79,12 @@ inside the shell. Switching the value rebuilds the target directory once, and
 backtraces keep file and line but drop module prefixes from function names.
 
 Run `nix develop -c eon-darwin-clippy` from the repository root before review.
-It compiles and lints all targets in the root Cargo workspace, including test
-targets, for `aarch64-apple-darwin` with warnings treated as errors. The Linux
-dev shell supplies the Darwin Rust standard library. The Apple Silicon dev
-shell uses its native standard library. Pass Cargo options for a focused
-check, for example `nix develop -c eon-darwin-clippy -p agent-bench`.
+It first checks the root Cargo workspace with default features, then checks
+`yazelix-venus` with `candidate-rune` enabled. Both passes lint all targets
+for `aarch64-apple-darwin` and treat warnings as errors. The Linux dev shell
+supplies the Darwin Rust standard library. The Apple Silicon dev shell uses
+its native standard library. Pass Cargo options for a single focused check,
+for example `nix develop -c eon-darwin-clippy -p agent-bench`.
 Standalone Cargo workspaces have separate proof routes. Native builds and
 test execution use the macOS proof routes below.
 

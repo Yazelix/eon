@@ -111,14 +111,13 @@ eon-yp6vg.54 removes the entry.
 On Linux it requires `WAYLAND_DISPLAY` before creating the event loop. Rune
 uses winit's Wayland backend with X11 disabled. On macOS both hosts use the
 native event loop. The launcher below and the lavapipe check are Linux-only.
-The feature-on candidate compiles for `aarch64-apple-darwin` (eon-yp6vg.57).
-On Linux, `eon-darwin-clippy -p yazelix-venus --features candidate-rune`
-needs a C cross-compiler for `blake3`'s build script: set
-`CC_aarch64_apple_darwin` and `AR_aarch64_apple_darwin` to wrappers that run
-the dev shell's `zig cc -target aarch64-macos` (dropping cc-rs's `-arch` and
-`--target=` flags) and `zig ar`. eon-yp6vg.72 adds that feature-on check,
-with the wrappers, to `eon-darwin-clippy`. Its native Darwin package, entry
-and run are eon-yp6vg.71.
+Run `nix develop -c eon-darwin-clippy` from the repository root to lint all
+candidate targets for `aarch64-apple-darwin` after the feature-off workspace
+pass. On Linux the candidate pass and focused invocations use the dev shell's
+pinned Zig for `cc` build scripts such as `blake3`. A non-empty
+`CC_aarch64_apple_darwin` or `AR_aarch64_apple_darwin` overrides that tool's
+default. On Apple Silicon the command uses the native C tools. The native
+Darwin preview package and entry are tracked in eon-yp6vg.71.
 
 Each line on stdin advances one fixture step. After the last step, the first
 step comes back as a fresh attachment. After a step's first presentation, the

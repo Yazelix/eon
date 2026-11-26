@@ -1820,6 +1820,91 @@
             }.${system}} -C "$out/bin" bv LICENSE
             mv "$out/bin/LICENSE" "$out/share/licenses/bv/LICENSE"
           '';
+          darwinCrossTools = zigExe: {
+            cc = pkgs.writeShellScript "eon-darwin-cc" ''
+              # cc-rs adds -arch and --target=, which conflict with Zig's -target.
+              args=()
+              while (( $# )); do
+                case "$1" in
+                  -arch)
+                    if (( $# < 2 )) || [[ -z $2 || $2 == -* ]]; then
+                      echo 'eon-darwin-cc: -arch needs an architecture' >&2
+                      exit 2
+                    fi
+                    shift 2
+                    ;;
+                  --target=*) shift ;;
+                  --) break ;;
+                  *) args+=("$1"); shift ;;
+                esac
+              done
+              if [[ -n ''${OUT_DIR:-} ]]; then
+                export ZIG_GLOBAL_CACHE_DIR="''${ZIG_GLOBAL_CACHE_DIR:-$OUT_DIR/zig-global-cache}"
+                export ZIG_LOCAL_CACHE_DIR="''${ZIG_LOCAL_CACHE_DIR:-$OUT_DIR/zig-cache}"
+              fi
+              exec ${zigExe} cc -target aarch64-macos "''${args[@]}" "$@"
+            '';
+            ar = pkgs.writeShellScript "eon-darwin-ar" ''exec ${zigExe} ar "$@"'';
+          };
+          darwinClippy = crossTools: pkgs.writeShellApplication {
+            name = "eon-darwin-clippy";
+            text = ''
+              workspace=(--workspace)
+              for arg in "$@"; do
+                case "$arg" in
+                  -p|-p?*|--package|--package=*|--workspace|--all|--manifest-path|--manifest-path=*)
+                    workspace=()
+                    ;;
+                  --)
+                    echo 'eon-darwin-clippy: pass Cargo options without --' >&2
+                    exit 2
+                    ;;
+                esac
+              done
+              clippy=(cargo clippy --locked --target ${darwinRustTarget} --all-targets)
+              warnings=(-- -D warnings)
+              if (( $# == 0 )); then
+                # The workspace pass keeps its received compiler environment.
+                "''${clippy[@]}" --workspace "''${warnings[@]}"
+                workspace=()
+                set -- -p ${workspacePackages.venus} --features candidate-rune
+              fi
+              ${lib.optionalString (crossTools != null) ''
+                : "''${CC_aarch64_apple_darwin:=${crossTools.cc}}"
+                : "''${AR_aarch64_apple_darwin:=${crossTools.ar}}"
+                export CC_aarch64_apple_darwin AR_aarch64_apple_darwin
+              ''}
+              exec "''${clippy[@]}" "''${workspace[@]}" "$@" "''${warnings[@]}"
+            '';
+          };
+          darwinClippyWrappersCheck = let
+            fake = pkgs.writeShellScriptBin "cargo" ''
+              printf '%s\0' "''${CC_aarch64_apple_darwin-unset}" "''${AR_aarch64_apple_darwin-unset}" "$@"
+              [[ " $* " != *" ''${FAIL:-never} "* ]] || exit 17
+            '';
+            tools = darwinCrossTools "${fake}/bin/cargo";
+          in pkgs.runCommand "eon-darwin-clippy-wrappers" { nativeBuildInputs = [ fake ]; } ''
+            check() {
+              local status=0
+              "''${@:2}" </dev/null >"$out" || status=$?
+              test "$status" = "$1" && cmp - "$out"
+            }
+            invocation() { printf '%s\0' "$1" "$2" clippy --locked --target aarch64-apple-darwin --all-targets "''${@:3}" -- -D warnings; }
+            invocation unset unset --workspace > ./--workspace
+            for variant in "${darwinClippy tools}/bin/eon-darwin-clippy ${tools.cc} ${tools.ar}" "${darwinClippy null}/bin/eon-darwin-clippy unset unset"; do
+              read -r gate cc ar <<< "$variant"
+              invocation "$cc" "$ar" -p yazelix-venus --features candidate-rune | cat ./--workspace - > candidate-rune
+              check 0 "$gate" < candidate-rune
+              for phase in --workspace candidate-rune; do check 17 env FAIL="$phase" "$gate" < "$phase"; done
+              check 2 "$gate" -- </dev/null
+              invocation cc "$ar" -p agent-bench | check 0 env CC_aarch64_apple_darwin=cc "$gate" -p agent-bench
+            done
+            printf '%s\0' unset unset cc -target aarch64-macos | check 0 ${tools.cc}
+            printf '%s\0' unset unset cc -target aarch64-macos -mmacosx-version-min=11 -I 'a b' "" -- -arch | check 0 ${tools.cc} -arch arm64 --target=x -mmacosx-version-min=11 -I 'a b' -arch arm64 --target=y "" -- -arch
+            printf '%s\0' unset unset ar cq 'archive name.a' a.o | check 0 ${tools.ar} cq 'archive name.a' a.o
+            for operand in "" -c; do check 2 ${tools.cc} -arch "$operand" </dev/null; done
+            check 2 ${tools.cc} -arch </dev/null
+          '';
           archivePackages = (perSystem system { archive = true; }).packages.${system};
         in
         {
@@ -1932,6 +2017,7 @@
             unsafe-policy = unsafePolicyCheck;
             # Workflows and shell scripts, and the release pin script (pull request checks).
             lint = lintCheck;
+            darwin-clippy-wrappers = darwinClippyWrappersCheck;
             pin-latest-release = pinLatestReleaseCheck;
             # The pair's quick search against a slow stand-in fzf (EON-C18), its marker
             # removed before fzf starts and after it ends, a pick or Esc reported while
@@ -1960,24 +2046,7 @@
               zig
               pkgs.bun
               (import ./nix/test-sandbox.nix { inherit pkgs; })
-              (pkgs.writeShellApplication {
-                name = "eon-darwin-clippy";
-                text = ''
-                  workspace=(--workspace)
-                  for arg in "$@"; do
-                    case "$arg" in
-                      -p|-p?*|--package|--package=*|--workspace|--all|--manifest-path|--manifest-path=*)
-                        workspace=()
-                        ;;
-                      --)
-                        echo 'eon-darwin-clippy: pass Cargo options without --' >&2
-                        exit 2
-                        ;;
-                    esac
-                  done
-                  exec cargo clippy --locked --target ${darwinRustTarget} "''${workspace[@]}" --all-targets "$@" -- -D warnings
-                '';
-              })
+              (darwinClippy (if pkgs.stdenv.isLinux then darwinCrossTools "${zig}/bin/zig" else null))
               # Runtime tests paste printed commands into Eon's Nushell.
               nushellPackage
               br

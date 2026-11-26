@@ -47,6 +47,7 @@ jobs:
         run: >-
           nix build --print-build-logs --no-link --keep-going
           .#checks.x86_64-linux.lint
+          .#checks.x86_64-linux.darwin-clippy-wrappers
           .#checks.x86_64-linux.pin-latest-release
           .#checks.x86_64-linux.unsafe-policy
           .#checks.x86_64-linux.eon-update-launch-environment
