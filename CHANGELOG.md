@@ -10,6 +10,9 @@ installation, and proven contract changes.
   turn off input lock if active, then detach with Alt+Shift+D
   (Option+Shift+D on macOS) before reopening. For standalone Venus,
   close and reopen the window (`eon-jahn6`, VEN-C4).
+- When Eon retries an Orbit attachment, the notice explains that an earlier
+  client may still hold the terminal or the window may be waiting for admission
+  (`eon-dlvwy`).
 - `eon import nova` brings Nova settings into Eon: the shell, Atuin, the
   editor, the welcome animation, the agent command, popup keys, bar widgets and
   custom popups. With no Eon `config.toml` it writes one that loads without

@@ -4052,7 +4052,7 @@ impl Application {
             TransportEvent::Server(ServerMessage::Busy) if retryable_busy => {
                 schedule_retry = apply_retryable_loss(
                     &mut view.model,
-                    "Orbit already has a departing presentation client; retrying".into(),
+                    MANAGED_BUSY_RETRY_DETAIL.into(),
                     view.retry_suppressed,
                 );
             }
@@ -5269,7 +5269,7 @@ impl Application {
             TransportEvent::Server(ServerMessage::Busy) if retryable_busy => {
                 schedule_retry = apply_retryable_loss(
                     &mut self.terminal.model,
-                    "Orbit already has a departing presentation client; retrying".into(),
+                    MANAGED_BUSY_RETRY_DETAIL.into(),
                     self.terminal.retry_suppressed,
                 );
             }
@@ -7823,6 +7823,9 @@ fn server_failure_suppresses_retry(message: &ServerMessage) -> bool {
             if matches!(failure.code, FailureCode::Protocol | FailureCode::Terminal)
     )
 }
+
+const MANAGED_BUSY_RETRY_DETAIL: &str =
+    "An earlier client still holds this terminal, or this window is not admitted yet; retrying";
 
 fn managed_busy_is_retryable(supervised: bool, event: &TransportEvent) -> bool {
     supervised && matches!(event, TransportEvent::Server(ServerMessage::Busy))

@@ -62,10 +62,34 @@ fn workspace_recovery_requires_the_same_selected_live_endpoint() {
 
 #[test]
 fn only_supervised_orbit_busy_is_retryable() {
-    let busy = TransportEvent::Server(ServerMessage::Busy);
+    let detail =
+        "An earlier client still holds this terminal, or this window is not admitted yet; retrying";
+    for supervised in [true, false] {
+        let arguments = crate::launch::launch_arguments(
+            [OsString::from("orbit.sock")],
+            supervised.then(|| OsString::from("stdin-focus-v2")),
+        )
+        .unwrap();
+        let mut app = Application::new(arguments, EventSink::Host(Arc::new(|_| true)));
+        app.column_views.push(TerminalView::new(None));
+        app.handle_transport(TransportEvent::Server(ServerMessage::Busy));
+        app.handle_column_transport(0, TransportEvent::Server(ServerMessage::Busy));
 
-    assert!(managed_busy_is_retryable(true, &busy));
-    assert!(!managed_busy_is_retryable(false, &busy));
+        let status = app.status_for(false, app.presentation_candidate(None));
+        let column = &app.column_views[0];
+        assert_eq!(app.terminal.orbit_retry.deadline.is_some(), supervised);
+        assert_eq!(column.orbit_retry.deadline.is_some(), supervised);
+        if supervised {
+            assert_eq!(status, format!("Orbit connection lost: {detail}"));
+            assert!(matches!(
+                column.model.connection(),
+                ConnectionState::Lost { detail: actual } if actual == detail
+            ));
+        } else {
+            assert_eq!(status, "Orbit already has an attached presentation client.");
+            assert!(matches!(column.model.connection(), ConnectionState::Busy));
+        }
+    }
     assert!(!managed_busy_is_retryable(
         true,
         &TransportEvent::Server(ServerMessage::Accepted),
