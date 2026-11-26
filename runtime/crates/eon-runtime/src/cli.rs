@@ -1472,6 +1472,11 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             ("config defaults [--json]", "Print config.toml defaults"),
             ("config schema --json", "Describe configuration keys"),
             ("config check [--json]", "Check config.toml offline"),
+            (
+                "import nova [--from PATH]",
+                "Map Nova settings into config.toml",
+            ),
+            ("  [--dry-run] [--json]", "without replacing any file"),
             ("--skill", "Print this build's agent skill"),
             ("-V, --version", "Print this build's Eon version"),
             ("-h, --help", "Show this help; after a command,"),

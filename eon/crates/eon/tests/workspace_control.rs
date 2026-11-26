@@ -28065,3 +28065,258 @@ fn native_quota_fills_only_the_providers_the_window_lacks_from_the_store() {
     );
     fs::remove_dir_all(root).unwrap();
 }
+
+const NOVA: &str = "shell.program = \"zsh\"\nappearance.mode = \"light\"\n";
+
+/// `eon import nova ARGUMENTS` with every configuration root under `root`, Eon's at
+/// `root/eon`, plus `variables` (an empty value removes the variable).
+fn import_nova<A: AsRef<OsStr>>(
+    root: &Path,
+    arguments: &[A],
+    variables: &[(&str, &Path)],
+) -> Output {
+    let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+    command.args(["import", "nova"]).args(arguments);
+    command
+        .env("EON_CONFIG_HOME", root.join("eon"))
+        .env("HOME", root.join("home"));
+    command
+        .env_remove("XDG_CONFIG_HOME")
+        .env_remove("YAZELIX_CONFIG_HOME");
+    for (name, value) in variables {
+        match value.as_os_str().is_empty() {
+            true => command.env_remove(name),
+            false => command.env(name, value),
+        };
+    }
+    command.output().unwrap()
+}
+
+/// `--json` output with `status` and no stderr, as `[fields...]` plus the whole object.
+fn import_json<A>(
+    root: &Path,
+    arguments: &[A],
+    variables: &[(&str, &Path)],
+    status: i32,
+    fields: &[&str],
+) -> (serde_json::Value, serde_json::Value)
+where
+    A: AsRef<OsStr>,
+{
+    let mut arguments: Vec<&OsStr> = arguments.iter().map(AsRef::as_ref).collect();
+    arguments.push(OsStr::new("--json"));
+    let output = import_nova(root, &arguments, variables);
+    assert_eq!(
+        (output.status.code(), &*output.stderr),
+        (Some(status), &[][..]),
+        "{output:?}"
+    );
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    (
+        fields.iter().map(|field| value[*field].clone()).collect(),
+        value,
+    )
+}
+
+fn lossy(path: &Path) -> serde_json::Value {
+    path.to_string_lossy().into()
+}
+
+/// A Nova root at `root/nova` with `config.toml` and a native Helix directory.
+fn nova_root(root: &Path) -> PathBuf {
+    fs::create_dir_all(root.join("nova/helix")).unwrap();
+    fs::write(root.join("nova/config.toml"), NOVA).unwrap();
+    root.join("nova")
+}
+
+#[test]
+fn import_nova_writes_a_fresh_config_and_leaves_nova_alone() {
+    let root = temporary_directory();
+    let nova = nova_root(&root);
+    let fields = [
+        "mode",
+        "source_path",
+        "destination_path",
+        "warnings",
+        "error",
+    ];
+    let yazelix = [("YAZELIX_CONFIG_HOME", nova.as_path())];
+    let (picked, value) = import_json::<&str>(&root, &[], &yazelix, 0, &fields);
+    let config = root.join("eon/config.toml");
+    let source = lossy(&nova.join("config.toml"));
+    assert_eq!(
+        picked,
+        serde_json::json!(["written", source, lossy(&config), [], null])
+    );
+    let shell = serde_json::json!({"nova": "shell.program", "eon": "shell.command",
+        "value": ["zsh"], "note": "runs it from PATH without Eon's shell integrations"});
+    assert_eq!(
+        (&value["mapped"][0], &value["unmapped"][0]["nova"]),
+        (&shell, &"appearance.mode".into())
+    );
+    assert_eq!(value["sidecars"][0]["path"], lossy(&nova.join("helix")));
+    assert_eq!(
+        fs::read_to_string(&config).unwrap(),
+        value["toml"].as_str().unwrap()
+    );
+    assert_eq!(
+        fs::read_dir(root.join("eon")).unwrap().count(),
+        1,
+        "temporary file left"
+    );
+    assert_eq!(
+        fs::metadata(root.join("eon")).unwrap().mode() & 0o777,
+        0o700
+    );
+    assert_eq!(fs::read_to_string(nova.join("config.toml")).unwrap(), NOVA);
+    let mut check = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
+    let check = check
+        .args(["config", "check"])
+        .env("EON_CONFIG_HOME", root.join("eon"));
+    assert_eq!(check.output().unwrap().status.code(), Some(0));
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn import_nova_never_replaces_an_existing_config_and_dry_run_writes_nothing() {
+    let root = temporary_directory();
+    let nova = nova_root(&root);
+    let yazelix = [("YAZELIX_CONFIG_HOME", nova.as_path())];
+    let dry = import_nova(&root, &["--dry-run"], &yazelix);
+    assert!(stdout(&dry).contains("command = [\"zsh\"]") && stdout(&dry).contains("dry run"));
+    assert!(dry.status.success() && !root.join("eon").exists());
+    let config = root.join("eon/config.toml");
+    fs::create_dir(root.join("eon")).unwrap();
+    fs::write(&config, "mine = 1\n").unwrap();
+    let human = import_nova::<&str>(&root, &[], &yazelix);
+    assert!(
+        human.status.success() && stdout(&human).contains("paste the TOML"),
+        "{human:?}"
+    );
+    assert!(stdout(&human).contains("appearance.mode: Eon has no dark/light setting"));
+    assert!(stdout(&human).contains("shell.program (runs it from PATH"));
+    assert_eq!(fs::read_to_string(&config).unwrap(), "mine = 1\n");
+    fs::remove_file(&config).unwrap();
+    symlink(root.join("absent"), &config).unwrap();
+    let (mode, _) = import_json::<&str>(&root, &[], &yazelix, 0, &["mode"]);
+    assert!(mode == serde_json::json!(["print-only-exists"]) && !root.join("absent").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn import_nova_reports_failures_as_data() {
+    let root = temporary_directory();
+    let source = root.join("nova.toml");
+    let fields = ["mode", "toml", "mapped", "source_path"];
+    let failure = |bytes: Option<&[u8]>, eon: &str, code: &str| {
+        if let Some(bytes) = bytes {
+            fs::write(&source, bytes).unwrap();
+        }
+        let eon = [("EON_CONFIG_HOME", root.join(eon))];
+        let eon = [(eon[0].0, eon[0].1.as_path())];
+        let from = [OsStr::new("--from"), source.as_os_str()];
+        let (picked, value) = import_json(&root, &from, &eon, 1, &fields);
+        assert_eq!(picked, serde_json::json!([null, null, [], lossy(&source)]));
+        assert_eq!(value["error"]["code"], code);
+    };
+    failure(None, "eon", "missing-nova-configuration");
+    failure(Some(b"[["), "eon", "invalid-nova-configuration");
+    failure(
+        Some(b"x = \"\xff\"\n"),
+        "eon",
+        "unreadable-nova-configuration",
+    );
+    fs::write(&source, "shell.atuin = true\n").unwrap();
+    fs::write(root.join("file"), "").unwrap();
+    failure(None, "file/eon", "unreadable-configuration");
+    fs::DirBuilder::new()
+        .mode(0o500)
+        .create(root.join("read-only"))
+        .unwrap();
+    failure(None, "read-only", "unwritable-configuration");
+    assert_eq!(fs::read_dir(root.join("read-only")).unwrap().count(), 0);
+    let usage = [
+        &["--bogus"][..],
+        &["--from"],
+        &["--from", "a", "--from", "b"],
+        &["-h", "-h"],
+    ];
+    for arguments in usage {
+        let output = import_nova(&root, arguments, &[]);
+        assert_eq!(output.status.code(), Some(2), "{arguments:?}");
+    }
+    for arguments in [
+        &["import", "--help"][..],
+        &["import", "nova", "-h"],
+        &["import", "x"],
+    ] {
+        let output = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(arguments)
+            .output();
+        let output = output.unwrap();
+        let help = stdout(&output).contains("import nova [--from PATH]");
+        let expected = if arguments.ends_with(&["x"]) {
+            (Some(2), false)
+        } else {
+            (Some(0), true)
+        };
+        assert_eq!((output.status.code(), help), expected, "{arguments:?}");
+    }
+    let writable = fs::Permissions::from_mode(0o700);
+    fs::set_permissions(root.join("read-only"), writable).unwrap();
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn import_nova_finds_the_default_source_and_nova_defaults() {
+    let root = temporary_directory();
+    let home = root.join("home/.config/yazelix");
+    fs::create_dir_all(home.join("rio")).unwrap();
+    let relative = [("XDG_CONFIG_HOME", Path::new("relative"))];
+    let fields = ["mode", "toml", "mapped", "unmapped", "source_path"];
+    let (picked, value) = import_json::<&str>(&root, &[], &relative, 0, &fields);
+    let source = lossy(&home.join("config.toml"));
+    assert_eq!(
+        picked,
+        serde_json::json!(["nova-defaults", "", [], [], source])
+    );
+    assert_eq!(value["sidecars"][0]["path"], lossy(&home.join("rio")));
+    assert!(!root.join("eon").exists());
+    // A broken `config.toml` link is not Nova on its defaults.
+    symlink(root.join("absent"), home.join("config.toml")).unwrap();
+    let (_, value) = import_json::<&str>(&root, &[], &relative, 1, &[]);
+    assert_eq!(value["error"]["code"], "unreadable-nova-configuration");
+    let xdg = root.join("xdg");
+    fs::create_dir_all(xdg.join("yazelix")).unwrap();
+    fs::write(xdg.join("yazelix/config.toml"), "").unwrap();
+    let found = |variables: &[(&str, &Path)]| {
+        import_json(&root, &["--dry-run"], variables, 0, &["source_path"]).0[0].clone()
+    };
+    let xdg_source = lossy(&xdg.join("yazelix/config.toml"));
+    assert_eq!(found(&[("XDG_CONFIG_HOME", &xdg)]), xdg_source);
+    let yazelix = nova_root(&root);
+    let both = [
+        ("XDG_CONFIG_HOME", xdg.as_path()),
+        ("YAZELIX_CONFIG_HOME", &yazelix),
+    ];
+    assert_eq!(found(&both), lossy(&yazelix.join("config.toml")));
+    let unset = [("HOME", Path::new(""))];
+    let (picked, value) = import_json::<&str>(&root, &[], &unset, 1, &["source_path"]);
+    assert_eq!(
+        (picked, &value["error"]["code"]),
+        (
+            serde_json::json!([null]),
+            &"missing-nova-configuration".into()
+        )
+    );
+    let newline = root.join("a\nb.toml");
+    fs::write(&newline, NOVA).unwrap();
+    let from = [OsStr::new("--from"), newline.as_os_str()];
+    assert!(import_nova(&root, &from, &[]).status.success());
+    let written = fs::read_to_string(root.join("eon/config.toml")).unwrap();
+    assert!(
+        written.starts_with("# Imported from Nova by eon import nova\n["),
+        "{written}"
+    );
+    fs::remove_dir_all(root).unwrap();
+}

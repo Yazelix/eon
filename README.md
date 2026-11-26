@@ -193,10 +193,12 @@ Anima; `Alt+Shift+H` toggles the sidebar and `Alt+Shift+B` the shortcut hints.
 Because Eon owns its terminals, they keep running apart from the window:
 `Alt+Shift+D` hides it and `eon window attach` brings back every tab and pane.
 Settings live in `~/.config/eon/config.toml`, and the command is `eon` where
-Nova had `yzx`.
+Nova had `yzx`. `eon import nova` brings your Nova settings over: it writes
+`config.toml` when you have none, or prints the TOML to paste, and lists each
+setting Eon has no counterpart for.
 
-Still missing: SSH, full macOS support (today an early Nix preview on Apple
-Silicon), and a command to import your Nova settings.
+Still missing: SSH and full macOS support (today an early Nix preview on Apple
+Silicon).
 
 Nova stays fully supported while Eon moves toward beta.
 

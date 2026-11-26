@@ -3611,11 +3611,20 @@ pub(super) fn validate_configuration_text(
     path: &Path,
     defaults: &Defaults,
 ) -> Result<(), String> {
-    validate_config(
-        parse_configuration_text(source, path, defaults)?,
-        path,
-        defaults,
-    )
+    configuration_warnings(source, path, defaults).map(drop)
+}
+
+/// Fully validate one candidate without reading a file, emitting warnings or starting
+/// children, and return the warnings loading it would emit (`eon import nova`, EON-C9).
+pub fn configuration_warnings(
+    source: &str,
+    path: &Path,
+    defaults: &Defaults,
+) -> Result<Vec<String>, String> {
+    let config = parse_configuration_text(source, path, defaults)?;
+    let warnings = config_warnings(&config, path, defaults);
+    validate_config(config, path, defaults)?;
+    Ok(warnings)
 }
 
 fn validate_config(config: EonConfig, path: &Path, defaults: &Defaults) -> Result<(), String> {
@@ -3723,6 +3732,24 @@ mod tests {
         }
     }
 
+    #[test]
+    fn configuration_warnings_runs_the_resolvers_and_returns_warnings() {
+        let defaults = crate::fixtures::inputs().defaults;
+        let path = Path::new("config.toml");
+        let check = |source: &str| super::configuration_warnings(source, path, &defaults);
+        assert_eq!(check("[anima]\nduration_seconds = 3\n"), Ok(Vec::new()));
+        // Out-of-range values parse; only the resolvers refuse them.
+        assert!(check("[anima]\nduration_seconds = 45\n").is_err());
+        assert!(
+            super::validate_configuration_text("[anima]\nduration_seconds = 45\n", path, &defaults)
+                .is_err()
+        );
+        let warnings = check("[anima]\nunknown = 1\n").unwrap();
+        assert!(
+            warnings.len() == 1 && warnings[0].contains("anima.unknown"),
+            "{warnings:?}"
+        );
+    }
     #[test]
     fn configuration_schema_matches_derived_defaults_and_every_key_parses() {
         fn flatten(

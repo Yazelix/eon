@@ -42,7 +42,7 @@ pub use managed_environment::{
     AttentionNotifications, BarLoad, Defaults, DiagnosticConfiguration, EditorKind, EditorOpenIn,
     ManagedPrograms, PaddingColor, PanelHeading, PopupCatalog, PopupCommand, PopupDefinition,
     ShellConfig, StartupAnimation, TerminalAccess, TerminalConfig, UpdateSettings,
-    diagnostic_configuration, update_target, update_target_configured,
+    configuration_warnings, diagnostic_configuration, update_target, update_target_configured,
 };
 pub use quota::{AgyCheck, AgyVersion, agy_version_check};
 pub use report::{CallerBuild, DiagnosticWindow, ReportFacts, diagnostic_window, report_facts};

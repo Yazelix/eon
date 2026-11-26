@@ -13,6 +13,7 @@ eon-workspace-protocol = { path = "../../../runtime/crates/eon-workspace-protoco
 libc = "=0.2.189"
 rustix = { version = "=1.1.4", default-features = false, features = ["event", "fs", "process", "std", "termios"] }
 serde_json = "=1.0.151"
+toml = { version = "=1.1.4", default-features = false, features = ["parse", "serde", "std", "display"] }
 
 [dev-dependencies]
 rustix = { version = "=1.1.4", default-features = false, features = ["net", "pty"] }

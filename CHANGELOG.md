@@ -5,6 +5,13 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon import nova` brings Nova settings into Eon: the shell, Atuin, the
+  editor, the welcome animation, the agent command, popup keys, bar widgets and
+  custom popups. With no Eon `config.toml` it writes one that loads without
+  errors or warnings; otherwise, or with `--dry-run`, it prints the TOML to
+  paste and changes nothing. It lists each setting it leaves out with a reason,
+  names Nova's native files without touching them, and never changes Nova's
+  files. `--json` returns the same as data (`eon-rxdur`, EON-C9).
 - Pasting into a pane scrolled back into its history returns it to live
   output, as typing does, so the pasted text lands in view (`eon-41sxd`,
   ORB-C8).

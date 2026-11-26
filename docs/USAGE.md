@@ -1308,6 +1308,7 @@ line points agents to `eon --skill`.
 | `eon config defaults [--json]` | Print built-in defaults as commented TOML or a nested JSON object, without reading user configuration |
 | `eon config schema --json` | Describe active configuration keys, types, defaults, bounds, choices and when changes take effect, without reading user configuration |
 | `eon config check [--json]` | Check config.toml for settings Eon would reject, without starting Eon or changing state |
+| `eon import nova [--from PATH] [--dry-run] [--json]` | Map Nova's `config.toml` into Eon settings that load cleanly. With no Eon `config.toml` it writes one; otherwise, or with `--dry-run`, it prints the TOML to paste and changes nothing. It lists each Nova setting it leaves out with a reason and names Nova's native files without touching them; see [Coming from Nova](#coming-from-nova) |
 | `eon --skill` | Print the `eon` agent skill this build ships, without starting a session or reading configuration |
 | `eon -V`, `eon --version` | Print this build's Eon version as `eon VERSION`, without starting a session or reading configuration |
 
@@ -2007,6 +2008,27 @@ eonbase stop GENERATION
 Eon and eonbase use separate runtime namespaces. eonbase keeps native window
 decorations by default and accepts `--application-id ID` for an approved
 composition.
+
+## Coming from Nova
+
+`eon import nova` reads Nova's `config.toml` (`--from PATH`, else
+`$YAZELIX_CONFIG_HOME`, else `yazelix` under `$XDG_CONFIG_HOME` or
+`~/.config`) and maps what Eon has: the shell, Atuin, the editor, the welcome
+animation (Eon's Anima), the agent command, the Agent, Git, Menu (Eon's
+Commands) and Screen (Eon's Anima) keys, bar widgets and custom popups. Nova's
+`Alt Shift U` becomes Eon's `Alt+Shift+U`, and `false` leaves a key unbound.
+Each entry is checked by Eon's own configuration parser first, so the result
+loads without errors or warnings; a value Eon refuses, such as a 45-second
+animation, is listed with Eon's reason instead.
+
+When you have no Eon `config.toml`, the command writes one. When you do, it
+changes nothing and prints the TOML to paste; `--dry-run` always prints. It
+lists every Nova setting it leaves out with a one-line reason, such as
+`appearance.mode` (Eon has no light mode yet), and names Nova's native files
+(`helix`, `yazi`, `zellij`, `nu`, `rio`, `starship.toml`) without opening them.
+Nova on its defaults, with no `config.toml`, has nothing to import.
+`--json` returns the same as data; EON-C9 in `docs/CONTRACTS.md` lists the
+fields.
 
 ## Troubleshooting and reporting
 

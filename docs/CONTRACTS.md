@@ -1216,11 +1216,15 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-21 by `eon-260mh.2.3` (approved by eon-lead under
   Lucca's delegation): children the supervisor starts no longer inherit a
   Neovim server's `NVIM` or `NVIM_LISTEN_ADDRESS`.
+  Amended on 2026-11-26 (approved by eon-desk under Lucca's standing
+  2026-11-13 delegation) by `eon-rxdur`: `eon import nova` creates an absent
+  Eon `config.toml` from Nova's configuration and otherwise changes no file.
 - **Consumer:** People and agents inspecting Eon configuration defaults and
-  paths or checking configuration, Eon terminals launched under Nushell or Bash,
+  paths, checking configuration or importing Nova configuration, Eon terminals
+  launched under Nushell or Bash,
   and every terminal, popup, Venus and quota reader the supervisor starts.
-- **Trigger:** Eon prints configuration defaults or paths, checks configuration,
-  or constructs a child launch environment.
+- **Trigger:** Eon prints configuration defaults or paths, checks or imports
+  configuration, or constructs a child launch environment.
 - **Result:**
   - `eon config defaults` prints a TOML configuration representing this build's
     defaults, with comments explaining defaults that require omission or remain
@@ -1261,6 +1265,41 @@ names its socket. CLI JSON names a session `session` and a terminal
     but a closed pipe, exits 1 with the reason on stderr; a closed stdout pipe
     still exits 0 with no stderr output. `eon --help` names `config.toml`
     beside `config path` and `config defaults`.
+  - `eon import nova [--from PATH] [--dry-run] [--json]` reads Nova's root
+    `config.toml`: `PATH`, else the first of `$YAZELIX_CONFIG_HOME/config.toml`,
+    `yazelix/config.toml` under an absolute `$XDG_CONFIG_HOME`, or
+    `.config/yazelix/config.toml` under `$HOME`. It maps the Nova settings that
+    have an Eon counterpart into Eon configuration and lists every other Nova
+    setting with a reason. Every entry it emits has passed Eon Runtime's
+    configuration parser and resolvers with no warning, so the emitted TOML
+    loads cleanly. It only reads Nova's files and reports native files found
+    beside Nova's `config.toml` without opening them. When Nova's configuration
+    root exists but holds no `config.toml`, Nova runs on its defaults: the
+    command maps nothing, reports the native files it finds there, changes
+    nothing on disk and exits 0 with `mode` `nova-defaults` and an empty
+    `toml`; `source_path` names the absent file. With `--dry-run`, or when
+    Eon's `config.toml` path already exists in any form, it changes nothing on
+    disk and prints the TOML to paste. Otherwise it creates the configuration
+    root like `eon config path` and publishes `config.toml` atomically,
+    never replacing a file that appears meanwhile (it then prints instead).
+    Success exits 0 even when settings are left out. With `--json` it prints
+    one object on stdout and nothing on stderr: `source_path` and
+    `destination_path` (absolute paths, null only when not yet resolved),
+    `mode` (`written`, `print-only-exists`, `dry-run` or `nova-defaults`),
+    `mapped` (objects with `nova`, `eon`, `value` and nullable `note`),
+    `unmapped` (objects with `nova` and `reason`), `sidecars` (objects with
+    `path` and `notice`), `toml`, `warnings` (strings, such as a temporary file
+    left after publishing) and `error`. `error` is null on success; on failure
+    it is `{code, detail}`, `mode` and `toml` are null, `mapped`, `unmapped`,
+    `sidecars` and `warnings` are empty, and the command exits 1. The codes
+    are `missing-nova-configuration` (`--from PATH` does not exist, or no Nova
+    configuration root exists), `unreadable-nova-configuration`,
+    `invalid-nova-configuration`, `unreadable-configuration` (Eon root
+    discovery or destination inspection) and `unwritable-configuration`
+    (nothing was published). Human failures exit 1 with the detail on stderr.
+    Invalid arguments exit 2 with usage on stderr. Other stdout write failures
+    exit 1 with a diagnostic on stderr; a closed pipe keeps the exit status and
+    prints no diagnostic. Consumers allow additional fields.
   - Eon selects exact Nushell, Bash, Starship, Zoxide, fzf, Atuin, Carapace,
     Helix, Yazi, and LazyGit artifacts. The `no-helix` product package selects
     the same artifacts without Helix. It provides no `hx` or `eon-hx`, and
@@ -1398,7 +1437,9 @@ names its socket. CLI JSON names a session `session` and a terminal
   Eon supplies product defaults; Runtime prints them through the configuration
   model used by its resolver. Documentation examples are generated from, or
   checked against, that output.
-- **Boundary:** No global aliases, user-file mutation, prompt/completion schema,
+- **Boundary:** No global aliases, user-file mutation (except `eon import nova`
+  creating an absent Eon `config.toml`; it never changes an existing Eon file or
+  any Nova file), prompt/completion schema,
   shell framework, automatic Direnv, mise installation or trust management,
   history/sync policy, plugin surface,
   editor replacement, or remote/headless clipboard bridge. The environment

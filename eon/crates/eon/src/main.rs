@@ -1,5 +1,6 @@
 mod doctor;
 mod launch;
+mod nova;
 #[allow(unsafe_code)]
 mod platform;
 mod product;
@@ -48,6 +49,13 @@ fn main() -> ExitCode {
             route: Some(&eon_boat::Boat::EON),
         };
         return rota::cli::main(arguments.into_iter().skip(2), &host);
+    }
+    // `eon import --help` and `eon import nova --help` stay with Runtime's family help.
+    if product_cli
+        && arguments.get(1).is_some_and(|command| command == "import")
+        && !matches!(&arguments[2..], [flag] | [_, flag] if flag == "-h" || flag == "--help")
+    {
+        return ExitCode::from(nova::run(&arguments[2..], &inputs));
     }
     let invoked = || update::Build {
         version: Some(inputs.version.into()),

@@ -314,6 +314,14 @@ recognised: unknown/ignored settings retain their usual behavior and this comman
 reports no warnings. It does not check availability of external programs, files
 or services. Allow additional JSON fields.
 
+To bring over a Nova setup, run `eon import nova --dry-run --json` first: read
+`mapped`, `unmapped` (each with a `reason`) and `toml`. Without `--dry-run` it
+writes `config.toml` only when none exists (`mode` `written`); otherwise it
+prints `toml` for you to merge (`print-only-exists`). Mode `nova-defaults`
+(exit 0, empty `toml`) means Nova runs on its defaults: there is nothing to
+merge. On exit 1, read `error.code` and `error.detail`. It never changes Nova's
+files or an existing Eon file.
+
 ## Handle exit status
 
 For setup failures, run `eon doctor --json` in the affected terminal. Read

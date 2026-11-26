@@ -54,6 +54,29 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Eon toml edge (eon-rxdur)
+
+For `eon-rxdur` over `04553be2`, the `eon` crate gains a direct dependency on
+`toml 1.1.4+spec-1.1.0`, with the same pin and features `eon-runtime` already
+uses. The workspace `Cargo.lock` gains that one edge in `eon`'s dependency
+list and no package, version, checksum, source or feature selection. The four
+producers that share the lock change context: `eon`, `orbit`, `venus` and
+`venus-rune-preview`. Deleting the one ` "toml 1.1.4+spec-1.1.0",` line from
+`eon`'s entry in each candidate canonical `graph.json` lock reproduces the
+accepted base graphs byte for byte: `065c7b2c` → `2de28260` for Eon,
+`8d9eb57d` → `1bfadfd3` for Orbit, `669fbd77` → `e9e02cae` for Venus and
+`34e1087b` → `656cec82` for `venus-rune-preview`. The other nine producers'
+graphs are unchanged. Each graph differs from its base only in that lock
+line, so the producer feature selections, audit exception identities and
+their classes are the base's: Eon 9 host-only and 2 unselected, Orbit 6 and 1,
+Venus 15 and 4, and `venus-rune-preview` 20 and 8. The `inspect-audit` replay
+against the actual Eon binary reproduces its saved `graph.json` and
+`observation.json`. The strict `propose-audit-renewal` proposal changes these
+eight `graph_sha256` fields, and parsed, it equals the checked-in file.
+
+- Vendor at `/nix/store/nhfdp69qi6njhmpf2sflnaz57qdkv307-cargo-vendor-dir`.
+- Proposal input at `/nix/store/r56law9kzk8djzdljy9ibi0n16z1yjx6-eon-archive-notice-input.json` (candidate over `04553be2`, before this renewal).
+
 ### Rune winit APIs pin (eon-yp6vg.57)
 
 For `eon-yp6vg.57` over `a03d7f88`, the `dpi` and `winit` source records move
@@ -607,6 +630,19 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-26 for `eon-rxdur` to context
+`065c7b2cfab5b925d96e3a42e21c905484c8bf85420d26dc7976d37b933fec0d`.
+Deleting the `eon` lock entry's `toml` edge reproduces `2de28260…`.
+
+- Source at `/nix/store/x7jfff03341dlj3sggaiw4b3bh5xcbrh-source` (candidate over edge `04553be2`, before this renewal's own edits).
+- Vendor at `/nix/store/nhfdp69qi6njhmpf2sflnaz57qdkv307-cargo-vendor-dir`.
+- Observation at `/nix/store/8lmzvb7wz3n3r5dk4idahcj5vhdbwsfz-eon-cargo-notices-0.1.29`.
+- Binary at `/nix/store/wif3bzciah9p4mikrcri0px9k6i6m3b6-eon-rust-0.1.29/bin/eon`
+  with SHA-256 `4c49e82a6941f05ec8c5095c6fcadab07d359ff2be210c6253fa06f9679ab0d7`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-yp6vg.57`):
+
 Renewed on 2026-11-26 for `eon-yp6vg.57` to context
 `2de282601af32298979ad5f99258f0449dee47bad73b9aaaeacd9563c2a8a87d`.
 Reversing the winit revision reproduces `58b9cfc7…`.
@@ -956,6 +992,19 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-26 for `eon-rxdur` to context
+`8d9eb57d7976f4efad8418ae9cae59bf056c41b12ca5ef87a7b0af08e952f26e`.
+Deleting the `eon` lock entry's `toml` edge reproduces `1bfadfd3…`.
+
+- Source at `/nix/store/qd9l24bkqzxk0g2lss5acpjrfzxc9kh3-source` (candidate over edge `04553be2`, before this renewal's own edits).
+- Vendor at `/nix/store/nhfdp69qi6njhmpf2sflnaz57qdkv307-cargo-vendor-dir`.
+- Observation at `/nix/store/38srwfgvjcdmf0hxzh0i86xlrh3alhnx-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/d76cg119nf1rmfpskq9zpr4yx4xwl6m5-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `b2293388d7e4b74da7da08b7ef457b60b4bdb65acc10c6831d79f88ea3b2fc3f`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-yp6vg.57`):
+
 Renewed on 2026-11-26 for `eon-yp6vg.57` to context
 `1bfadfd3fb58dfcd62f843adf6ff79d458566afae233461b92396fe2aae1af00`.
 Reversing the winit revision reproduces `f905a6a6…`.
@@ -1297,6 +1346,19 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-26 for `eon-rxdur` to context
+`669fbd779a65f77ec503152a56657880740adcb4c83f1dbecc4900c33a3658d6`.
+Deleting the `eon` lock entry's `toml` edge reproduces `e9e02cae…`.
+
+- Source at `/nix/store/44x81cf23hahv5yn3glvvfqwpz8lpwhy-source` (candidate over edge `04553be2`, before this renewal's own edits).
+- Vendor at `/nix/store/nhfdp69qi6njhmpf2sflnaz57qdkv307-cargo-vendor-dir`.
+- Observation at `/nix/store/h46r559w5q5sqyckgm8pvzj3zjw1y7g2-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/xi20m64daph9s1fds89rzpv4xgpl44n8-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `01a75cda6d890ca4ba3f2934b245528e842b85214a28199eb4470640381b101d`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-yp6vg.57`):
 
 Renewed on 2026-11-26 for `eon-yp6vg.57` to context
 `e9e02caeda1e303ffbc2c91e3454af99b35da437b8ab9aa87b5634c741f753f6`.
@@ -1656,6 +1718,19 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 - Result: 15 exact host exceptions; 4 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus-rune-preview
+
+Renewed on 2026-11-26 for `eon-rxdur` to context
+`34e1087b12214050153bb117dc1fa65e22b9f97658ee587d93645e823a728401`.
+Deleting the `eon` lock entry's `toml` edge reproduces `656cec82…`.
+
+- Source at `/nix/store/44x81cf23hahv5yn3glvvfqwpz8lpwhy-source` (candidate over edge `04553be2`, before this renewal's own edits).
+- Vendor at `/nix/store/nhfdp69qi6njhmpf2sflnaz57qdkv307-cargo-vendor-dir`.
+- Observation at `/nix/store/5a4dkhbz9qmk7xclyjcwc05f3l79p08d-venus-rune-preview-cargo-notices-0.1.0`.
+- Binary at `/nix/store/hnkwr7pz69i30ryrxn1x20hlwbp62jj9-venus-rune-preview-0.1.0/bin/.venus-rune-candidate-wrapped`
+  with SHA-256 `a1c87b29b45029a399d48d89c646cd5fbf86dd627d58c1bafa517678f1d043e2`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --features=candidate-rune --package yazelix-venus --bin venus-rune-candidate`.
+
+Historical (`eon-yp6vg.57`):
 
 Renewed on 2026-11-26 for `eon-yp6vg.57` to context
 `656cec82e17bf33d98adcad692457d2f59cffac7e6c02ed7982e3919df1b66bd`.
