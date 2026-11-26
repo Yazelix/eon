@@ -163,28 +163,41 @@ pub(crate) fn run_until(command: &mut Command, deadline: Option<Instant>) -> Res
 #[cfg(all(test, target_os = "linux"))]
 mod tests {
     use super::*;
-    use std::os::unix::net::{UnixListener, UnixStream};
+    use std::os::unix::{
+        fs::DirBuilderExt,
+        net::{UnixListener, UnixStream},
+    };
+
+    struct JourneyFixture(PathBuf);
+
+    impl Drop for JourneyFixture {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.0);
+        }
+    }
 
     #[test]
     fn journey_hides_alternate_roots_and_has_no_controlling_terminal() {
         const PROBE: &str = "EON_BENCH_JOURNEY_ISOLATION_PROBE";
+        let host_file = Path::new(env!("CARGO_MANIFEST_DIR")).join("Cargo.toml");
         if let Some(root) = std::env::var_os(PROBE) {
             let root = Path::new(&root);
-            assert!(!root.join("host-file").exists());
+            assert!(!host_file.exists());
             assert!(UnixStream::connect(root.join("ambient.sock")).is_err());
             assert!(fs::File::open("/dev/tty").is_err());
             fs::write(Path::new(JOURNEY_EVIDENCE).join("probe"), "private").unwrap();
             return;
         }
 
-        let root = std::env::current_dir()
-            .unwrap()
-            .join(format!(".journey-isolation-{}", std::process::id()));
+        assert!(host_file.is_file());
+        let root = Path::new("/tmp").join(format!("ebj-{}", std::process::id()));
+        fs::DirBuilder::new().mode(0o700).create(&root).unwrap();
+        let fixture = JourneyFixture(root);
+        let root = &fixture.0;
         let out = root.join("cobalt");
-        fs::create_dir_all(&out).unwrap();
-        fs::write(root.join("host-file"), "ambient").unwrap();
+        fs::create_dir(&out).unwrap();
         let socket = root.join("ambient.sock");
-        let listener = UnixListener::bind(&socket).unwrap();
+        let _listener = UnixListener::bind(&socket).unwrap();
         assert!(UnixStream::connect(&socket).is_ok());
         let exe = std::env::current_exe().unwrap();
         let shell = std::env::split_paths(&std::env::var_os("PATH").unwrap())
@@ -195,7 +208,7 @@ mod tests {
         let mut command = journey(&out, &exe, &shell, &[]).unwrap();
         let output = crate::sys::own_session_on_stdin(&mut command)
             .stdin(slave)
-            .env(PROBE, &root)
+            .env(PROBE, root)
             .arg("--")
             .arg(&exe)
             .args([
@@ -214,8 +227,6 @@ mod tests {
         ]);
         let blocked = run_until(&mut blocked, Some(Instant::now() + Duration::from_secs(2)));
         let was_ready = out.join("ready").is_file();
-        drop(listener);
-        fs::remove_dir_all(root).unwrap();
         assert!(
             output.status.success(),
             "{} {}",
