@@ -1385,6 +1385,7 @@ fn run_command(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use eon_workspace_protocol::v51::{PopupGeometry, Sidebar};
     use serde_json::json;
     use std::{collections::HashMap, sync::Condvar};
 
@@ -1684,67 +1685,137 @@ mod tests {
         }
     }
 
+    pub(super) fn quota_snapshot(quotas: &Quotas) -> Snapshot {
+        let mut snapshot = Snapshot {
+            focus: None,
+            input_lock: crate::fixtures::input_lock(),
+            input_locked: false,
+            released_shortcuts: Default::default(),
+            generation: "g1-00000000000000000000000000000001".into(),
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
+            workspace: String::new(),
+            active_workspace: String::new(),
+            workspaces: vec![],
+            active_tab: String::new(),
+            geometry: PopupGeometry {
+                side_margin: 0.0,
+                vertical_margin: 0.0,
+            },
+            entries: vec![],
+            tabs: vec![],
+            codex_quota: None,
+            claude_quota: None,
+            google_quota: None,
+            google_quota_failure: None,
+            codex_quota_failure: None,
+            claude_quota_failure: None,
+            running: None,
+            busy: None,
+            sidebar: Sidebar::Off,
+            attention_queue: vec![],
+        };
+        quotas.apply(&mut snapshot);
+        snapshot
+    }
+
     #[test]
     fn workers_isolate_failure_and_bound_output_timeout_and_shutdown() {
         let root = super::super::supervisor::temporary_directory();
-        let program = root.join("backend");
-        let (fixture, now) = fresh("codex");
-        let quota = normalize(&serde_json::to_vec(&fixture).unwrap(), "codex", now)
+        let program = root.join("blocked");
+        let (fixture, observed_at) = fresh("codex");
+        let quota = normalize(&serde_json::to_vec(&fixture).unwrap(), "codex", observed_at)
             .unwrap()
             .unwrap();
+        let started = root.join("started");
+        let release = root.join("release");
         script(
             &program,
             &format!(
-                "if [ \"$3\" = claude ]; then sleep 30; else printf '%s' '{}'; fi",
-                serde_json::to_string(&fixture).unwrap()
+                "[ \"$3\" != codex ] || : > '{}'
+                until [ -e '{}' ]; do sleep 0.1; done
+                exit 3",
+                started.display(),
+                release.display(),
             ),
         );
-        let (_stop, stopped) = mpsc::channel();
-        let started = Instant::now();
-        assert_eq!(
-            fetch(&program, "claude", Duration::from_millis(50), &stopped),
-            Err(Failure::Deadline)
-        );
-        assert!(started.elapsed() < Duration::from_secs(1));
-        let quotas = Quotas::start_every(
-            &program,
-            Duration::from_secs(1),
-            None,
-            &["codex_quota_5h", "claude_quota_5h"].map(String::from),
-        );
-        let deadline = Instant::now() + Duration::from_secs(2);
-        while quotas.codex.snapshot().is_none() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(10));
+        let watchdog = Duration::from_secs(30);
+        let (done, finished) = mpsc::channel();
+        let blocked = thread::spawn({
+            let release = release.clone();
+            move || {
+                let (_stop, stopped) = mpsc::channel();
+                assert_eq!(
+                    fetch(&program, "claude", Duration::from_millis(50), &stopped),
+                    Err(Failure::Deadline)
+                );
+                done.send(()).unwrap();
+
+                let clock = ManualClock::starting_at(T0);
+                let worker = Provider::start(
+                    program,
+                    "codex",
+                    UNIT,
+                    watchdog * 2,
+                    Arc::default(),
+                    None,
+                    false,
+                    Clock::Manual(Arc::clone(&clock)),
+                    None,
+                );
+                while !started.exists() && !release.exists() {
+                    thread::sleep(Duration::from_millis(10));
+                }
+                assert!(started.exists(), "the shutdown fixture never started");
+                let failure = Arc::clone(&worker.failure);
+                drop(worker);
+                assert!(
+                    clock.lock().workers.is_empty(),
+                    "shutdown left the worker running"
+                );
+                assert!(
+                    failure.lock().unwrap().is_none(),
+                    "the read was not cancelled"
+                );
+                done.send(()).unwrap();
+            }
+        });
+        let deadline = finished.recv_timeout(watchdog);
+        let shutdown = deadline.and_then(|()| finished.recv_timeout(watchdog));
+        if shutdown.is_err() {
+            // Let the fixture exit even if cancellation regressed.
+            fs::write(release, "").unwrap();
         }
-        assert_eq!(
-            quotas.codex.snapshot().unwrap().windows[0].remaining_percent,
-            76
-        );
-        assert!(quotas.claude.snapshot().is_none());
-        let started = Instant::now();
-        drop(quotas);
-        assert!(started.elapsed() < Duration::from_secs(1));
+        deadline.expect("deadline did not terminate the blocked backend");
+        shutdown.expect("shutdown did not cancel the blocked read");
+        blocked.join().unwrap();
+
+        let clock = ManualClock::starting_at(T0);
         let provider = Provider::start(
             root.join("missing"),
             "codex",
-            Duration::from_millis(20),
+            UNIT,
             Duration::from_secs(1),
             Arc::default(),
             None,
             false,
-            Clock::System,
+            Clock::Manual(Arc::clone(&clock)),
             None,
         );
+        clock.settle();
         *provider.quota.lock().unwrap() = Some(quota.clone());
-        // Several 20 ms intervals of failed reads leave a recent reading fresh, and say why.
-        thread::sleep(Duration::from_millis(200));
+        *provider.failure.lock().unwrap() = None;
+        let before_start_failure = epoch_seconds().unwrap();
+        clock.advance_to(T0 + milliseconds(UNIT));
+        clock.settle();
         let retained = provider.snapshot().unwrap();
         assert_eq!(retained.state, CodexQuotaState::Fresh);
-        assert_eq!(retained.windows[0].remaining_percent, 76);
+        assert_eq!(retained.windows, quota.windows);
         let failure = provider.failure().unwrap();
         assert_eq!(failure.reason, Failure::Start);
-        assert!(failure.at.abs_diff(epoch_seconds().unwrap()) < 5);
+        assert!((before_start_failure..=epoch_seconds().unwrap()).contains(&failure.at));
         drop(provider);
+        let (_stop, stopped) = mpsc::channel();
         let program = root.join("flood");
         script(&program, "while :; do printf '%01024d' 0; done");
         assert_eq!(
@@ -1787,80 +1858,73 @@ mod tests {
         // clears it; each provider's failure reaches its own snapshot field (eon-d0kyj).
         let mut rejected = fixture.clone();
         rejected[0]["usage"]["dataConfidence"] = json!("estimated");
-        let program = root.join("rejects");
-        script(
-            &program,
+        let reject = root.join("reject");
+        let claude_started = root.join("claude-started");
+        let finish_claude = root.join("finish-claude");
+        logging_backend(
+            &root,
             &format!(
-                "[ \"$3\" = claude ] && exit 3
-                count=$(cat '{count}' 2>/dev/null || echo 0); echo $((count + 1)) > '{count}'
-                case $count in 0) printf '%s' '{good}';; 1) printf '%s' '{rejected}';;
-                *) until [ -e '{go}' ]; do sleep 0.01; done; printf '%s' '{good}';; esac",
-                count = root.join("count").display(),
-                go = root.join("go").display(),
-                good = serde_json::to_string(&fixture).unwrap(),
-                rejected = serde_json::to_string(&rejected).unwrap(),
+                "wait_for_file() {{ until [ -e \"$1\" ]; do sleep 0.1; done; }}
+                if [ \"$3\" = claude ]; then
+                    : > '{started}'
+                    wait_for_file '{finish}'
+                    exit 3
+                fi
+                wait_for_file '{started}'
+                if [ -e '{reject}' ]; then printf '%s' '{rejected}'; else printf '%s' '{fixture}'; fi",
+                started = claude_started.display(),
+                finish = finish_claude.display(),
+                reject = reject.display(),
             ),
         );
-        let quotas = Quotas::start_every(
-            &program,
-            Duration::from_millis(1),
+        let (clock, quotas, _) = virtual_quotas(
+            &root,
             None,
             &["codex_quota_5h", "claude_quota_5h"].map(String::from),
         );
-        let mut snapshot = Snapshot {
-            focus: None,
-            input_lock: crate::fixtures::input_lock(),
-            input_locked: false,
-            released_shortcuts: Default::default(),
-            generation: "g1-00000000000000000000000000000001".into(),
-            created_build: "g1-00000000000000000000000000000001".into(),
-            active_build: "g1-00000000000000000000000000000001".into(),
-            workspace: String::new(),
-            active_workspace: String::new(),
-            workspaces: vec![],
-            active_tab: String::new(),
-            geometry: eon_workspace_protocol::v51::PopupGeometry {
-                side_margin: 0.0,
-                vertical_margin: 0.0,
-            },
-            entries: vec![],
-            tabs: vec![],
-            codex_quota: None,
-            claude_quota: None,
-            google_quota: None,
-            google_quota_failure: None,
-            codex_quota_failure: None,
-            claude_quota_failure: None,
-            running: None,
-            busy: None,
-            sidebar: eon_workspace_protocol::v51::Sidebar::Off,
-            attention_queue: vec![],
-        };
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while (snapshot.codex_quota_failure.is_none() || snapshot.claude_quota_failure.is_none())
-            && Instant::now() < deadline
-        {
-            thread::sleep(Duration::from_millis(5));
-            quotas.apply(&mut snapshot);
+        // Codex can answer only after Claude starts, and Claude needs our release to exit.
+        let publish_by = Instant::now() + watchdog;
+        while quotas.codex.snapshot().is_none() && Instant::now() < publish_by {
+            thread::sleep(Duration::from_millis(10));
         }
-        let failure = snapshot.codex_quota_failure.unwrap();
-        assert_eq!(failure.reason, Failure::Estimated);
-        assert!(failure.at.abs_diff(epoch_seconds().unwrap()) < 5);
+        let mut snapshot = quota_snapshot(&quotas);
+        fs::write(finish_claude, "").unwrap();
+        assert!(snapshot.claude_quota_failure.is_none());
         assert_eq!(
-            snapshot.codex_quota.as_ref().unwrap().windows,
+            snapshot
+                .codex_quota
+                .as_ref()
+                .expect("Codex did not publish while Claude was blocked")
+                .windows,
             quota.windows
         );
+        assert!(snapshot.codex_quota_failure.is_none());
+
+        clock.settle();
+        quotas.apply(&mut snapshot);
         assert_eq!(
             snapshot.claude_quota_failure.unwrap().reason,
             Failure::ExitStatus
         );
         assert!(snapshot.claude_quota.is_none());
-        fs::write(root.join("go"), "").unwrap();
+
+        fs::write(&reject, "").unwrap();
+        let before_rejection = epoch_seconds().unwrap();
+        clock.advance_to(T0 + milliseconds(UNIT * CODEX_UNITS));
+        clock.settle();
         quotas.apply(&mut snapshot);
-        while snapshot.codex_quota_failure.is_some() && Instant::now() < deadline {
-            thread::sleep(Duration::from_millis(5));
-            quotas.apply(&mut snapshot);
-        }
+        let failure = snapshot.codex_quota_failure.unwrap();
+        assert_eq!(failure.reason, Failure::Estimated);
+        assert!((before_rejection..=epoch_seconds().unwrap()).contains(&failure.at));
+        assert_eq!(
+            snapshot.codex_quota.as_ref().unwrap().windows,
+            quota.windows
+        );
+
+        fs::remove_file(reject).unwrap();
+        clock.advance_to(T0 + milliseconds(UNIT * CODEX_UNITS * 2));
+        clock.settle();
+        quotas.apply(&mut snapshot);
         assert!(snapshot.codex_quota_failure.is_none());
         assert!(snapshot.codex_quota.is_some());
         drop(quotas);

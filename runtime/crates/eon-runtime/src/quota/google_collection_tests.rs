@@ -1,5 +1,7 @@
-use super::{tests::script, *};
-use eon_workspace_protocol::v51::{PopupGeometry, Sidebar};
+use super::{
+    tests::{quota_snapshot as snapshot, script},
+    *,
+};
 use serde_json::json;
 use std::os::unix::fs::{PermissionsExt, symlink};
 
@@ -56,40 +58,6 @@ fn start_google(program: &Path, unit: Duration, store: Option<PathBuf>) -> Quota
         store,
         &widgets(),
     )
-}
-
-fn snapshot(quotas: &Quotas) -> Snapshot {
-    let mut snapshot = Snapshot {
-        focus: None,
-        input_lock: crate::fixtures::input_lock(),
-        input_locked: false,
-        released_shortcuts: Default::default(),
-        generation: "g1-00000000000000000000000000000001".into(),
-        created_build: "g1-00000000000000000000000000000001".into(),
-        active_build: "g1-00000000000000000000000000000001".into(),
-        workspace: String::new(),
-        active_workspace: String::new(),
-        workspaces: vec![],
-        active_tab: String::new(),
-        geometry: PopupGeometry {
-            side_margin: 0.0,
-            vertical_margin: 0.0,
-        },
-        entries: vec![],
-        tabs: vec![],
-        codex_quota: None,
-        claude_quota: None,
-        google_quota: None,
-        google_quota_failure: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        running: None,
-        busy: None,
-        sidebar: Sidebar::Off,
-        attention_queue: vec![],
-    };
-    quotas.apply(&mut snapshot);
-    snapshot
 }
 
 #[test]
