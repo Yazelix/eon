@@ -49,6 +49,7 @@ use std::{
     sync::{
         Mutex, OnceLock,
         atomic::{AtomicBool, Ordering},
+        mpsc,
     },
 };
 
@@ -436,6 +437,7 @@ pub(super) struct Host {
     moved: Option<((SlotGeometry, SlotGeometry), u32)>,
     /// Rune is closing the window: an exit needs no second close.
     closing: bool,
+    storms: Storms,
 }
 
 impl Host {
@@ -674,6 +676,31 @@ impl Host {
         // Input queued since the last move used a geometry the window no longer has.
         self.withdraw_surface();
         true
+    }
+
+    /// A raw event, counted once (typed callbacks share its cause): Venus settles size and scale;
+    /// other events are unknown, never a no-op. True when the callback must finish.
+    fn raw(&mut self, event: &WindowEvent, scale: impl FnOnce() -> f64, now: Instant) -> bool {
+        let kind = Kind::of(event);
+        let (size, scale) = match *event {
+            WindowEvent::Resized(size) => (Some((size.width, size.height)), None),
+            WindowEvent::ScaleFactorChanged { scale_factor, .. } => (None, Some(scale_factor)),
+            // On macOS a drag across displays rescales the drawable before winit reports the scale.
+            WindowEvent::Moved(_) => (None, Some(scale())),
+            _ => {
+                self.storms.count(kind, Effect::Unknown, now);
+                return false;
+            }
+        };
+        let (applied, raw, failed) = (self.geometry.is_some(), self.raw, self.check_failure());
+        let finish = failed || self.raw_geometry(size, scale);
+        let outcome = match (self.raw != raw, applied && !failed && kind != Kind::Moved) {
+            (true, _) => Effect::Productive,
+            (false, true) => Effect::NoOp,
+            (false, false) => Effect::Unknown,
+        };
+        self.storms.count(kind, outcome, now);
+        finish
     }
 
     fn user_event(&mut self, event: UserEvent, tx: &mut Tx) {
@@ -931,17 +958,9 @@ fn on_geometry(host: &mut Host, geometry: WindowGeometry, tx: &mut Tx) -> bool {
 
 /// Structural events withdraw geometry before any pending receipt can be applied.
 fn on_window_event(host: &mut Host, window: &Window, event: &WindowEvent, tx: &mut Tx) -> bool {
-    let (size, scale) = match *event {
-        WindowEvent::Resized(size) => (Some((size.width, size.height)), None),
-        WindowEvent::ScaleFactorChanged { scale_factor, .. } => (None, Some(scale_factor)),
-        // On macOS a drag across displays rescales the drawable before winit reports the scale.
-        WindowEvent::Moved(_) => (None, Some(window.scale_factor())),
-        _ => return host.native_event(event, tx),
-    };
-    if !host.check_failure() && !host.raw_geometry(size, scale) {
-        return false;
-    }
-    host.finish(tx)
+    // Input goes on to Venus; `native_event` ignores the size and scale events `raw` settles.
+    (host.raw(event, || window.scale_factor(), Instant::now()) && host.finish(tx))
+        || host.native_event(event, tx)
 }
 
 fn on_focus(host: &mut Host, focused: bool, tx: &mut Tx) {
@@ -1133,6 +1152,7 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         slot: None,
         moved: None,
         closing: false,
+        storms: Storms::default(),
     };
     app = app.init(move || host);
     let _ = EXIT_FAILURE.set(failure.clone());
@@ -1153,6 +1173,136 @@ fn exit_status() {
         eprintln!("venus-rune-candidate: {message}");
         std::process::exit(1);
     }
+}
+
+/// A native window event's variant for the storm detector, without its payload.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Kind {
+    Resized,
+    Moved,
+    Scale,
+    Focused,
+    Occluded,
+    Keyboard,
+    Modifiers,
+    Ime,
+    Pointer,
+    Other,
+}
+
+const KINDS: [Kind; 10] = {
+    use Kind::*;
+    [
+        Resized, Moved, Scale, Focused, Occluded, Keyboard, Modifiers, Ime, Pointer, Other,
+    ]
+};
+
+impl Kind {
+    fn of(event: &WindowEvent) -> Self {
+        match event {
+            WindowEvent::Resized(_) => Self::Resized,
+            WindowEvent::Moved(_) => Self::Moved,
+            WindowEvent::ScaleFactorChanged { .. } => Self::Scale,
+            WindowEvent::Focused(_) => Self::Focused,
+            WindowEvent::Occluded(_) => Self::Occluded,
+            WindowEvent::KeyboardInput { .. } => Self::Keyboard,
+            WindowEvent::ModifiersChanged(_) => Self::Modifiers,
+            WindowEvent::Ime(_) => Self::Ime,
+            WindowEvent::CursorMoved { .. } | WindowEvent::MouseWheel { .. } => Self::Pointer,
+            _ => Self::Other,
+        }
+    }
+}
+
+/// What a raw event did: Venus changed state, Venus settled it unchanged, or it went on unseen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Effect {
+    Productive,
+    NoOp,
+    Unknown,
+}
+
+/// Per variant, the count of each outcome in one bucket.
+type Counts = [[u32; 3]; KINDS.len()];
+type Storm = (Kind, [u32; 3], [u32; 3]); // A warning: a variant and its two buckets' counts.
+
+/// Fixed diagnostic bounds (eon-33cww.3 records why): a storm is at least 256 no-ops, at least
+/// 95% of the variant's events and none unknown, in each of two consecutive 1 s buckets.
+const STORM_NO_OPS: u32 = 256;
+const STORM_PERCENT: u64 = 95;
+const STORM_QUIET: Duration = Duration::from_secs(60);
+
+/// The event-storm detector: 1 s buckets from the first event, closed by the next event's arrival.
+#[derive(Default)]
+struct Storms {
+    origin: Option<Instant>,
+    bucket: u64,
+    previous: Counts,
+    current: Counts,
+    warned: Option<Instant>,
+    writer: Option<mpsc::SyncSender<Storm>>,
+}
+
+impl Storms {
+    fn count(&mut self, kind: Kind, outcome: Effect, now: Instant) {
+        let origin = *self.origin.get_or_insert(now);
+        let bucket = now.saturating_duration_since(origin).as_secs();
+        if bucket > self.bucket {
+            self.close(bucket, now);
+        }
+        let count = &mut self.current[kind as usize][outcome as usize];
+        *count = count.saturating_add(1);
+    }
+
+    /// Judges the closing bucket with the one before it; a skipped bucket breaks the streak.
+    fn close(&mut self, bucket: u64, now: Instant) {
+        let (previous, current) = (&self.previous, &self.current);
+        if let Some(kind) = KINDS.into_iter().find(|&kind| {
+            storm_bucket(previous[kind as usize]) && storm_bucket(current[kind as usize])
+        }) && self.warned.is_none_or(|at| now - at >= STORM_QUIET)
+        {
+            self.warned = Some(now);
+            let storm = (kind, previous[kind as usize], current[kind as usize]);
+            let writer = self
+                .writer
+                .get_or_insert_with(|| storm_writer(write_stderr));
+            // A busy or gone writer drops the warning: stderr never stalls the native thread.
+            let _ = writer.try_send(storm);
+        }
+        self.previous = std::mem::take(&mut self.current);
+        if bucket > self.bucket + 1 {
+            self.previous = Counts::default();
+        }
+        self.bucket = bucket;
+    }
+}
+
+fn storm_bucket([productive, no_ops, unknown]: [u32; 3]) -> bool {
+    let events = u64::from(productive) + u64::from(no_ops);
+    unknown == 0 && no_ops >= STORM_NO_OPS && u64::from(no_ops) * 100 >= events * STORM_PERCENT
+}
+
+/// One write, which a pipe keeps whole, to the stderr the supervisor relays into its log.
+fn write_stderr(line: &[u8]) {
+    while let Err(rustix::io::Errno::INTR) = rustix::io::write(io::stderr(), line) {}
+}
+
+/// The thread that writes warnings as lines; one more may wait while it writes, later ones drop.
+fn storm_writer(mut write: impl FnMut(&[u8]) + Send + 'static) -> mpsc::SyncSender<Storm> {
+    let (sender, storms) = mpsc::sync_channel::<Storm>(1);
+    let _ = thread::Builder::new()
+        .name("venus-storm-warn".into())
+        .spawn(move || {
+            for (kind, [p1, n1, _], [p2, n2, _]) in storms {
+                let (e1, e2) = (u64::from(p1) + u64::from(n1), u64::from(p2) + u64::from(n2));
+                let line = format!(
+                    "venus: WARN event storm: {kind:?} no-ops {n1}/{e1} then {n2}/{e2} in two \
+                     consecutive 1 s windows (at most one warning per 60 s)\n"
+                );
+                write(line.as_bytes());
+            }
+        });
+    sender
 }
 
 #[cfg(test)]
