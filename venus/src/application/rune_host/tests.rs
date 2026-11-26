@@ -785,7 +785,8 @@ fn stage_in(
             hook_calls: 1,
             slot: Some(drawn),
             moved: None,
-            refusal: None
+            refusal: None,
+            clip: None,
         },
     ));
 }
@@ -920,6 +921,7 @@ fn resize_and_occlusion_supersede_queued_frames_and_moved_slots_never_admit() {
                 hook_calls: 1,
                 slot: None,
                 refusal: None,
+                clip: None,
                 moved: Some(SlotGeometry::new([0.0, 0.0, 800.0, 600.0], 1.0)),
             },
         ));
@@ -931,6 +933,7 @@ fn resize_and_occlusion_supersede_queued_frames_and_moved_slots_never_admit() {
             hook_calls: 1,
             slot: None,
             refusal: None,
+            clip: None,
             moved: Some(SlotGeometry::new([0.0, 0.0, 800.0, 600.0], 1.0)),
         },
     ));

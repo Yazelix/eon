@@ -165,3 +165,30 @@ VK_ICD_FILENAMES=<mesa>/share/vulkan/icd.d/lvp_icd.x86_64.json \
   timeout 600s cargo test --locked -p yazelix-venus --features candidate-rune \
   --lib rune_hosted_grid_matches_the_venus_parent -- --ignored
 ```
+
+### Generated active-terminal parity
+
+The feature-on `eon-test` suite runs `rune_differential_noop` to check
+deterministic traces, prepared state and replay. The GPU tests compare the
+selected terminal's prepared state and exact RGBA bytes at every step. Traces
+cover cell styles and widths, cursor blink, image placement and removal,
+scale changes, pane selection, popup visibility, and zoom.
+
+Run in the dev shell with packaged fonts and a headless adapter. On Linux,
+set the Vulkan loader library path and lavapipe ICD as for the fixture probe.
+On Apple Silicon use a native dev shell with Metal. The forced clip test
+requires a real one-pixel difference and decodes both reported PNGs.
+
+```sh
+cargo test --locked -p yazelix-venus --features candidate-rune \
+  --lib rune_differential -- --ignored --nocapture --test-threads=1
+```
+
+The default campaign runs 8 seeds × 16 steps. Seed 0 guarantees transition
+coverage and the other seeds choose every operation from the generator. Set
+`EON_VENUS_TEST_RUNE_DIFF_SOAK=smoke` for 2 × 64, or
+`EON_VENUS_TEST_RUNE_DIFF_SOAK=1` for 256 × 64. Use the
+`rune_differential_default_or_soak` filter to run only the campaign and a
+20-minute watchdog for the full soak. Set `EON_VENUS_TEST_RUNE_DIFF_DIR` to
+an existing scratch directory for the reduced failure's PNGs. An unset or
+empty value uses the system temporary directory.

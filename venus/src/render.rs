@@ -1476,6 +1476,8 @@ pub struct Renderer {
     grid_rebuilds: u64,
     #[cfg(test)]
     glyphon_prepares: u64,
+    #[cfg(all(test, feature = "candidate-rune"))]
+    differential_image_vertices: Vec<u8>,
     windowed: Option<WindowedTarget>,
     device: wgpu::Device,
     device_lost: Arc<AtomicBool>,
@@ -1893,6 +1895,8 @@ impl Renderer {
             grid_rebuilds: 0,
             #[cfg(test)]
             glyphon_prepares: 0,
+            #[cfg(all(test, feature = "candidate-rune"))]
+            differential_image_vertices: Vec::new(),
             windowed,
             device,
             device_lost,
@@ -2726,6 +2730,9 @@ impl Renderer {
         self.row_text.finish();
         self.cursor_vertex_boundary = cursor_vertex_boundary;
         self.upload_vertices(&rectangles.bytes);
+        #[cfg(all(test, feature = "candidate-rune"))]
+        self.differential_image_vertices
+            .clone_from(&rectangles.image_bytes);
         self.images.prepare(
             &self.device,
             &self.queue,

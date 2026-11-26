@@ -537,6 +537,8 @@ pub(crate) mod rune_host {
         /// Where the slot drew when it had moved since it was prepared further than the pass's
         /// `Fit` allows (a resize landing between the two); the grid did not draw.
         pub(crate) moved: Option<SlotGeometry>,
+        #[cfg(test)]
+        pub(crate) clip: Option<[f32; 4]>,
     }
 
     /// Runs Rune's frame pass, drawing `prepared`'s renderer at the grid slot when the slot
@@ -559,6 +561,8 @@ pub(crate) mod rune_host {
         let mut moved = None;
         let mut calls = 0;
         let mut slot = None;
+        #[cfg(test)]
+        let mut clip = None;
         f.ui.draw_with(f.encoder, f.target, RUNE_CLEAR, &mut |pass,
                                                               site: &EffectSite<
             '_,
@@ -589,12 +593,18 @@ pub(crate) mod rune_host {
                 Ok(()) => slot = Some(at),
                 Err(error) => refusal = Some(error.to_string()),
             }
+            #[cfg(test)]
+            if slot == Some(at) {
+                clip = Some(site.instance.clip);
+            }
         });
         Drawn {
             hook_calls: calls,
             slot,
             refusal,
             moved,
+            #[cfg(test)]
+            clip,
         }
     }
 }

@@ -5,6 +5,10 @@ use crate::rune_candidate::{Entry, Failure, Fit, STEP_COUNT, SlotGeometry, rune_
 use images::DrawStep;
 use rune::Compositor;
 
+#[path = "../../../tests/support/canonical.rs"]
+mod canonical;
+mod differential;
+
 #[test]
 fn hosted_steps_prepare_images_and_text_in_painter_order() {
     let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
@@ -96,32 +100,16 @@ impl Probe {
         parent: &[u8],
     ) {
         if let Some(out) = &self.out {
-            rune::render::write_png(
-                &out.join(format!("{name}-rune.png")),
-                width,
-                height,
-                candidate,
-            )
-            .unwrap();
-            rune::render::write_png(
-                &out.join(format!("{name}-parent.png")),
-                width,
-                height,
-                parent,
-            )
-            .unwrap();
+            for (side, pixels) in [("rune", candidate), ("parent", parent)] {
+                let path = out.join(format!("{name}-{side}.png"));
+                rune::render::write_png(&path, width, height, pixels).unwrap();
+            }
         }
-        let differing = candidate
-            .as_chunks::<4>()
-            .0
-            .iter()
-            .zip(parent.as_chunks::<4>().0)
-            .filter(|(a, b)| a != b)
-            .count();
-        eprintln!("probe {name}: {differing} differing pixels");
-        if candidate.len() != parent.len() || differing > 0 {
-            self.failures
-                .push(format!("{name}: {differing} pixels differ"));
+        let difference = differential::pixel_difference((width, height), [parent, candidate]);
+        let count = difference.map_or(0, |(_, _, count)| count);
+        eprintln!("probe {name}: {count} differing pixels");
+        if let Some(difference) = difference {
+            self.failures.push(format!("{name}: {difference:?}"));
         }
     }
 }
@@ -136,6 +124,23 @@ fn packaged_fonts() -> FontSetup {
     .unwrap()
 }
 
+fn probe_terminal(
+    gpu: &rune::render::Gpu,
+    format: wgpu::TextureFormat,
+    size: (u32, u32),
+    scale: f64,
+) -> Renderer {
+    Renderer::hosted(
+        gpu.device.clone(),
+        gpu.queue.clone(),
+        format,
+        size,
+        scale,
+        packaged_fonts(),
+    )
+    .unwrap()
+}
+
 /// Draws one candidate frame of `rt` through the production compositor into a fresh target.
 fn candidate_frame(
     gpu: &rune::render::Gpu,
@@ -146,6 +151,18 @@ fn candidate_frame(
 ) -> Vec<u8> {
     let format = ui.format();
     let target = rune::render::Offscreen::with_format(&gpu.device, size.0, size.1, format);
+    read_candidate(gpu, ui, rt, size, &target, render)
+}
+
+fn read_candidate<S: 'static>(
+    gpu: &rune::render::Gpu,
+    ui: &mut rune::render::Renderer,
+    rt: &mut rune::Runtime<S>,
+    size: (u32, u32),
+    target: &rune::render::Offscreen,
+    render: impl FnOnce(&mut rune::Frame<'_, S>),
+) -> Vec<u8> {
+    let format = ui.format();
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     {
         let mut frame = rune::Frame {
@@ -171,9 +188,16 @@ fn candidate_frame(
 /// cleared with the scene background, with no backdrop.
 fn parent_frame(gpu: &rune::render::Gpu, parent: &mut Renderer, entry: &mut Entry) -> Vec<u8> {
     entry.sync_images(parent);
+    prepare_parent(parent, entry.scene(), entry.generation, true);
+    let size = parent.size();
+    let target = rune::render::Offscreen::new(&gpu.device, size.width, size.height);
+    read_parent(gpu, parent, &target, true)
+}
+
+fn prepare_parent(parent: &mut Renderer, scene: &Scene, generation: u64, blink: bool) {
     parent
         .prepare_frame(
-            Some(entry.scene()),
+            Some(scene),
             None,
             0.0,
             None,
@@ -181,13 +205,19 @@ fn parent_frame(gpu: &rune::render::Gpu, parent: &mut Renderer, entry: &mut Entr
             None,
             WorkspaceFocus::Terminal,
             "",
-            true,
+            blink,
             "",
-            entry.generation,
+            generation,
         )
         .unwrap();
-    let size = parent.size();
-    let target = rune::render::Offscreen::new(&gpu.device, size.width, size.height);
+}
+
+fn read_parent(
+    gpu: &rune::render::Gpu,
+    parent: &mut Renderer,
+    target: &rune::render::Offscreen,
+    visible: bool,
+) -> Vec<u8> {
     let mut encoder = gpu.device.create_command_encoder(&Default::default());
     {
         let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
@@ -196,13 +226,19 @@ fn parent_frame(gpu: &rune::render::Gpu, parent: &mut Renderer, entry: &mut Entr
                 depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(parent.clear),
+                    load: LoadOp::Clear(if visible {
+                        parent.clear
+                    } else {
+                        wgpu::Color::BLACK
+                    }),
                     store: StoreOp::Store,
                 },
             })],
             ..Default::default()
         });
-        parent.draw_into(&mut pass).unwrap();
+        if visible {
+            parent.draw_into(&mut pass).unwrap();
+        }
     }
     target.copy(&mut encoder);
     gpu.queue.submit([encoder.finish()]);
@@ -283,15 +319,7 @@ fn disallow_incompatible_passes(gpu: &rune::render::Gpu) {
     let size = (640, 320);
     let points = (size.0 as f32, size.1 as f32);
     let format = OFFSCREEN.remove_srgb_suffix();
-    let mut renderer = Renderer::hosted(
-        gpu.device.clone(),
-        gpu.queue.clone(),
-        format,
-        size,
-        1.0,
-        packaged_fonts(),
-    )
-    .unwrap();
+    let mut renderer = probe_terminal(gpu, format, size, 1.0);
     let entry = Entry::new().unwrap();
     renderer
         .prepare_hosted(entry.scene(), (None, 0.0), true, entry.generation, "", "")
@@ -414,15 +442,7 @@ fn rune_hosted_grid_matches_the_venus_parent() {
         let failure = Failure::default();
         let mut compositor =
             rune_host::GridCompositor::new(packaged_fonts(), failure.clone(), None);
-        let mut parent = Renderer::hosted(
-            gpu.device.clone(),
-            gpu.queue.clone(),
-            OFFSCREEN,
-            size,
-            f64::from(scale),
-            packaged_fonts(),
-        )
-        .unwrap();
+        let mut parent = probe_terminal(&gpu, OFFSCREEN, size, f64::from(scale));
         let mut parent_entry = Entry::new().unwrap();
         for index in 0..=STEP_COUNT + usize::from(scale == 1.0) {
             let tiled = index > STEP_COUNT;
@@ -496,15 +516,7 @@ fn rune_hosted_grid_matches_the_venus_parent() {
     let candidate = candidate_frame(&gpu, &mut ui, &mut rt, size, |f| compositor.render(f));
     assert_eq!(failure.get(), None);
     assert!(compositor.drew);
-    let mut parent = Renderer::hosted(
-        gpu.device.clone(),
-        gpu.queue.clone(),
-        OFFSCREEN,
-        (SLOT[2] as u32, SLOT[3] as u32),
-        1.0,
-        packaged_fonts(),
-    )
-    .unwrap();
+    let mut parent = probe_terminal(&gpu, OFFSCREEN, (SLOT[2] as u32, SLOT[3] as u32), 1.0);
     let parent_pixels = parent_frame(&gpu, &mut parent, &mut Entry::new().unwrap());
     let pixel = |pixels: &[u8], width: u32, x: u32, y: u32| {
         let at = ((y * width + x) * 4) as usize;

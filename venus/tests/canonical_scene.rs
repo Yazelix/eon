@@ -1,14 +1,12 @@
 #![forbid(unsafe_code)]
 
-use eon_workspace_protocol::v51::{ALT, Pane, SHIFT, Shortcut, Snapshot, Tab};
+use eon_workspace_protocol::v51::{Pane, Snapshot, Tab};
 use orbit_protocol::{
-    Capabilities, Cell, CellStyle, CellWidth, Colors, Cursor, CursorShape, CursorViewport,
-    Dimensions, Frame, Graphics, ImageLayer, Placement, PlacementState, Rgb, Row, Screen,
-    SourceRect, StyleColor, Underline,
+    CellWidth, Frame, Graphics, PlacementState, Rgb, Row, Screen, SourceRect,
     session::{
         self, ClipboardLocation, Failure, FailureCode, PixelFormat, PreviewOutcome,
-        RESOURCE_CHUNK_BYTES, ResourceAnnounce, ResourceChunk, ScrollOutcome, ServerMessage,
-        VerticalDirection, VerticalPreview, WheelOutcome,
+        RESOURCE_CHUNK_BYTES, ResourceAnnounce, ScrollOutcome, ServerMessage, VerticalDirection,
+        VerticalPreview, WheelOutcome,
     },
 };
 use winit::dpi::PhysicalSize;
@@ -18,76 +16,18 @@ use yazelix_venus::{
     SessionModel, WorkspaceHit, WorkspaceScene,
 };
 
-fn fixture_input_lock() -> Shortcut {
-    Shortcut {
-        modifiers: ALT | SHIFT,
-        key: "KeyI".into(),
-    }
-}
+#[path = "support/canonical.rs"]
+mod canonical;
+use canonical::{
+    announce, chunk, column, frame, frame_message, pane, placement, popup_snapshot,
+    workspace_snapshot,
+};
 
 #[test]
 fn shared_popup_projection_keeps_hidden_work_and_one_input_surface() {
     use eon_workspace_protocol::v51 as wire;
     use yazelix_venus::WorkspaceModel;
-    let mut snapshot = wire::Snapshot {
-        focus: None,
-        released_shortcuts: Default::default(),
-        input_locked: false,
-        input_lock: fixture_input_lock(),
-        generation: "g1-00000000000000000000000000000001".into(),
-        created_build: "g1-00000000000000000000000000000001".into(),
-        active_build: "g1-00000000000000000000000000000001".into(),
-        workspace: "s1".into(),
-        active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
-            id: "s1".into(),
-            persistent_id: Some("s1".into()),
-            registration_error: None,
-            name: None,
-            tab_count: 1,
-            attention: None,
-            recency: 0,
-        }],
-        active_tab: "t1".into(),
-        geometry: wire::PopupGeometry {
-            side_margin: 8.0,
-            vertical_margin: 4.0,
-        },
-        entries: vec![wire::PopupEntry {
-            id: "agent".into(),
-            label: "Agent".into(),
-            shortcut: wire::PopupKey::Bound(wire::Shortcut {
-                modifiers: wire::ALT | wire::SHIFT,
-                key: "KeyL".into(),
-            }),
-        }],
-        tabs: vec![wire::Tab {
-            id: "t1".into(),
-            directory: b"/work".to_vec(),
-            pending: false,
-            selected_pane: None,
-            selected_popup: Some("u1".into()),
-            columns: Vec::new(),
-            popups: vec![wire::Popup {
-                id: "u1".into(),
-                entry: "agent".into(),
-                session: "s1".into(),
-                endpoint: b"/run/agent.sock".to_vec(),
-                attention: None,
-            }],
-            attention_rollup: None,
-        }],
-        codex_quota: None,
-        claude_quota: None,
-        google_quota: None,
-        google_quota_failure: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        running: None,
-        busy: None,
-        sidebar: eon_workspace_protocol::v51::Sidebar::Open,
-        attention_queue: Vec::new(),
-    };
+    let mut snapshot = popup_snapshot();
     let mut model = WorkspaceModel::default();
     let apply = |model: &mut WorkspaceModel, snapshot: &wire::Snapshot| {
         let bytes = wire::encode_response(&wire::Response::Snapshot(snapshot.clone())).unwrap();
@@ -159,7 +99,7 @@ fn scrollback_label_follows_only_current_authoritative_frames()
             rows_from_live: distance,
             history_rows: history,
         };
-        apply_wire(&mut model, ServerMessage::Frame(Box::new(next)))?;
+        apply_wire(&mut model, frame_message(next))?;
         assert_eq!(model.scrollback_label().as_deref(), expected);
         assert_eq!(model.rows_from_live(), Some(distance));
     }
@@ -168,18 +108,13 @@ fn scrollback_label_follows_only_current_authoritative_frames()
         rows_from_live: 12,
         history_rows: 240,
     };
-    apply_wire(&mut model, ServerMessage::Frame(Box::new(held.clone())))?;
+    apply_wire(&mut model, frame_message(held.clone()))?;
     apply_wire(
         &mut model,
-        ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: held.revision,
-            direction: VerticalDirection::Up,
-            outcome: PreviewOutcome::Viewport {
-                cols: held.dimensions.cols,
-                edge_reached: false,
-                rows: held.rows.clone(),
-            },
-        }),
+        upward_preview(
+            held.revision,
+            viewport(held.dimensions.cols, held.rows.clone()),
+        ),
     )?;
     assert_eq!(model.scrollback_label().as_deref(), Some("↓ 12 rows"));
     model.clear_viewport_preview();
@@ -209,7 +144,7 @@ fn scrollback_label_follows_only_current_authoritative_frames()
         "input rejection is not a new frame"
     );
     held.revision = 9;
-    apply_wire(&mut model, ServerMessage::Frame(Box::new(held.clone())))?;
+    apply_wire(&mut model, frame_message(held.clone()))?;
     assert_eq!(model.scrollback_label().as_deref(), Some("↓ 12 rows"));
     model.prepare_reconnect();
     assert!(model.scene().is_some(), "recovery retains old pixels");
@@ -217,12 +152,9 @@ fn scrollback_label_follows_only_current_authoritative_frames()
     assert_eq!(model.rows_from_live(), None);
     apply_wire(&mut model, ServerMessage::Attached)?;
     assert_eq!(model.scrollback_label(), None);
-    apply_wire(&mut model, ServerMessage::Frame(Box::new(held)))?;
+    apply_wire(&mut model, frame_message(held))?;
     assert_eq!(model.scrollback_label().as_deref(), Some("↓ 12 rows"));
-    apply_wire(
-        &mut model,
-        ServerMessage::Frame(Box::new(frame(10, Screen::Alternate))),
-    )?;
+    apply_wire(&mut model, frame_message(frame(10, Screen::Alternate)))?;
     assert_eq!(model.scrollback_label(), None);
     assert_eq!(model.rows_from_live(), Some(0));
     assert_eq!(SessionModel::new().scrollback_label(), None);
@@ -231,100 +163,64 @@ fn scrollback_label_follows_only_current_authoritative_frames()
 
 #[test]
 fn eon_workspace_becomes_one_bounded_native_accordion() {
-    let snapshot = Snapshot {
-        focus: None,
-        released_shortcuts: Default::default(),
-        input_locked: false,
-        input_lock: fixture_input_lock(),
-        generation: "g1-00000000000000000000000000000001".into(),
-        created_build: "g1-00000000000000000000000000000001".into(),
-        active_build: "g1-00000000000000000000000000000001".into(),
-        workspace: "s1".into(),
-        active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
-            id: "s1".into(),
-            persistent_id: Some("s1".into()),
-            registration_error: None,
-            name: None,
-            tab_count: 2,
-            attention: None,
-            recency: 0,
-        }],
-        active_tab: "t1".into(),
-        tabs: vec![
-            Tab {
-                pending: false,
-                selected_popup: None,
-                popups: Vec::new(),
-                id: "t1".into(),
-                directory: b"/tmp/eon".to_vec(),
-                selected_pane: Some("pane-2".into()),
-                columns: vec![eon_workspace_protocol::v51::Column {
-                    panes: vec![
-                        Pane {
-                            label: "pane-1".into(),
-                            pinned_name: None,
-                            tag: None,
-                            id: "pane-1".into(),
-                            session: "terminal-1".into(),
-                            endpoint: b"/run/eon/orbit.sock".to_vec(),
-                            live: true,
-                            attention: None,
-                        },
-                        Pane {
-                            label: "pane-2".into(),
-                            pinned_name: None,
-                            tag: None,
-                            id: "pane-2".into(),
-                            session: "terminal-2".into(),
-                            endpoint: b"/run/eon/terminal-2.sock".to_vec(),
-                            live: true,
-                            attention: None,
-                        },
-                    ],
-                    expanded: "pane-2".into(),
-                }],
-                attention_rollup: None,
-            },
-            Tab {
-                pending: false,
-                selected_popup: None,
-                popups: Vec::new(),
-                id: "t2".into(),
-                directory: b"/tmp/nova".to_vec(),
-                selected_pane: Some("pane-3".into()),
-                columns: vec![eon_workspace_protocol::v51::Column {
-                    panes: vec![Pane {
-                        label: "pane-3".into(),
+    let snapshot = workspace_snapshot(vec![
+        Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: "t1".into(),
+            directory: b"/tmp/eon".to_vec(),
+            selected_pane: Some("pane-2".into()),
+            columns: vec![eon_workspace_protocol::v51::Column {
+                panes: vec![
+                    Pane {
+                        label: "pane-1".into(),
                         pinned_name: None,
                         tag: None,
-                        id: "pane-3".into(),
-                        session: "terminal-3".into(),
-                        endpoint: b"/run/eon/terminal-3.sock".to_vec(),
-                        live: false,
+                        id: "pane-1".into(),
+                        session: "terminal-1".into(),
+                        endpoint: b"/run/eon/orbit.sock".to_vec(),
+                        live: true,
                         attention: None,
-                    }],
-                    expanded: "pane-3".into(),
-                }],
-                attention_rollup: None,
-            },
-        ],
-        geometry: eon_workspace_protocol::v51::PopupGeometry {
-            side_margin: 8.0,
-            vertical_margin: 4.0,
+                    },
+                    Pane {
+                        label: "pane-2".into(),
+                        pinned_name: None,
+                        tag: None,
+                        id: "pane-2".into(),
+                        session: "terminal-2".into(),
+                        endpoint: b"/run/eon/terminal-2.sock".to_vec(),
+                        live: true,
+                        attention: None,
+                    },
+                ],
+                expanded: "pane-2".into(),
+            }],
+            attention_rollup: None,
         },
-        entries: Vec::new(),
-        codex_quota: None,
-        claude_quota: None,
-        google_quota: None,
-        google_quota_failure: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        running: None,
-        busy: None,
-        sidebar: eon_workspace_protocol::v51::Sidebar::Open,
-        attention_queue: Vec::new(),
-    };
+        Tab {
+            pending: false,
+            selected_popup: None,
+            popups: Vec::new(),
+            id: "t2".into(),
+            directory: b"/tmp/nova".to_vec(),
+            selected_pane: Some("pane-3".into()),
+            columns: vec![eon_workspace_protocol::v51::Column {
+                panes: vec![Pane {
+                    label: "pane-3".into(),
+                    pinned_name: None,
+                    tag: None,
+                    id: "pane-3".into(),
+                    session: "terminal-3".into(),
+                    endpoint: b"/run/eon/terminal-3.sock".to_vec(),
+                    live: false,
+                    attention: None,
+                }],
+                expanded: "pane-3".into(),
+            }],
+            attention_rollup: None,
+        },
+    ]);
     let size = PhysicalSize::new(800, 600);
     let metrics = CellMetrics::for_scale(1.0);
     let scene = WorkspaceScene::from_snapshot(&snapshot, size, metrics, None, None, |_, text| {
@@ -513,11 +409,7 @@ fn eon_workspace_becomes_one_bounded_native_accordion() {
 fn canonical_orbit_frame_becomes_one_deterministic_scene() {
     let mut model = SessionModel::new();
     apply_wire(&mut model, ServerMessage::Attached).unwrap();
-    apply_wire(
-        &mut model,
-        ServerMessage::Frame(Box::new(frame(7, Screen::Alternate))),
-    )
-    .unwrap();
+    apply_wire(&mut model, frame_message(frame(7, Screen::Alternate))).unwrap();
 
     let scene = model.scene().unwrap();
     assert!(!scene.has_selected_content());
@@ -591,12 +483,9 @@ fn orbit_selected_style_is_the_only_visual_selection_source() {
 
 #[test]
 fn ordered_frames_reject_stale_revisions_without_replacing_state() {
-    let mut model = attached_model();
-    model
-        .apply(ServerMessage::Frame(Box::new(frame(9, Screen::Primary))))
-        .unwrap();
+    let mut model = with_frame(9, Screen::Primary);
     let error = model
-        .apply(ServerMessage::Frame(Box::new(frame(9, Screen::Alternate))))
+        .apply(frame_message(frame(9, Screen::Alternate)))
         .unwrap_err();
     assert!(matches!(error, ModelError::Frame(_)));
     assert_eq!(model.scene().unwrap().revision, 9);
@@ -626,11 +515,7 @@ fn canonical_scroll_outcomes_reuse_the_existing_result_and_frame_owners() {
     assert_eq!(model.scene().unwrap().revision, 1);
 
     model
-        .apply(ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: 1,
-            direction: VerticalDirection::Up,
-            outcome: PreviewOutcome::TerminalRouted,
-        }))
+        .apply(upward_preview(1, PreviewOutcome::TerminalRouted))
         .unwrap();
     assert!(matches!(
         model.scroll_preview(),
@@ -656,25 +541,19 @@ fn canonical_scroll_outcomes_reuse_the_existing_result_and_frame_owners() {
 
 #[test]
 fn a_new_attachment_replaces_state_without_a_compatibility_window() {
-    let mut first = attached_model();
-    first
-        .apply(ServerMessage::Frame(Box::new(frame(42, Screen::Primary))))
-        .unwrap();
+    assert_eq!(
+        with_frame(42, Screen::Primary).scene().unwrap().revision,
+        42
+    );
 
-    let mut reopened = attached_model();
-    reopened
-        .apply(ServerMessage::Frame(Box::new(frame(1, Screen::Alternate))))
-        .unwrap();
+    let reopened = with_frame(1, Screen::Alternate);
     assert_eq!(reopened.scene().unwrap().revision, 1);
     assert_eq!(reopened.scene().unwrap().screen, Screen::Alternate);
 }
 
 #[test]
 fn reconnect_preserves_the_last_scene_and_accepts_a_fresh_revision() {
-    let mut model = attached_model();
-    model
-        .apply(ServerMessage::Frame(Box::new(frame(42, Screen::Primary))))
-        .unwrap();
+    let mut model = with_frame(42, Screen::Primary);
     model.mark_lost("Orbit closed the local session");
 
     model.prepare_reconnect();
@@ -695,7 +574,7 @@ fn reconnect_preserves_the_last_scene_and_accepts_a_fresh_revision() {
     model.apply(ServerMessage::Attached).unwrap();
     assert!(model.awaiting_current_frame());
     model
-        .apply(ServerMessage::Frame(Box::new(frame(1, Screen::Alternate))))
+        .apply(frame_message(frame(1, Screen::Alternate)))
         .unwrap();
     assert!(!model.awaiting_current_frame());
     assert_eq!(model.scene().unwrap().revision, 1);
@@ -743,7 +622,7 @@ fn attachment_and_server_failures_are_explicit_and_bounded() {
     assert!(notice.starts_with("Orbit rejected input: "));
     assert_eq!(notice.chars().count(), 1_025);
     attached
-        .apply(ServerMessage::Frame(Box::new(frame(1, Screen::Primary))))
+        .apply(frame_message(frame(1, Screen::Primary)))
         .unwrap();
     assert_eq!(attached.notice(), Some(notice.as_str()));
     attached.apply(ServerMessage::Accepted).unwrap();
@@ -811,10 +690,7 @@ fn clipboard_text_is_an_attached_one_shot_effect_not_presentation_state() {
         ModelError::UnexpectedMessage
     );
 
-    let mut model = attached_model();
-    model
-        .apply(ServerMessage::Frame(Box::new(frame(1, Screen::Primary))))
-        .unwrap();
+    let mut model = with_frame(1, Screen::Primary);
     assert_eq!(
         model
             .apply(ServerMessage::CopiedText {
@@ -865,19 +741,9 @@ fn revision_bound_scroll_previews_follow_atomic_frames() {
     older.cells[0].text = "older".into();
     initial.dimensions.rows = 2;
     initial.rows.push(row.clone());
+    model.apply(frame_message(initial)).unwrap();
     model
-        .apply(ServerMessage::Frame(Box::new(initial)))
-        .unwrap();
-    model
-        .apply(ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: 1,
-            direction: VerticalDirection::Up,
-            outcome: PreviewOutcome::Viewport {
-                cols: 4,
-                edge_reached: false,
-                rows: vec![row.clone(), older],
-            },
-        }))
+        .apply(upward_preview(1, viewport(4, vec![row.clone(), older])))
         .unwrap();
     assert!(matches!(
         model.scroll_preview(),
@@ -944,11 +810,7 @@ fn revision_bound_scroll_previews_follow_atomic_frames() {
     ));
 
     model
-        .apply(ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: 1,
-            direction: VerticalDirection::Up,
-            outcome: PreviewOutcome::TerminalRouted,
-        }))
+        .apply(upward_preview(1, PreviewOutcome::TerminalRouted))
         .unwrap();
     assert!(matches!(
         model.scroll_preview(),
@@ -980,21 +842,11 @@ fn continuous_frames_keep_only_compatible_scroll_previews() {
         let mut model = attached_model();
         let initial = frame(1, Screen::Primary);
         let row = initial.rows[0].clone();
+        model.apply(frame_message(initial)).unwrap();
         model
-            .apply(ServerMessage::Frame(Box::new(initial)))
+            .apply(upward_preview(1, viewport(4, vec![row])))
             .unwrap();
-        model
-            .apply(ServerMessage::VerticalPreview(VerticalPreview {
-                frame_revision: 1,
-                direction: VerticalDirection::Up,
-                outcome: PreviewOutcome::Viewport {
-                    cols: 4,
-                    edge_reached: false,
-                    rows: vec![row],
-                },
-            }))
-            .unwrap();
-        apply_wire(&mut model, ServerMessage::Frame(Box::new(next))).unwrap();
+        apply_wire(&mut model, frame_message(next)).unwrap();
         let preview = model.scroll_preview().map(|preview| match preview {
             ScenePreview::Viewport {
                 frame_revision,
@@ -1006,22 +858,11 @@ fn continuous_frames_keep_only_compatible_scroll_previews() {
         assert_eq!(preview, retained.then_some((1, VerticalDirection::Up)));
     }
 
-    let mut model = attached_model();
+    let mut model = with_frame(1, Screen::Primary);
     model
-        .apply(ServerMessage::Frame(Box::new(frame(1, Screen::Primary))))
+        .apply(upward_preview(1, PreviewOutcome::TerminalRouted))
         .unwrap();
-    model
-        .apply(ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: 1,
-            direction: VerticalDirection::Up,
-            outcome: PreviewOutcome::TerminalRouted,
-        }))
-        .unwrap();
-    apply_wire(
-        &mut model,
-        ServerMessage::Frame(Box::new(frame(2, Screen::Primary))),
-    )
-    .unwrap();
+    apply_wire(&mut model, frame_message(frame(2, Screen::Primary))).unwrap();
     assert!(model.scroll_preview().is_none());
 }
 
@@ -1038,21 +879,14 @@ fn kept_previews_go_stale_at_live_and_at_the_oldest_retained_row() {
     let kept_over = |answered: Frame, next: Frame| {
         let mut model = attached_model();
         let revision = answered.revision;
+        model.apply(frame_message(answered)).unwrap();
         model
-            .apply(ServerMessage::Frame(Box::new(answered)))
+            .apply(upward_preview(
+                revision,
+                viewport(4, frame(1, Screen::Primary).rows),
+            ))
             .unwrap();
-        model
-            .apply(ServerMessage::VerticalPreview(VerticalPreview {
-                frame_revision: revision,
-                direction: VerticalDirection::Up,
-                outcome: PreviewOutcome::Viewport {
-                    cols: 4,
-                    edge_reached: false,
-                    rows: frame(1, Screen::Primary).rows,
-                },
-            }))
-            .unwrap();
-        apply_wire(&mut model, ServerMessage::Frame(Box::new(next))).unwrap();
+        apply_wire(&mut model, frame_message(next)).unwrap();
         assert!(matches!(
             model.scroll_preview(),
             Some(ScenePreview::Viewport { frame_revision, .. }) if *frame_revision == revision
@@ -1073,8 +907,7 @@ fn kept_previews_go_stale_at_live_and_at_the_oldest_retained_row() {
 #[test]
 fn invalid_session_and_frame_bytes_never_reach_draw_state() {
     let mut encoded =
-        session::encode_server_message(&ServerMessage::Frame(Box::new(frame(1, Screen::Primary))))
-            .unwrap();
+        session::encode_server_message(&frame_message(frame(1, Screen::Primary))).unwrap();
     encoded[0] ^= 1;
     assert!(session::decode_server_message(&encoded).is_err());
     encoded[0] ^= 1;
@@ -1087,7 +920,7 @@ fn invalid_session_and_frame_bytes_never_reach_draw_state() {
     let mut model = SessionModel::new();
     assert_eq!(
         model
-            .apply(ServerMessage::Frame(Box::new(frame(1, Screen::Primary))))
+            .apply(frame_message(frame(1, Screen::Primary)))
             .unwrap_err(),
         ModelError::UnexpectedMessage
     );
@@ -1118,7 +951,7 @@ fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
             placement(9, 2, 1, PlacementState::Unavailable),
         ],
     });
-    apply_wire(&mut model, ServerMessage::Frame(Box::new(first))).unwrap();
+    apply_wire(&mut model, frame_message(first)).unwrap();
     let graphics = &model.scene().unwrap().graphics;
     let attachment = graphics.attachment;
     assert!(graphics.placements_omitted);
@@ -1204,11 +1037,7 @@ fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
             pixels: vec![3, 4, 5],
         })))
     );
-    apply_wire(
-        &mut model,
-        ServerMessage::Frame(Box::new(frame(2, Screen::Primary))),
-    )
-    .unwrap();
+    apply_wire(&mut model, frame_message(frame(2, Screen::Primary))).unwrap();
     assert_eq!(model.notice(), None);
     assert_eq!(
         resource_wire(&mut model, ServerMessage::ResourceRetire { resource: 5 }),
@@ -1230,11 +1059,7 @@ fn resource_streams_assemble_complete_pixels_and_frames_carry_placements() {
             "resource message before the first frame"
         ))
     );
-    apply_wire(
-        &mut model,
-        ServerMessage::Frame(Box::new(frame(1, Screen::Primary))),
-    )
-    .unwrap();
+    apply_wire(&mut model, frame_message(frame(1, Screen::Primary))).unwrap();
     assert_ne!(model.scene().unwrap().graphics.attachment, attachment);
     assert!(model.scene().unwrap().graphics.placements.is_empty());
     assert_eq!(
@@ -1264,100 +1089,40 @@ fn invalid_resource_streams_fail_deterministically() {
         ]
     };
     let full = || vec![0; RESOURCE_CHUNK_BYTES as usize];
-    let cases: Vec<(Vec<ServerMessage>, &str)> = vec![
+    let small = |id| announce(id, PixelFormat::Rgb, 1, 1);
+    let large = || announce(5, PixelFormat::Rgba, 300, 300);
+    let short = |size| chunk(5, 1, vec![0; size]);
+    let first = || chunk(5, 0, full());
+    let retire = || ServerMessage::ResourceRetire { resource: 5 };
+    let after_complete = |last| complete(5).into_iter().chain([last]).collect();
+    let identity = "identity is not greater than every earlier one";
+    let no_chunk = "chunk of no incomplete resource";
+    let order = "chunk is out of order";
+    let size = "chunk has the wrong size";
+    let no_retirement = "retirement names no complete, unretired resource";
+    let cases = [
+        (after_complete(small(5)), identity),
+        (after_complete(small(4)), identity),
         (
-            [
-                complete(5).as_slice(),
-                &[announce(5, PixelFormat::Rgb, 1, 1)],
-            ]
-            .concat(),
-            "identity is not greater than every earlier one",
-        ),
-        (
-            [
-                complete(5).as_slice(),
-                &[announce(4, PixelFormat::Rgb, 1, 1)],
-            ]
-            .concat(),
-            "identity is not greater than every earlier one",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                announce(6, PixelFormat::Rgb, 1, 1),
-            ],
+            vec![large(), small(6)],
             "another resource is still incomplete",
         ),
+        (vec![chunk(5, 0, vec![0; 3])], no_chunk),
+        (after_complete(short(3)), no_chunk),
+        (vec![large(), short(97_856)], order),
+        (vec![large(), chunk(6, 0, full())], order),
+        (vec![large(), first(), first()], order),
+        (vec![large(), chunk(5, 0, vec![0; 97_856])], size),
+        (vec![large(), first(), short(97_855)], size),
+        (vec![small(5), chunk(5, 0, vec![0; 4])], size),
+        (vec![retire()], no_retirement),
+        (vec![large(), retire()], no_retirement),
         (
-            vec![chunk(5, 0, vec![0; 3])],
-            "chunk of no incomplete resource",
-        ),
-        (
-            [complete(5).as_slice(), &[chunk(5, 1, vec![0; 3])]].concat(),
-            "chunk of no incomplete resource",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                chunk(5, 1, vec![0; 97_856]),
-            ],
-            "chunk is out of order",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                chunk(6, 0, full()),
-            ],
-            "chunk is out of order",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                chunk(5, 0, full()),
-                chunk(5, 0, full()),
-            ],
-            "chunk is out of order",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                chunk(5, 0, vec![0; 97_856]),
-            ],
-            "chunk has the wrong size",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                chunk(5, 0, full()),
-                chunk(5, 1, vec![0; 97_855]),
-            ],
-            "chunk has the wrong size",
-        ),
-        (
-            vec![announce(5, PixelFormat::Rgb, 1, 1), chunk(5, 0, vec![0; 4])],
-            "chunk has the wrong size",
-        ),
-        (
-            vec![ServerMessage::ResourceRetire { resource: 5 }],
-            "retirement names no complete, unretired resource",
-        ),
-        (
-            vec![
-                announce(5, PixelFormat::Rgba, 300, 300),
-                ServerMessage::ResourceRetire { resource: 5 },
-            ],
-            "retirement names no complete, unretired resource",
-        ),
-        (
-            [
-                complete(5).as_slice(),
-                &[
-                    ServerMessage::ResourceRetire { resource: 5 },
-                    ServerMessage::ResourceRetire { resource: 5 },
-                ],
-            ]
-            .concat(),
-            "retirement names no complete, unretired resource",
+            complete(5)
+                .into_iter()
+                .chain([retire(), retire()])
+                .collect(),
+            no_retirement,
         ),
     ];
     for (messages, detail) in cases {
@@ -1429,11 +1194,7 @@ fn invalid_resource_streams_fail_deterministically() {
 
 fn streaming_model() -> SessionModel {
     let mut model = attached_model();
-    apply_wire(
-        &mut model,
-        ServerMessage::Frame(Box::new(frame(1, Screen::Primary))),
-    )
-    .unwrap();
+    apply_wire(&mut model, frame_message(frame(1, Screen::Primary))).unwrap();
     model
 }
 
@@ -1446,41 +1207,26 @@ fn resource_wire(
     model.apply(session::decode_server_message(&bytes).unwrap())
 }
 
-fn announce(resource: u64, format: PixelFormat, width: u32, height: u32) -> ServerMessage {
-    ServerMessage::ResourceAnnounce(
-        ResourceAnnounce::new(resource, 1, format, width, height).unwrap(),
-    )
+fn viewport(cols: u16, rows: Vec<Row>) -> PreviewOutcome {
+    PreviewOutcome::Viewport {
+        cols,
+        edge_reached: false,
+        rows,
+    }
 }
 
-fn chunk(resource: u64, index: u32, bytes: Vec<u8>) -> ServerMessage {
-    ServerMessage::ResourceChunk(ResourceChunk {
-        resource,
-        index,
-        bytes,
+fn upward_preview(frame_revision: u64, outcome: PreviewOutcome) -> ServerMessage {
+    ServerMessage::VerticalPreview(VerticalPreview {
+        frame_revision,
+        direction: VerticalDirection::Up,
+        outcome,
     })
 }
 
-fn placement(resource: u64, col: i32, row: i32, state: PlacementState) -> Placement {
-    Placement {
-        resource,
-        layer: ImageLayer::BelowText,
-        z: 0,
-        col,
-        row,
-        grid_cols: 3,
-        grid_rows: 2,
-        offset_x: 5,
-        offset_y: 5,
-        width: 30,
-        height: 40,
-        source: SourceRect {
-            x: 1,
-            y: 2,
-            width: 30,
-            height: 40,
-        },
-        state,
-    }
+fn with_frame(revision: u64, screen: Screen) -> SessionModel {
+    let mut model = attached_model();
+    model.apply(frame_message(frame(revision, screen))).unwrap();
+    model
 }
 
 fn attached_model() -> SessionModel {
@@ -1498,162 +1244,25 @@ fn apply_wire(
     Ok(())
 }
 
-fn frame(revision: u64, screen: Screen) -> Frame {
-    let background = Rgb {
-        r: 0x10,
-        g: 0x13,
-        b: 0x1a,
-    };
-    let foreground = Rgb {
-        r: 0xf0,
-        g: 0xf1,
-        b: 0xf5,
-    };
-    let mut palette = [Rgb::BLACK; 256];
-    palette[2] = Rgb {
-        r: 0x22,
-        g: 0xcc,
-        b: 0x88,
-    };
-    Frame {
-        revision,
-        dimensions: Dimensions { cols: 4, rows: 1 },
-        screen,
-        scroll_position: orbit_protocol::ScrollPosition::default(),
-        title: "Eon ✦".into(),
-        working_directory: "/tmp/venus".into(),
-        capabilities: Capabilities { hyperlinks: true },
-        colors: Colors {
-            background,
-            foreground,
-            cursor: None,
-            palette,
-        },
-        cursor: Cursor {
-            visible: true,
-            blinking: false,
-            password_input: false,
-            shape: CursorShape::Block,
-            viewport: Some(CursorViewport {
-                x: 1,
-                y: 0,
-                at_wide_tail: false,
-            }),
-        },
-        rows: vec![Row {
-            wrapped: false,
-            wrap_continuation: false,
-            cells: vec![
-                cell("e\u{301}", CellWidth::Narrow, StyleColor::None, ""),
-                cell(
-                    "界",
-                    CellWidth::Wide,
-                    StyleColor::Palette(2),
-                    "https://yazelix.dev",
-                ),
-                cell("", CellWidth::SpacerTail, StyleColor::None, ""),
-                cell("", CellWidth::Narrow, StyleColor::None, ""),
-            ],
-        }],
-        graphics: None,
-    }
-}
-
-fn cell(text: &str, width: CellWidth, foreground: StyleColor, hyperlink: &str) -> Cell {
-    Cell {
-        width,
-        style: CellStyle {
-            foreground,
-            background: StyleColor::None,
-            underline_color: StyleColor::None,
-            bold: false,
-            italic: false,
-            faint: false,
-            blink: false,
-            inverse: false,
-            invisible: false,
-            strikethrough: false,
-            overline: false,
-            selected: false,
-            protected: false,
-            underline: Underline::None,
-        },
-        text: text.into(),
-        hyperlink: hyperlink.into(),
-    }
-}
-
 #[test]
 fn columns_sit_side_by_side_and_zoom_only_the_selected_pane() {
-    let pane = |id: &str| Pane {
-        label: id.into(),
-        pinned_name: None,
-        tag: None,
-        id: id.into(),
-        session: format!("terminal-{id}"),
-        endpoint: format!("/run/eon/{id}.sock").into_bytes(),
-        live: true,
-        attention: None,
-    };
-    let snapshot = Snapshot {
-        focus: None,
-        released_shortcuts: Default::default(),
-        input_locked: false,
-        input_lock: fixture_input_lock(),
-        generation: "g1-00000000000000000000000000000001".into(),
-        created_build: "g1-00000000000000000000000000000001".into(),
-        active_build: "g1-00000000000000000000000000000001".into(),
-        workspace: "s1".into(),
-        active_workspace: "s1".into(),
-        workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
-            id: "s1".into(),
-            persistent_id: Some("s1".into()),
-            registration_error: None,
-            name: None,
-            tab_count: 1,
-            attention: None,
-            recency: 0,
-        }],
-        active_tab: "t1".into(),
-        tabs: vec![Tab {
-            pending: false,
-            selected_popup: None,
-            popups: Vec::new(),
-            id: "t1".into(),
-            directory: b"/tmp/eon".to_vec(),
-            selected_pane: Some("p3".into()),
-            columns: vec![
-                eon_workspace_protocol::v51::Column {
-                    panes: vec![pane("p1"), pane("p2")],
-                    expanded: "p2".into(),
-                },
-                eon_workspace_protocol::v51::Column {
-                    panes: vec![pane("p3")],
-                    expanded: "p3".into(),
-                },
-                eon_workspace_protocol::v51::Column {
-                    panes: vec![pane("p4")],
-                    expanded: "p4".into(),
-                },
-            ],
-            attention_rollup: None,
-        }],
-        geometry: eon_workspace_protocol::v51::PopupGeometry {
-            side_margin: 8.0,
-            vertical_margin: 4.0,
-        },
-        entries: Vec::new(),
-        codex_quota: None,
-        claude_quota: None,
-        google_quota: None,
-        google_quota_failure: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        running: None,
-        busy: None,
-        sidebar: eon_workspace_protocol::v51::Sidebar::Open,
-        attention_queue: Vec::new(),
-    };
+    let snapshot = workspace_snapshot(vec![Tab {
+        pending: false,
+        selected_popup: None,
+        popups: Vec::new(),
+        id: "t1".into(),
+        directory: b"/tmp/eon".to_vec(),
+        selected_pane: Some("p3".into()),
+        columns: vec![
+            eon_workspace_protocol::v51::Column {
+                panes: vec![pane("p1"), pane("p2")],
+                expanded: "p2".into(),
+            },
+            column("p3"),
+            column("p4"),
+        ],
+        attention_rollup: None,
+    }]);
     let size = PhysicalSize::new(901, 600);
     let scene = WorkspaceScene::from_snapshot(
         &snapshot,
