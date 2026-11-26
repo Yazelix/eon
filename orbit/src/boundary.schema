@@ -39,7 +39,7 @@ flag 4 room
 flag 6 alternate
 # The client's queue has room for a frame of any size.
 flag 8 frame_room
-# The primary screen's viewport is above live output (sent with a key).
+# The primary screen's viewport is above live output (sent with a key or paste).
 flag 9 above_live
 # The PTY turn produced clipboard writes for the client.
 flag 10 clipboard
@@ -91,7 +91,7 @@ enum Effect
   2 Resize
   # The PTY input queue could not hold the input, so it took nothing.
   3 Full
-  # A key's bytes were queued for the PTY.
+  # A key's or paste's bytes were queued for the PTY.
   4 Key
   # The PTY is closed, so nothing was applied.
   5 Closed

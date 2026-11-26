@@ -17,10 +17,11 @@ printf '\033[?1000h\033]0;LIVE ROUTED\007'
 gate
 printf '\033[?1000l\033[?1007l\033[?1049h\033]0;LIVE ALTERNATE\007'
 gate
-printf '\033[?1049l\033]0;LIVE PRIMARY\007'
-# No return to live sends PTY input, so the first byte the child reads is the paste.
-IFS= read -r -n 1 input
-test "$input" = x || exit 42
-: > "$ORBIT_LIVE_PASTED"
+printf '\033[?1049l\033[?1004h\033]0;LIVE PRIMARY\007'
+# No return to live sends PTY input, so the first bytes the child reads are
+# the focus report.
+IFS= read -r -N 3 input
+test "$input" = $'\e[I' || exit 42
+: > "$ORBIT_LIVE_REPORTED"
 gate
 exit 7

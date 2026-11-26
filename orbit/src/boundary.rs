@@ -26,7 +26,7 @@ pub(crate) enum Effect {
     Resize = 2,
     /// The PTY input queue could not hold the input, so it took nothing.
     Full = 3,
-    /// A key's bytes were queued for the PTY.
+    /// A key's or paste's bytes were queued for the PTY.
     Key = 4,
     /// The PTY is closed, so nothing was applied.
     Closed = 5,
@@ -213,7 +213,7 @@ pub(crate) struct Flags {
     pub(crate) alternate: bool,
     /// The client's queue has room for a frame of any size.
     pub(crate) frame_room: bool,
-    /// The primary screen's viewport is above live output (sent with a key).
+    /// The primary screen's viewport is above live output (sent with a key or paste).
     pub(crate) above_live: bool,
     /// The PTY turn produced clipboard writes for the client.
     pub(crate) clipboard: bool,
@@ -452,7 +452,7 @@ fn halves(revision: u64) -> String {
 
 /// The line the worker writes before its first answer, naming the schema
 /// it was generated from; the host refuses a worker that names another.
-pub(crate) const SCHEMA: &str = "schema c01ccae6d3b0aa9f";
+pub(crate) const SCHEMA: &str = "schema 8132a9db8d47aa15";
 
 /// The line that ends each of the worker's answers.
 pub(crate) const END: &str = "end";

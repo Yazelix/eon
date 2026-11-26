@@ -497,8 +497,8 @@ def overflowed(session: Session) -> Next():
         [Boundary.Reject{Boundary.ReasonPtyFull{}}, Boundary.Dismiss{}]
       )
 
-# A key that wrote PTY bytes returns a scrolled-back primary viewport to live
-# output and publishes it (ORB-C8).
+# A key or paste that wrote PTY bytes returns a scrolled-back primary viewport
+# to live output and publishes it (ORB-C8).
 def returned_live(+flags: Boundary.Flags, session: Session) -> Next():
   match session:
     case Session{life, written, +observer, explicit, waiting, pointer, manage}:

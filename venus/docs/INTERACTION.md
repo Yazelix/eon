@@ -382,7 +382,9 @@ it toward live output. Releasing writes Orbit's exact bounded text to both the
 ordinary Wayland clipboard and primary selection; Ctrl+Shift+C remains an
 explicit ordinary-clipboard copy.
 Press Ctrl+Shift+V or the native Paste key to read the ordinary clipboard once.
-Orbit applies normal or bracketed paste from its authoritative terminal mode.
+Orbit applies normal or bracketed paste from its authoritative terminal mode,
+and a paste while scrolled back returns to live output, as typing does
+(ORB-C8).
 Terminal programs can also request bounded text writes through Orbit. On Linux,
 Venus sends the standard destination to the ordinary clipboard and sends the
 selection or primary destination to the primary clipboard. The macOS candidate

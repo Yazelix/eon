@@ -26,7 +26,7 @@ type Effect is Data:
   EffectResize{}
   # The PTY input queue could not hold the input, so it took nothing.
   EffectFull{}
-  # A key's bytes were queued for the PTY.
+  # A key's or paste's bytes were queued for the PTY.
   EffectKey{}
   # The PTY is closed, so nothing was applied.
   EffectClosed{}
@@ -314,7 +314,7 @@ def frame_room(flags: Flags) -> Bool:
     case Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}:
       frame_room
 
-# The primary screen's viewport is above live output (sent with a key).
+# The primary screen's viewport is above live output (sent with a key or paste).
 def above_live(flags: Flags) -> Bool:
   match flags:
     case Flags{held, routed, room, alternate, frame_room, above_live, clipboard, clipboard_overflow, tracking, shift, unanchored, result_frame_room, outside, host_room, terminal_room, pty_full, metadata_changed, metadata_fresh}:
@@ -1259,4 +1259,4 @@ def encode(decisions: Decisions()) -> String:
 # The line the worker writes before its first answer, naming the schema it
 # was generated from; the host refuses a worker that names another.
 def schema() -> String:
-  "schema c01ccae6d3b0aa9f\n"
+  "schema 8132a9db8d47aa15\n"

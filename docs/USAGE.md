@@ -1230,7 +1230,7 @@ A popup configured on Alt+Q takes the shortcut.
 When you scroll above live output, `↓ N rows` shows how many display rows back
 you are. It appears in Eon's pane header or at the top right of eonbase, updates
 as output continues, and disappears at live output. Click the whole pill to
-return there.
+return there. Typing or pasting also returns to live output.
 
 Two clicks select a word, three select a
 space/tab-delimited span, and four or more select the logical line across soft

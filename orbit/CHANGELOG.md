@@ -6,6 +6,11 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- A paste that writes PTY bytes returns a scrolled-back primary viewport to
+  live output, as a key does; management lease input still never moves it
+  (ORB-C8, `eon-41sxd`). ORBS, ORBF and the management wire are unchanged;
+  Venus, Eon Runtime and Eon need no change.
+
 - Management generation 10 widens the lease key input to 74 keys: F1-F12,
   arrows, Home, End, PageUp, PageDown, Insert, Delete, Escape, Enter, Tab,
   Backspace, Space and the 47 US-QWERTY letter, digit and punctuation keys,

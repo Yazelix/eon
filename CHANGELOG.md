@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pasting into a pane scrolled back into its history returns it to live
+  output, as typing does, so the pasted text lands in view (`eon-41sxd`,
+  ORB-C8).
 - Google quota chips keep working when agy updates. Eon reads Google quota
   from any agy version whose `/usage` report passes its checks, and keeps the
   last good reading when a report does not. `eon doctor` names the agy

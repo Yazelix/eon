@@ -748,15 +748,16 @@ impl Orbit {
     }
 
     /// Applies one input request and reports its effect: a resize, nothing
-    /// to write, bytes queued for the PTY (from a key or other input), or a
-    /// full queue that took nothing.
+    /// to write, bytes queued for the PTY (from a key or paste, which return
+    /// to live output, or from other input), or a full queue that took
+    /// nothing.
     pub(crate) fn apply(&mut self, request: ClientMessage) -> io::Result<Effect> {
         if let ClientMessage::Resize(size) = request {
             self.resize(size)?;
             return Ok(Effect::Resize);
         }
         crate::host::bench_trace("input_encode", "");
-        let key = matches!(request, ClientMessage::Key(_));
+        let returns_live = matches!(request, ClientMessage::Key(_) | ClientMessage::Paste(_));
         let typing = match &request {
             ClientMessage::Key(event) => event.action != session::KeyAction::Release,
             ClientMessage::Paste(_) => true,
@@ -776,7 +777,11 @@ impl Orbit {
             self.typed_queued = self.writes.0.borrow().len();
         }
         self.flush_writes()?;
-        Ok(if key { Effect::Key } else { Effect::Write })
+        Ok(if returns_live {
+            Effect::Key
+        } else {
+            Effect::Write
+        })
     }
 
     /// Writes one lease input request whole, encoded as an attached client's
@@ -1194,6 +1199,35 @@ mod tests {
             }
             assert_eq!(client, lease);
         }
+    }
+
+    /// A key or paste that writes PTY bytes reports `Effect::Key`, which
+    /// returns a scrolled-back viewport to live output (ORB-C8); other input
+    /// that writes reports `Effect::Write`, and input that writes nothing
+    /// is quiet.
+    #[test]
+    fn paste_and_keys_that_write_return_to_live() {
+        use session::{FocusEvent, KeyAction, Modifiers, PhysicalKey};
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let command = ["/bin/sh", "-c", "read x"].map(OsString::from);
+        let mut orbit = Orbit::spawn(&command, None, None, 80, 24).unwrap();
+        let release = lease_key_event(PhysicalKey::ENTER, Modifiers::empty(), KeyAction::Release);
+        let press = lease_key_event(PhysicalKey::SPACE, Modifiers::empty(), KeyAction::Press);
+        let focus = || ClientMessage::Focus(FocusEvent::Gained);
+        let mut apply = |request| orbit.apply(request).unwrap();
+        assert_eq!(apply(ClientMessage::Paste(b"x".to_vec())), Effect::Key);
+        assert_eq!(apply(ClientMessage::Key(press)), Effect::Key);
+        assert_eq!(apply(ClientMessage::Key(release)), Effect::Quiet);
+        assert_eq!(apply(ClientMessage::Paste(Vec::new())), Effect::Quiet);
+        assert_eq!(apply(focus()), Effect::Quiet);
+        orbit.terminal.vt_write(b"\x1b[?2004h\x1b[?1004h");
+        let mut apply = |request| orbit.apply(request).unwrap();
+        // libghostty brackets an empty paste, so it writes and returns too.
+        assert_eq!(apply(ClientMessage::Paste(Vec::new())), Effect::Key);
+        assert_eq!(apply(focus()), Effect::Write);
+        assert!(orbit.writes.push(b"\n"));
+        orbit.flush_writes().unwrap();
+        assert!(orbit.child.take().unwrap().wait().unwrap().success());
     }
 
     #[test]

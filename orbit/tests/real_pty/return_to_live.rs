@@ -1,6 +1,6 @@
 use crate::support::*;
 use orbit_protocol::session::{
-    ClientMessage, FailureCode, Modifiers, SelectionAction, ServerMessage,
+    ClientMessage, FailureCode, FocusEvent, Modifiers, SelectionAction, ServerMessage,
 };
 use std::time::Instant;
 
@@ -38,14 +38,14 @@ fn outcome(peer: &mut Peer) -> (i16, i16, u64, u64) {
 pub fn run() {
     let directory = TempDir::new();
     let gate = Gate::new(&directory, "live-gate");
-    let pasted = directory.join("pasted");
+    let reported = directory.join("reported");
     let shell = script(&directory, "LIVE_SHELL", "return-to-live-shell");
     let mut server = Server::start(
         &directory,
         &shell,
         &[
             ("ORBIT_LIVE_GATE", gate.path()),
-            ("ORBIT_LIVE_PASTED", &pasted),
+            ("ORBIT_LIVE_REPORTED", &reported),
         ],
     );
     let mut peer = Peer::attach(&server.path, 10.0);
@@ -130,12 +130,12 @@ pub fn run() {
         time_ns: 1,
         modifiers: Modifiers::empty(),
     })));
-    flood.extend(encode(&paste(b"x")));
+    flood.extend(encode(&ClientMessage::Focus(FocusEvent::Gained)));
     peer.send_bytes(&flood);
     peer.set_timeout(10.0);
     let deadline = Instant::now() + seconds(60.0);
-    while !pasted.exists() {
-        assert!(Instant::now() < deadline, "the paste never reached the child");
+    while !reported.exists() {
+        assert!(Instant::now() < deadline, "the focus report never reached the child");
         assert!(server.alive(), "server exited under pressure");
         sleep(0.05);
     }

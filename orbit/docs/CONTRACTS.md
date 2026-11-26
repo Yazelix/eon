@@ -557,9 +557,9 @@ rule keeps its wire representation.
     distance, one complete frame, and the next bounded preview in that
     direction, preserving the tracked gesture. Zero applied rows reports
     the oldest edge for up or the live edge for down.
-  - A successful semantic key that emits PTY bytes returns primary history to
-    the live area; detach does not transfer, reconstruct, or reset viewport
-    ownership.
+  - A successful semantic key or paste that emits PTY bytes returns primary
+    history to the live area; management lease input does not; detach does
+    not transfer, reconstruct, or reset viewport ownership.
 - **Important failures:**
   - Terminal-owned mouse tracking or alternate-screen mode 1007 returns
     terminal-owned without PTY input, mutation, or revision advance.
@@ -586,22 +586,33 @@ rule keeps its wire representation.
   ORBS v15 client on Apple Silicon (Venus or Eon); ORB-C14 covers Orbit's own
   native behavior.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.3` commit
-  for scroll position, selection clearing and granular ticks
+  for scroll position, selection clearing and granular ticks. Amended on
+  2026-11-26 (approved by eon-desk under Lucca's standing 2026-11-13
+  delegation) by `eon-41sxd`: a successful semantic paste that emits PTY
+  bytes returns primary history to the live area, while management lease
+  input does not. The `eon-41sxd` commit proves it.
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
-    `tests/lifecycle.rs` unmodified)
+    `tests/lifecycle.rs` unmodified). For `eon-41sxd`: the `orbit-laws` and
+    `orbit-boundary` checks, 52 of 54 real-PTY checks (every ORB-C8 one)
+    against release Orbit through `eon-test`, and sandboxed workspace
+    `eon-test`; `orbit-schema-mismatch` and `orbit-terminal-identity` need
+    Nix fixtures and run in the landing `nix build` of the `orbit-*` checks
   - **Evidence:**
     - Real-PTY checks [`orbit-history`](../tests/real_pty/history.rs),
       [`orbit-preview`](../tests/real_pty/preview.rs),
       [`orbit-scroll`](../tests/real_pty/scroll.rs),
       [`orbit-return-to-live`](../tests/real_pty/return_to_live.rs),
       [`orbit-mouse`](../tests/real_pty/mouse.rs),
-      [`orbit-key-live`](../tests/real_pty/key_live.rs) and
+      [`orbit-key-live`](../tests/real_pty/key_live.rs),
+      [`orbit-lease-input`](../tests/real_pty/lease_input.rs) (lease input
+      leaves the viewport in history) and
       [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs)
     - [`orbit-selection-tick`](../tests/real_pty/selection_tick.rs) also
       finds a presented selection cleared by a commit toward live and by a
       return to live, with rows of it still in view.
+    - [`paste_and_keys_that_write_return_to_live`](../src/pty.rs)
     - [`vertical_preview_reads_history_nearest_first`](../src/frame.rs)
     - [`scroll_position_follows_reflow_eviction_and_clears`](../src/frame.rs)
       follows the position through output below a held viewport, the alternate

@@ -1374,16 +1374,23 @@ stops reading until its queue lacks room for a frame: that return fails with
 `Failure(Terminal)`, as does a host selection press behind it; a later update
 finds no sequence, a later scroll shows the viewport did not move, and the
 client then returns to live. Admitting the press without room made it fail.
-The child confirms that the first input it reads is a paste sent after every
-return.
+The child confirms that the first input it reads is a focus report sent after
+every return.
 
-A key that writes PTY bytes also returns a scrolled-back primary viewport to
-live output: Rust reports the key and whether the
-viewport is above live, and Bend answers Accepted, moves the viewport, and
-publishes the frame, which waits like any other while an update is held. Paste
-and other input, and a key that writes nothing, leave the viewport where it is.
-The real-PTY key-live check scrolls up, sends a paste and a key release that
-leave the viewport in history, then a key press that brings it back.
+A key or paste that writes PTY bytes also returns a scrolled-back primary
+viewport to live output: Rust reports it as a key and whether the viewport is
+above live, and Bend answers Accepted, moves the viewport, clearing any host
+selection, and publishes the frame, which waits like any other while an
+update is held. Other input, such as a focus report, and a key or paste that
+writes nothing leave the viewport where it is. An empty paste writes nothing
+unbracketed; bracketed, it writes the empty brackets and returns. Management
+lease input never moves the viewport, as the real-PTY lease-input check
+finds ([Lease input](#lease-input)). The host unit test
+`paste_and_keys_that_write_return_to_live` checks which input reports a key.
+The real-PTY key-live check scrolls up, sends a key release that leaves the
+viewport in history, then a paste that brings it back, scrolls up again, and
+sends a key press that brings it back; the child confirms the paste arrived
+bracketed. Reporting a paste as other input made both fail.
 
 A key release keeps its text only when the encoder knows the key's unshifted
 codepoint, so a Kitty-mode release of an unidentified key writes nothing
