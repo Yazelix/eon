@@ -44,6 +44,21 @@ the final projection before requesting a redraw. Hit testing and
 unsolicited paints reuse that projection. A real geometry change
 withdraws pointer admission until a compatible frame is drawn.
 
+Confirmed GPU device loss withdraws terminal keys, IME input and keyboard
+paste. The shared application checks the device-loss fact before queuing
+terminal text. Venus's winit host takes that fact from the wgpu device-loss
+callback. Rune's terminal GPU-loss policy stops event dispatch and closes
+its client. A usable device can recover its surface. In a winit-hosted Eon
+workspace, turn off input lock if active using its configured shortcut
+(Alt+Shift+I by default, Option+Shift+I on macOS). Then use Alt+Shift+D
+(Option+Shift+D on macOS) to detach and keep the terminals running before
+reopening the window. A workspace close request, including Command+Q on
+macOS, can request Quit and open a confirmation prompt the failed renderer
+cannot draw. For a standalone window, close and reopen Venus to reattach to
+the live Orbit terminal. See the pinned wgpu and winit APIs
+in [the Venus references](REFERENCES.md#selected-crate-evidence-and-comparisons)
+and [Rune's terminal GPU-loss policy](https://github.com/Yazelix/eon-rune/blob/c22cc2d459cc6b80a3f4ecf45b136eed1d205507/crates/rune/src/window/gpu_failure.rs#L82-L98).
+
 The workspace and dialog each track their visible age transitions. Quota
 chips reuse the label and hover text for each selected window during
 layout changes. A visible chip schedules its next local date-band or reset

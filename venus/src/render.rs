@@ -2088,6 +2088,18 @@ impl Renderer {
         PhysicalSize::new(self.config.width, self.config.height)
     }
 
+    pub(crate) fn device_lost(&self) -> bool {
+        self.device_lost.load(Ordering::Acquire)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn lose_device_for_test(&self) {
+        assert!(record_device_loss(
+            &self.device_lost,
+            DeviceLostReason::Unknown
+        ));
+    }
+
     pub fn resize(&mut self, size: PhysicalSize<u32>, scale_factor: f64) {
         let size = nonzero(size);
         self.config.width = size.width;

@@ -1,5 +1,6 @@
 use super::*;
 use eon_workspace_protocol::v51::{Popup, PopupKey, Shortcut, Snapshot};
+use std::os::unix::{fs::DirBuilderExt, net::UnixListener};
 
 mod chrome;
 mod native;
@@ -156,4 +157,81 @@ pub(super) fn show_test_popup(snapshot: &mut Snapshot) {
         attention: None,
     }];
     snapshot.tabs[0].selected_popup = Some("u1".into());
+}
+
+pub(super) const PEER_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// A canonical Orbit peer on a private socket with bounded reads.
+pub(super) struct OrbitPeer {
+    listener: UnixListener,
+    pub(super) socket: PathBuf,
+}
+
+impl OrbitPeer {
+    pub(super) fn new(name: &str) -> Self {
+        let root = std::env::temp_dir().join(format!("vr-{:x}-{name}", std::process::id()));
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&root)
+            .unwrap();
+        let socket = root.join("o");
+        let listener = UnixListener::bind(&socket).unwrap_or_else(|error| {
+            let _ = std::fs::remove_dir(&root);
+            panic!("bind private Orbit peer: {error}");
+        });
+        listener.set_nonblocking(true).unwrap();
+        Self { listener, socket }
+    }
+
+    pub(super) fn accept(&self) -> UnixStream {
+        let deadline = Instant::now() + PEER_TIMEOUT;
+        loop {
+            match self.listener.accept() {
+                Ok((stream, _)) => {
+                    // macOS inherits nonblocking mode from the listener.
+                    stream.set_nonblocking(false).unwrap();
+                    stream.set_read_timeout(Some(PEER_TIMEOUT)).unwrap();
+                    assert_eq!(Self::read(&stream), ClientMessage::Hello);
+                    return stream;
+                }
+                Err(error)
+                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
+                {
+                    thread::sleep(Duration::from_millis(2));
+                }
+                other => panic!("Orbit client did not connect: {other:?}"),
+            }
+        }
+    }
+
+    pub(super) fn read(mut stream: &UnixStream) -> ClientMessage {
+        let mut packet = vec![0; session::HEADER_BYTES];
+        stream.read_exact(&mut packet).unwrap();
+        packet.resize(session::client_message_len(&packet).unwrap().unwrap(), 0);
+        stream
+            .read_exact(&mut packet[session::HEADER_BYTES..])
+            .unwrap();
+        session::decode_client_message(&packet).unwrap()
+    }
+}
+
+impl Drop for OrbitPeer {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.socket);
+        let _ = std::fs::remove_dir(self.socket.parent().unwrap());
+    }
+}
+
+pub(super) fn noop_renderer() -> Renderer {
+    let fonts = FontSetup::with_directories(&FontSettings::default(), None).unwrap();
+    let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+    Renderer::hosted(
+        device,
+        queue,
+        wgpu::TextureFormat::Rgba8Unorm,
+        (960, 600),
+        1.0,
+        fonts,
+    )
+    .unwrap()
 }

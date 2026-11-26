@@ -2633,6 +2633,115 @@ fn ime_requires_current_attached_terminal_but_always_cleans_up() {
 }
 
 #[test]
+fn gpu_loss_withdraws_terminal_text_from_a_live_attachment() {
+    use orbit_protocol::Screen;
+
+    let orbit = super::OrbitPeer::new("loss");
+    let mut app = Application::new(
+        launch::launch_arguments([orbit.socket.clone().into_os_string()], None).unwrap(),
+        EventSink::Host(Arc::new(|_| true)),
+    );
+    app.start_orbit(orbit.socket.clone());
+    let stream = orbit.accept();
+    let frame = |revision| frame(revision, Screen::Primary);
+    let resize = |width| WindowEvent::Resized(PhysicalSize::new(width, 600));
+    app.window = Some(WindowState {
+        renderer: super::noop_renderer(),
+        scale_factor: 1.0,
+        native: NativeWindow::Rune(RuneWindow {
+            output: Cell::new(true),
+            ..RuneWindow::default()
+        }),
+        effects: NativeEffects::default(),
+    });
+    app.initial_scale_pending = false;
+    app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+    app.route_window_event(WindowEvent::Focused(true));
+
+    let key_event = |action, text| session::KeyEvent {
+        action,
+        key: session::PhysicalKey::X,
+        modifiers: session::Modifiers::empty(),
+        consumed_modifiers: session::Modifiers::empty(),
+        composing: false,
+        text,
+        unshifted_codepoint: None,
+    };
+    let press = ClientMessage::Key(key_event(session::KeyAction::Press, Some("x".into())));
+    let text_through_marker = |app: &mut Application| {
+        assert!(app.send(ClientMessage::ReturnToLive));
+        let mut messages = Vec::new();
+        loop {
+            match super::OrbitPeer::read(&stream) {
+                ClientMessage::ReturnToLive => return messages,
+                message @ (ClientMessage::Key(_) | ClientMessage::Paste(_)) => {
+                    messages.push(message)
+                }
+                _ => {}
+            }
+        }
+    };
+    let ime = |text: &str| WindowEvent::Ime(Ime::Commit(text.into()));
+    assert!(!app.presentation.has_presented_geometry());
+    app.send(press.clone());
+    app.route_window_event(ime("界"));
+
+    app.handle_transport(frame(1));
+    app.presentation
+        .publish(app.presentation.candidate(Some(1)));
+    app.handle_transport(frame(2));
+    assert_eq!(app.presentation.presented_revision(), Some(1));
+    app.send(press.clone());
+
+    app.route_window_event(resize(961));
+    assert!(!app.presentation.has_presented_geometry());
+    app.send(press.clone());
+    let before = text_through_marker(&mut app);
+    assert!(
+        matches!(&before[..], [first, ClientMessage::Key(commit), before_repaint, withdrawn]
+        if [first, before_repaint, withdrawn].iter().all(|key| *key == &press)
+            && commit.text.as_deref() == Some("界"))
+    );
+
+    app.route_window_event(WindowEvent::Ime(Ime::Preedit("x".into(), None)));
+    let state = app.window.as_ref().unwrap();
+    let before_loss = state.effects.ime_sends;
+    state.renderer.lose_device_for_test();
+    app.render();
+    let composition_cleared = app.input.preedit().is_empty();
+    app.route_window_event(WindowEvent::Focused(false));
+    app.route_window_event(WindowEvent::Focused(true));
+    app.handle_transport(frame(3));
+    let after_focus_and_output = app.window.as_ref().unwrap().effects.ime_sends;
+    app.route_window_event(resize(962));
+    app.render();
+    assert!(app.terminal.model.is_attached());
+    app.send(ClientMessage::Key(key_event(
+        session::KeyAction::Release,
+        None,
+    )));
+    app.route_window_event(ime("落"));
+    app.complete_paste(Ok(ClientMessage::Paste(b"late".to_vec())));
+    assert_eq!(
+        text_through_marker(&mut app),
+        [],
+        "terminal text leaked after loss"
+    );
+    assert!(composition_cleared && app.input.preedit().is_empty());
+    assert_eq!(after_focus_and_output, before_loss + 1);
+    let effects = &app.window.as_ref().unwrap().effects;
+    assert_eq!(effects.ime, Some((false, None)));
+    // VEN-C2 resends once on resize, even when permission stays false.
+    assert_eq!(effects.ime_sends, after_focus_and_output + 1);
+    assert_eq!(
+        app.render_notice.as_deref(),
+        Some("Venus renderer failure: the Venus GPU device was lost")
+    );
+    app.route_window_event(WindowEvent::CloseRequested);
+    assert!(app.native_requests.exit);
+}
+
+#[test]
 fn native_ime_refreshes_only_for_changed_composition_or_notice() {
     let mut input = InputState::default();
     let mut model = SessionModel::new();
@@ -2923,7 +3032,6 @@ fn a_close_request_quits_as_alt_shift_q_does() {
 }
 
 /// An empty Orbit frame at `revision`.
-#[cfg(target_os = "linux")]
 pub(super) fn frame(revision: u64, screen: orbit_protocol::Screen) -> TransportEvent {
     use orbit_protocol::{Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb};
 
@@ -3168,7 +3276,6 @@ fn quit_prompt_shown(app: &Application) -> bool {
 fn described_dialog(app: &Application) -> Option<DialogScene> {
     match &app.window.as_ref()?.native {
         NativeWindow::Winit { accessibility, .. } => accessibility.dialog(),
-        #[cfg(feature = "candidate-rune")]
         NativeWindow::Rune(_) => None,
     }
 }

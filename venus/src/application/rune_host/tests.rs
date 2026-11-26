@@ -1,14 +1,8 @@
 use super::*;
-use crate::application::tests::busy_window_snapshot;
+use crate::application::tests::{OrbitPeer, PEER_TIMEOUT, busy_window_snapshot, noop_renderer};
 use crate::rune_candidate::fixture_messages;
 use eon_workspace_protocol::v51::Response;
-use std::{
-    ffi::OsString,
-    io::Read,
-    os::unix::fs::{DirBuilderExt, PermissionsExt},
-    os::unix::net::{UnixListener, UnixStream},
-    sync::mpsc,
-};
+use std::{ffi::OsString, os::unix::fs::PermissionsExt, sync::mpsc};
 use winit::{
     event::{DeviceId, Touch, TouchPhase},
     keyboard::{KeyCode, ModifiersState, PhysicalKey},
@@ -144,18 +138,10 @@ fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'st
         closing: false,
         storms: Storms::default(),
     };
-    let fonts = FontSetup::with_directories(&FontSettings::default(), None).unwrap();
-    let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-    let renderer = Renderer::hosted(
-        device,
-        queue,
-        wgpu::TextureFormat::Rgba8Unorm,
-        (960, 600),
-        1.0,
-        fonts,
-    )
-    .unwrap();
-    host.create_window(renderer, SlotGeometry::new([0.0, 0.0, 960.0, 600.0], 1.0));
+    host.create_window(
+        noop_renderer(),
+        SlotGeometry::new([0.0, 0.0, 960.0, 600.0], 1.0),
+    );
     host
 }
 
@@ -763,7 +749,6 @@ const HALF: Geometry = Geometry {
     size: (640, 800),
     ..NATIVE
 };
-const PEER_TIMEOUT: Duration = Duration::from_secs(5);
 
 fn native_slot() -> SlotGeometry {
     SlotGeometry::new([0.0, 0.0, 960.0, 600.0], 1.0)
@@ -940,67 +925,21 @@ fn resize_and_occlusion_supersede_queued_frames_and_moved_slots_never_admit() {
     assert!(host.failed);
 }
 
-/// A canonical Orbit peer on a private socket with bounded waits for the candidate's drains.
+/// A canonical Orbit peer with the Rune host's wake lane.
 struct Peer {
-    listener: UnixListener,
-    socket: PathBuf,
+    orbit: OrbitPeer,
     wakes: mpsc::Receiver<()>,
 }
 
 impl Peer {
     fn new(host: &mut Host, name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("vr-{:x}-{name}", std::process::id()));
-        std::fs::DirBuilder::new()
-            .mode(0o700)
-            .create(&root)
-            .unwrap();
-        let socket = root.join("o");
-        let listener = UnixListener::bind(&socket).unwrap_or_else(|error| {
-            let _ = std::fs::remove_dir(&root);
-            panic!("bind private Orbit peer: {error}");
-        });
-        listener.set_nonblocking(true).unwrap();
+        let orbit = OrbitPeer::new(name);
         let (wake, wakes) = mpsc::sync_channel(1);
         host.app.transport_wake = Arc::new(move || {
             let _ = wake.try_send(());
         });
-        host.app.start_orbit(socket.clone());
-        Self {
-            listener,
-            socket,
-            wakes,
-        }
-    }
-
-    fn accept(&self) -> UnixStream {
-        let deadline = Instant::now() + PEER_TIMEOUT;
-        loop {
-            match self.listener.accept() {
-                Ok((stream, _)) => {
-                    // macOS inherits nonblocking mode from the listener.
-                    stream.set_nonblocking(false).unwrap();
-                    stream.set_read_timeout(Some(PEER_TIMEOUT)).unwrap();
-                    assert_eq!(Self::read(&stream), ClientMessage::Hello);
-                    return stream;
-                }
-                Err(error)
-                    if error.kind() == io::ErrorKind::WouldBlock && Instant::now() < deadline =>
-                {
-                    thread::sleep(Duration::from_millis(2));
-                }
-                other => panic!("Orbit client did not connect: {other:?}"),
-            }
-        }
-    }
-
-    fn read(mut stream: &UnixStream) -> ClientMessage {
-        let mut packet = vec![0; session::HEADER_BYTES];
-        stream.read_exact(&mut packet).unwrap();
-        packet.resize(session::client_message_len(&packet).unwrap().unwrap(), 0);
-        stream
-            .read_exact(&mut packet[session::HEADER_BYTES..])
-            .unwrap();
-        session::decode_client_message(&packet).unwrap()
+        host.app.start_orbit(orbit.socket.clone());
+        Self { orbit, wakes }
     }
 
     fn send(
@@ -1022,13 +961,6 @@ impl Peer {
                 .unwrap();
             host.user_event(UserEvent::Transport, &mut Tx::default());
         }
-    }
-}
-
-impl Drop for Peer {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_file(&self.socket);
-        let _ = std::fs::remove_dir(self.socket.parent().unwrap());
     }
 }
 
@@ -1079,13 +1011,13 @@ fn an_idle_drawn_receipt_flushes_the_new_revision_without_requesting_a_redraw() 
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
     let peer = Peer::new(&mut host, "receipt");
-    let private_root = peer.socket.parent().unwrap();
+    let private_root = peer.orbit.socket.parent().unwrap();
     assert_ne!(private_root, std::env::temp_dir());
     assert_eq!(
         private_root.metadata().unwrap().permissions().mode() & 0o777,
         0o700
     );
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
     let candidate = host.prepare_grid(native_slot()).unwrap();
     host.finish(&mut Tx::default());
@@ -1107,7 +1039,7 @@ fn an_idle_drawn_receipt_flushes_the_new_revision_without_requesting_a_redraw() 
     assert!(host.app.terminal.deferred_selection.is_empty());
     let deadline = Instant::now() + PEER_TIMEOUT;
     loop {
-        let message = Peer::read(&stream);
+        let message = OrbitPeer::read(&stream);
         if let ClientMessage::Selection(_) = message {
             assert_eq!(message, selection_begin(1));
             break;
@@ -1121,7 +1053,7 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
     let peer = Peer::new(&mut host, "withdraw");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
     let candidate = host.prepare_grid(native_slot()).unwrap();
     present(&mut host, candidate);
@@ -1166,7 +1098,7 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
     let mut selections = Vec::new();
     let deadline = Instant::now() + PEER_TIMEOUT;
     loop {
-        match Peer::read(&stream) {
+        match OrbitPeer::read(&stream) {
             ClientMessage::Selection(selection) => selections.push(selection),
             ClientMessage::ReturnToLive => break,
             _ => {}
@@ -1181,7 +1113,7 @@ fn actions_until_marker(host: &mut Host, stream: &UnixStream) -> Vec<ClientMessa
     assert!(host.app.send(ClientMessage::ReturnToLive));
     let mut actions = Vec::new();
     loop {
-        match Peer::read(stream) {
+        match OrbitPeer::read(stream) {
             ClientMessage::ReturnToLive => return actions,
             message @ (ClientMessage::Resize(_)
             | ClientMessage::PreviewVertical { .. }
@@ -1199,7 +1131,7 @@ fn native_input_keeps_touch_and_cancelled_wheel_phases() {
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
     let peer = Peer::new(&mut host, "native-phases");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
     let candidate = host.prepare_grid(native_slot()).unwrap();
     present(&mut host, candidate);
@@ -1266,12 +1198,12 @@ fn ime_caret_uses_logical_points_and_enables_with_a_hidden_cursor() {
 }
 
 #[test]
-fn paste_completion_is_retired_by_focus_or_selected_attachment_changes() {
+fn paste_requires_current_focus_attachment_and_device() {
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
     on_focus(&mut host, true, &mut Tx::default());
     let peer = Peer::new(&mut host, "paste-admission");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
     actions_until_marker(&mut host, &stream);
     let arm = |host: &Host| {
@@ -1317,6 +1249,14 @@ fn paste_completion_is_retired_by_focus_or_selected_attachment_changes() {
         assert!(host.app.terminal.model.notice().is_some());
     }
     assert!(actions_until_marker(&mut host, &stream).is_empty());
+
+    // Reaching the native paste path would report the overlapping read.
+    arm(&host);
+    let prior = host.app.terminal.model.notice().map(str::to_owned);
+    let window = host.app.window.as_ref().unwrap();
+    window.renderer.lose_device_for_test();
+    host.app.paste_clipboard();
+    assert_eq!(host.app.terminal.model.notice(), prior.as_deref());
 }
 
 #[test]
@@ -1419,7 +1359,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
     let peer = Peer::new(&mut host, "fractional-scroll");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     let size = grid_at(&host, NATIVE);
     let mut messages = grid_fixture(0, size);
     let Some(ServerMessage::Frame(frame)) = messages.last_mut() else {
@@ -1492,7 +1432,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
 
     step(&mut host, 0.75, TouchPhase::Moved);
     assert_eq!(
-        Peer::read(&stream),
+        OrbitPeer::read(&stream),
         ClientMessage::ScrollVertical {
             frame_revision: 1,
             rows: -1
@@ -1544,7 +1484,7 @@ fn withdrawn_frames_stop_scroll_even_after_a_late_preview() {
         host.apply_geometry(NATIVE);
         on_focus(&mut host, true, &mut Tx::default());
         let peer = Peer::new(&mut host, name);
-        let stream = peer.accept();
+        let stream = peer.orbit.accept();
         attach_fixture(&peer, &stream, &mut host, NATIVE);
         let shown = host.prepare_grid(native_slot()).unwrap();
         present(&mut host, shown);
@@ -1619,7 +1559,7 @@ fn a_raw_resize_withdraws_input_until_a_draw_of_the_applied_grid() {
     let half_slot = SlotGeometry::new([0.0, 0.0, 640.0, 800.0], 1.0);
     host.apply_geometry(FULL);
     let peer = Peer::new(&mut host, "raw");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, FULL);
     let presented = host.prepare_grid(full_slot).unwrap();
     present_at(&mut host, full_slot, presented);
@@ -1705,7 +1645,7 @@ fn a_near_slot_keeps_orbit_and_selection_on_the_applied_grid() {
     let prepared = slot_for_target(measured, applied.size);
     assert!(host.prepare_grid(prepared).is_none());
     let peer = Peer::new(&mut host, "rounding");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, rounded);
     let required = grid_at(&host, applied);
     assert_eq!(
@@ -1739,7 +1679,7 @@ fn compatible_output_keeps_the_displayed_selection_revision_until_raw_resize() {
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
     let peer = Peer::new(&mut host, "compatible");
-    let stream = peer.accept();
+    let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
     let displayed = host.prepare_grid(native_slot()).unwrap();
     present(&mut host, displayed);
@@ -1815,7 +1755,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
     host.apply_geometry(FULL);
     let size = grid_at(&host, FULL);
     let peer = Peer::new(&mut host, "resync");
-    let first = peer.accept();
+    let first = peer.orbit.accept();
 
     let mut upload = grid_fixture(4, size);
     let ServerMessage::Frame(mut image_frame) = upload.pop().unwrap() else {
@@ -1888,7 +1828,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
     present_at(&mut host, slot, retained);
     assert_eq!(host.app.presented_revision(), None);
 
-    let second = peer.accept();
+    let second = peer.orbit.accept();
     image_frame.revision = 6;
     image_frame.graphics.as_mut().unwrap().placements[0].state = PlacementState::Pending;
     peer.send(

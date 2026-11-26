@@ -44,7 +44,7 @@ use rune::{
     clipboard::plain::{self, Outcome, Selection},
 };
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     rc::Rc,
     sync::{
         Mutex, OnceLock,
@@ -56,50 +56,6 @@ use std::{
 /// Rune delivers only its own window's events; Venus's handlers take a window ID.
 fn window_id() -> WindowId {
     WindowId::from(0)
-}
-
-/// Venus's side of the Rune window. Rune takes title and redraw only from a callback's `Tx`, so
-/// Application's requests wait here until the callback returns.
-#[derive(Default)]
-pub(super) struct RuneWindow {
-    output: Cell<bool>,
-    pub(super) withdrawn: Cell<bool>,
-    redraw: Cell<bool>,
-    title: RefCell<Option<String>>,
-    ime_area: Cell<Option<PhysicalCaretArea>>,
-    reading_paste: Cell<bool>,
-    paste_target: Cell<Option<(u64, u64)>>,
-    clipboard_writes: Cell<usize>,
-}
-
-impl RuneWindow {
-    pub(super) fn sync_ime(&self, allowed: bool, area: Option<PhysicalCaretArea>) {
-        self.ime_area.set(allowed.then(|| {
-            area.unwrap_or((PhysicalPosition::new(0.0, 0.0), PhysicalSize::new(1.0, 1.0)))
-        }));
-    }
-
-    pub(super) fn retire_paste(&self) {
-        self.paste_target.set(None);
-    }
-
-    pub(super) fn has_output(&self) -> bool {
-        self.output.get()
-    }
-
-    pub(super) fn request_redraw(&self) {
-        self.redraw.set(true);
-    }
-
-    /// Venus's native-effects boundary sends only a changed title.
-    pub(super) fn set_title(&self, title: &str) {
-        *self.title.borrow_mut() = Some(title.to_owned());
-    }
-
-    /// The title to give the window now, if it changed.
-    fn take_title(&self) -> Option<String> {
-        self.title.take()
-    }
 }
 
 fn ime_rect(area: PhysicalCaretArea, scale: f32) -> [f32; 4] {

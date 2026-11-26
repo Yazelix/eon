@@ -27,6 +27,8 @@ use orbit_protocol::{
         ServerMessage, SurfaceSize, WheelOutcome,
     },
 };
+#[cfg(any(test, feature = "candidate-rune"))]
+use std::cell::Cell;
 use std::{
     borrow::Cow,
     cell::RefCell,
@@ -743,6 +745,58 @@ impl WaylandIme {
     }
 }
 
+/// Venus's side of the Rune window. Rune takes title and redraw only from a callback's `Tx`, so
+/// Application's requests wait here until the callback returns.
+#[cfg(any(test, feature = "candidate-rune"))]
+#[derive(Default)]
+struct RuneWindow {
+    output: Cell<bool>,
+    #[cfg(feature = "candidate-rune")]
+    withdrawn: Cell<bool>,
+    redraw: Cell<bool>,
+    title: RefCell<Option<String>>,
+    ime_area: Cell<Option<PhysicalCaretArea>>,
+    #[cfg(feature = "candidate-rune")]
+    reading_paste: Cell<bool>,
+    #[cfg(feature = "candidate-rune")]
+    paste_target: Cell<Option<(u64, u64)>>,
+    #[cfg(feature = "candidate-rune")]
+    clipboard_writes: Cell<usize>,
+}
+
+#[cfg(any(test, feature = "candidate-rune"))]
+impl RuneWindow {
+    fn sync_ime(&self, allowed: bool, area: Option<PhysicalCaretArea>) {
+        self.ime_area.set(allowed.then(|| {
+            area.unwrap_or((PhysicalPosition::new(0.0, 0.0), PhysicalSize::new(1.0, 1.0)))
+        }));
+    }
+
+    #[cfg(feature = "candidate-rune")]
+    fn retire_paste(&self) {
+        self.paste_target.set(None);
+    }
+
+    fn has_output(&self) -> bool {
+        self.output.get()
+    }
+
+    fn request_redraw(&self) {
+        self.redraw.set(true);
+    }
+
+    /// Venus's native-effects boundary sends only a changed title.
+    fn set_title(&self, title: &str) {
+        *self.title.borrow_mut() = Some(title.to_owned());
+    }
+
+    /// The title to give the window now, if it changed.
+    #[cfg(feature = "candidate-rune")]
+    fn take_title(&self) -> Option<String> {
+        self.title.take()
+    }
+}
+
 /// The native window under Venus's policy: winit's window and its AccessKit adapter, or the
 /// Rune candidate host's window (eon-yp6vg.7.9), which Rune owns.
 enum NativeWindow {
@@ -753,15 +807,15 @@ enum NativeWindow {
         #[cfg(target_os = "linux")]
         ime: WaylandIme,
     },
-    #[cfg(feature = "candidate-rune")]
-    Rune(rune_host::RuneWindow),
+    #[cfg(any(test, feature = "candidate-rune"))]
+    Rune(RuneWindow),
 }
 
 impl NativeWindow {
     fn id(&self) -> Option<WindowId> {
         match self {
             Self::Winit { window, .. } => Some(window.id()),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => None,
         }
     }
@@ -770,7 +824,7 @@ impl NativeWindow {
     fn is(&self, id: WindowId) -> bool {
         match self {
             Self::Winit { window, .. } => window.id() == id,
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => true,
         }
     }
@@ -779,7 +833,7 @@ impl NativeWindow {
     fn has_output(&self) -> bool {
         match self {
             Self::Winit { window, .. } => window.current_monitor().is_some(),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(window) => window.has_output(),
         }
     }
@@ -787,7 +841,7 @@ impl NativeWindow {
     fn request_redraw(&self) {
         match self {
             Self::Winit { window, .. } => window.request_redraw(),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(window) => window.request_redraw(),
         }
     }
@@ -795,7 +849,7 @@ impl NativeWindow {
     fn set_title(&self, title: &str) {
         match self {
             Self::Winit { window, .. } => window.set_title(title),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(window) => window.set_title(title),
         }
     }
@@ -818,7 +872,7 @@ impl NativeWindow {
                 }
                 window.set_ime_allowed(allowed);
             }
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(window) => window.sync_ime(allowed, area),
         }
     }
@@ -835,7 +889,7 @@ impl NativeWindow {
             }
             #[cfg(not(target_os = "linux"))]
             Self::Winit { .. } => false,
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => false,
         }
     }
@@ -848,7 +902,7 @@ impl NativeWindow {
                     window.set_ime_cursor_area(position, size);
                 }
             }
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => {}
         }
     }
@@ -857,7 +911,7 @@ impl NativeWindow {
     fn ime_resized(&mut self, scale_factor: f64) {
         match self {
             Self::Winit { ime, .. } => ime.scale_factor = scale_factor,
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => {}
         }
     }
@@ -865,7 +919,7 @@ impl NativeWindow {
     fn set_cursor(&self, icon: CursorIcon) {
         match self {
             Self::Winit { window, .. } => window.set_cursor(icon),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => {}
         }
     }
@@ -873,7 +927,7 @@ impl NativeWindow {
     fn drag_window(&self) -> std::result::Result<(), winit::error::ExternalError> {
         match self {
             Self::Winit { window, .. } => window.drag_window(),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => Ok(()),
         }
     }
@@ -885,7 +939,7 @@ impl NativeWindow {
                 adapter,
                 ..
             } => Some((accessibility, adapter)),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => None,
         }
     }
@@ -895,7 +949,7 @@ impl NativeWindow {
             Self::Winit {
                 window, adapter, ..
             } => adapter.process_event(window, event),
-            #[cfg(feature = "candidate-rune")]
+            #[cfg(any(test, feature = "candidate-rune"))]
             Self::Rune(_) => {}
         }
     }
@@ -5805,12 +5859,7 @@ impl Application {
         let scrollback_label = self.scrollback_label(workspace.as_deref());
         let scrollback_rect = self.scrollback_rect(workspace.as_deref());
         let workspace_focus = self.workspace_focus;
-        let ime_allowed = !self.dialog_open()
-            && ime_allowed(
-                self.window_focused,
-                workspace_focus,
-                self.terminal.model.is_attached(),
-            );
+        let ime_allowed = self.terminal_ime_allowed();
         #[cfg(feature = "candidate-rune")]
         let retire_paste = !ime_allowed || self.input_locked();
         let pointer_icon = self.pointer_icon(dialog.is_some(), scrollback_rect);
@@ -5865,7 +5914,29 @@ impl Application {
         self.native_requests.redraw = true;
     }
 
+    fn terminal_text_allowed(&self) -> bool {
+        self.window
+            .as_ref()
+            .is_none_or(|state| !state.renderer.device_lost())
+    }
+
+    fn terminal_ime_allowed(&self) -> bool {
+        self.terminal_text_allowed()
+            && !self.dialog_open()
+            && ime_allowed(
+                self.window_focused,
+                self.workspace_focus,
+                self.terminal.model.is_attached(),
+            )
+    }
+
     fn send(&mut self, message: ClientMessage) -> bool {
+        if matches!(message, ClientMessage::Key(_) | ClientMessage::Paste(_))
+            && !self.terminal_text_allowed()
+        {
+            bench_trace("input_rejected", "device-lost");
+            return false;
+        }
         let pending = match &message {
             ClientMessage::ScrollVertical { rows, .. } => Some(PendingViewportRequest::Scroll {
                 rows: *rows,
@@ -6079,6 +6150,9 @@ impl Application {
     }
 
     fn paste_clipboard(&mut self) {
+        if !self.terminal_text_allowed() {
+            return;
+        }
         #[cfg(feature = "candidate-rune")]
         if rune_host::read_clipboard(self) {
             return;
@@ -6446,6 +6520,10 @@ impl Application {
                 state.native.request_redraw();
             }
             Err(error) => {
+                if state.renderer.device_lost() {
+                    state.sync_ime(false, None);
+                    native_ime_message(&mut self.input, &mut self.terminal.model, Ime::Disabled);
+                }
                 self.terminal
                     .terminal_scroll
                     .cancel(&mut self.terminal.pending_viewport);
@@ -6768,13 +6846,11 @@ impl Application {
                 }
             }
             WindowEvent::Ime(event) => {
-                let allowed = !dialog_open
-                    && ime_allowed(
-                        self.window_focused,
-                        workspace_focus,
-                        self.terminal.model.is_attached(),
-                    );
-                if allowed && matches!(event, Ime::Enabled) {
+                let allowed = self.terminal_ime_allowed();
+                if allowed
+                    && matches!(event, Ime::Enabled)
+                    && let Some(state) = &mut self.window
+                {
                     state.ime_enabled();
                 }
                 if !ime_reaches_terminal(allowed, &event) {
