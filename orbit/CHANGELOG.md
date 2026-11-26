@@ -6,6 +6,19 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Management generation 10 widens the lease key input to 74 keys: F1-F12,
+  arrows, Home, End, PageUp, PageDown, Insert, Delete, Escape, Enter, Tab,
+  Backspace, Space and the 47 US-QWERTY letter, digit and punctuation keys,
+  with only Shift, Ctrl, Alt and Super. Printable keys carry canonical
+  US-QWERTY text and unshifted codepoint, so each encodes as an equivalent
+  attached client's press and release would; other keys and modifier bits
+  are refused as `invalid-input` after the quiet window (ORB-C5). The wire
+  layout is unchanged, but v10 frames reject v9 messages and `ORBR` records,
+  so v10 recovery and live update refuse v9 runs (ORB-C13).
+  `--management-v10` replaces v9 without an alias; Venus is unaffected and
+  Eon Runtime and Eon move together. ORBS and ORBF stay unchanged
+  (`eon-pane-send-key-vlgu0`).
+
 - Orbit accepts a foreground and background pair at launch. OSC 10/11
   query and change the current colors, and OSC 110/111 restore the launch
   values. Eon supplies its default white on black (`eon-jjix`, ORB-C2).

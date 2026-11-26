@@ -23,7 +23,7 @@ use crate::{
         tests::catalog,
     },
 };
-use eon_workspace_protocol::v50::{Action, Request, Response, WorkspaceAction, encode_request};
+use eon_workspace_protocol::v51::{Action, Request, Response, WorkspaceAction, encode_request};
 use orbit_protocol::management::{
     Foreground, ProcessIdentity, ProgramProcesses, ProgramRecord, ProgramState, ProgramStatus,
     TerminationReason,

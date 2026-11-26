@@ -80,6 +80,7 @@ fn bare_key(key: PhysicalKey, modifiers: Modifiers, action: KeyAction) -> sessio
 pub fn run() {
     input_is_encoded_as_a_client_would_send_it();
     a_lease_key_is_a_client_key_without_text();
+    lease_keys_follow_pty_modes();
     a_lease_paste_is_never_interleaved();
     refused_requests_keep_the_lease();
     input_waits_out_a_clients_typing();
@@ -174,12 +175,12 @@ fn input_is_encoded_as_a_client_would_send_it() {
     run.stop();
 }
 
-/// A lease key (management v9) reaches the PTY exactly as an attached
-/// client's press of that key with no text would, in the legacy keyboard
-/// mode and with every kitty flag on, including associated text: it carries
-/// none. A key that produces text, a lock or side modifier bit, or a value
-/// that names no key or modifier, is refused as `InvalidInput` and writes
-/// nothing.
+/// A functional lease key reaches the PTY exactly as an attached client's
+/// press of that key with no text would, in the legacy keyboard mode and with
+/// every kitty flag on, including associated text: it carries none. A key
+/// outside the 74 lease keys, a lock or side modifier bit, even beside its
+/// base modifier, or a value that names no key or modifier, is refused as
+/// `InvalidInput` and writes nothing.
 fn a_lease_key_is_a_client_key_without_text() {
     let mut run = Driven::start();
     let mut client = run.attach();
@@ -187,13 +188,18 @@ fn a_lease_key_is_a_client_key_without_text() {
         .union(Modifiers::ALT)
         .union(Modifiers::SHIFT);
     let lease_key = LeaseInput::key(PhysicalKey::PAGE_DOWN, reserved);
+    let shift_side = Modifiers::SHIFT.union(Modifiers::SHIFT_SIDE).bits();
     for (key, modifiers) in [
-        (PhysicalKey::A.raw(), 0),
-        (PhysicalKey::ENTER.raw(), 0),
-        (PhysicalKey::TAB.raw(), 0),
-        (PhysicalKey::ESCAPE.raw(), 0),
-        (PhysicalKey::PAGE_DOWN.raw(), Modifiers::CAPS_LOCK.bits()),
+        (PhysicalKey::UNIDENTIFIED.raw(), 0),
+        (PhysicalKey::SHIFT_LEFT.raw(), 0),
+        (PhysicalKey::CAPS_LOCK.raw(), 0),
+        (PhysicalKey::NUMPAD_0.raw(), 0),
+        (PhysicalKey::F13.raw(), 0),
+        (PhysicalKey::PASTE.raw(), 0),
         (PhysicalKey::MAX_RAW + 1, 0),
+        (PhysicalKey::PAGE_DOWN.raw(), Modifiers::CAPS_LOCK.bits()),
+        (PhysicalKey::A.raw(), Modifiers::NUM_LOCK.bits()),
+        (PhysicalKey::A.raw(), shift_side),
         (PhysicalKey::PAGE_DOWN.raw(), Modifiers::MASK + 1),
     ] {
         assert_eq!(
@@ -233,6 +239,63 @@ fn a_lease_key_is_a_client_key_without_text() {
         2,
         "associated text: {leased:?}"
     );
+    drop(client);
+    run.stop();
+}
+
+/// Printable lease keys (management v10) carry their US-QWERTY text, and every
+/// lease key follows the PTY's keyboard mode, legacy, application cursor
+/// keys or every kitty flag, as an attached client's equivalent key would.
+fn lease_keys_follow_pty_modes() {
+    let mut run = Driven::start();
+    let mut client = run.attach();
+    let (none, shift, ctrl) = (Modifiers::empty(), Modifiers::SHIFT, Modifiers::CTRL);
+    let check = |run: &mut Driven, key, modifiers, expected: &[u8]| {
+        let from = run.input().len();
+        let lease = LeaseInput::key(key, modifiers);
+        assert_eq!(input(run, lease), written(false), "{key:?}");
+        let leased = run.settled_input(from, expected.len());
+        assert_eq!(leased, expected, "{key:?} {modifiers:?}");
+    };
+    for (key, modifiers, expected) in [
+        (PhysicalKey::R, shift, &b"R"[..]),
+        (PhysicalKey::SPACE, none, b" "),
+        (PhysicalKey::ESCAPE, none, b"\x1b"),
+        (PhysicalKey::ARROW_LEFT, shift, b"\x1b[1;2D"),
+        (PhysicalKey::TAB, shift, b"\x1b[Z"),
+        (PhysicalKey::MINUS, ctrl.union(shift), b"\x1f"),
+        (PhysicalKey::C, ctrl, b"\x03"),
+    ] {
+        check(&mut run, key, modifiers, expected);
+    }
+    run.command("printf '\\033[?1h\\033]0;cursor\\007'");
+    until_titled(&mut client, "cursor");
+    check(&mut run, PhysicalKey::ARROW_UP, none, b"\x1bOA");
+    run.command("printf '\\033[?1l\\033[>31u\\033]0;kitty\\007'");
+    until_titled(&mut client, "kitty");
+    for (key, modifiers, expected) in [
+        (PhysicalKey::ARROW_LEFT, shift, &b"\x1b[1;2:1D\x1b[1;2:3D"[..]),
+        (PhysicalKey::C, ctrl, b"\x1b[99;5u\x1b[99;5:3u"),
+        (PhysicalKey::ESCAPE, none, b"\x1b[27u\x1b[27;1:3u"),
+        (PhysicalKey::R, shift, b"\x1b[114:82;2;82u\x1b[114:82;2:3u"),
+    ] {
+        check(&mut run, key, modifiers, expected);
+    }
+    // A client's Shift+R with its layout text writes the same bytes.
+    let from = run.input().len();
+    for action in [KeyAction::Press, KeyAction::Release] {
+        client.send(&session::ClientMessage::Key(session::KeyEvent {
+            action,
+            key: PhysicalKey::R,
+            modifiers: shift,
+            consumed_modifiers: shift,
+            composing: false,
+            text: Some("R".into()),
+            unshifted_codepoint: Some('r'),
+        }));
+    }
+    let expected = b"\x1b[114:82;2;82u\x1b[114:82;2:3u";
+    assert_eq!(run.settled_input(from, expected.len()), expected, "a client's key differs");
     drop(client);
     run.stop();
 }
@@ -407,6 +470,16 @@ fn input_waits_out_a_clients_typing() {
         typing,
         "Enter after a key press"
     );
+    // The window is checked before the key: even one Orbit would refuse.
+    for lease in [
+        LeaseInput::key(PhysicalKey::R, Modifiers::SHIFT),
+        LeaseInput::Key {
+            key: PhysicalKey::F13.raw(),
+            modifiers: 0,
+        },
+    ] {
+        assert_eq!(quiet_input(&mut run, lease, 1500), typing, "a key after a key press");
+    }
     assert_eq!(pasted(&mut run, "0"), written(false), "a zero window refused");
     assert_eq!(run.settled_input(3, 1), b"0");
 

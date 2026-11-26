@@ -29,12 +29,12 @@ use super::{
     update::UpdateListener,
     workspace::{self, LaunchCommand, SessionEnd, SessionOperation, WorkspaceSet},
 };
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     Action, Availability, BusyTerminals, CloseConsent, CloseEnd, CloseScope, CloseTerminal,
     Editing, Ended, FILES_ENTRY, Failure, Focus, InvokeIntent, LifecycleResponse, Request,
     Response, Runtime, Screen, SendTarget, Sent, Snapshot, TargetId, TerminalHistory,
-    TerminalInput, TerminalText, UntrackedRun, VERSION, WindowEntry, WindowState, WorkspaceAction,
-    WorkspaceTarget,
+    TerminalInput, TerminalKey, TerminalText, UntrackedRun, VERSION, WindowEntry, WindowState,
+    WorkspaceAction, WorkspaceTarget,
 };
 use orbit_protocol::management::{LeaseInput, ProcessOutcome, Screen as OrbitScreen};
 use std::{
@@ -857,7 +857,7 @@ impl NativeFocus {
     }
 
     fn read(&mut self, stream: &UnixStream) -> Result<bool, FocusFailure> {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             HEADER_BYTES, declared_focus_report_len, decode_focus_report,
         };
         let mut buffer = [0; 64];
@@ -988,7 +988,7 @@ impl PresentationProcess {
                 };
                 if let Some(snapshot) = snapshot {
                     let bytes =
-                        eon_workspace_protocol::v50::encode_response(&Response::Snapshot(snapshot))
+                        eon_workspace_protocol::v51::encode_response(&Response::Snapshot(snapshot))
                             .map_err(|error| format!("cannot encode startup snapshot: {error}"))?;
                     let mut remaining = bytes.as_slice();
                     while !remaining.is_empty() {
@@ -4604,7 +4604,7 @@ fn dispatch_registered_request(
             ) && state
                 .attention
                 .as_ref()
-                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v50::Sidebar::Off)
+                .is_none_or(|owner| owner.sidebar() == eon_workspace_protocol::v51::Sidebar::Off)
             {
                 return (
                     ControlResponse::Workspace(Response::Failure(failure(
@@ -5166,7 +5166,12 @@ fn terminal_access(request: Request, state: &mut SupervisorState) -> Result<Resp
                     {
                         return Err(failure(
                             "focus-changed",
-                            "keyboard focus changed after the paste; Enter was not sent",
+                            if matches!(input, TerminalInput::Key(_)) {
+                                "keyboard focus moved to another terminal after the earlier \
+                                 keys; this key was not sent"
+                            } else {
+                                "keyboard focus changed after the paste; Enter was not sent"
+                            },
                         ));
                     }
                     match target.id {
@@ -5230,6 +5235,7 @@ fn terminal_access(request: Request, state: &mut SupervisorState) -> Result<Resp
             let input = match input {
                 TerminalInput::Paste(text) => LeaseInput::Paste(text),
                 TerminalInput::Enter => LeaseInput::Enter,
+                TerminalInput::Key(key) => lease_key(&key),
             };
             Response::Sent(Sent {
                 target,
@@ -5248,6 +5254,55 @@ fn terminal_access(request: Request, state: &mut SupervisorState) -> Result<Resp
             })
         }
     })
+}
+
+/// The Orbit lease key that a validated EONW terminal key names; EONW and
+/// Orbit share the modifier bits (EON-C36, ORB-C5).
+fn lease_key(key: &TerminalKey) -> LeaseInput {
+    use orbit_protocol::session::PhysicalKey as K;
+    let nth = |first: K, index: u8| K::from_raw(first.raw() + u16::from(index));
+    let physical = match key.key.as_bytes() {
+        [b'K', b'e', b'y', letter @ b'A'..=b'Z'] => nth(K::A, letter - b'A'),
+        [b'D', b'i', b'g', b'i', b't', digit @ b'0'..=b'9'] => nth(K::DIGIT_0, digit - b'0'),
+        [b'F', number @ ..] => (1..=12u8)
+            .find(|n| number == n.to_string().as_bytes())
+            .and_then(|n| nth(K::F1, n - 1)),
+        _ => [
+            ("Escape", K::ESCAPE),
+            ("Tab", K::TAB),
+            ("Enter", K::ENTER),
+            ("Backspace", K::BACKSPACE),
+            ("Space", K::SPACE),
+            ("Insert", K::INSERT),
+            ("Delete", K::DELETE),
+            ("Home", K::HOME),
+            ("End", K::END),
+            ("PageUp", K::PAGE_UP),
+            ("PageDown", K::PAGE_DOWN),
+            ("ArrowLeft", K::ARROW_LEFT),
+            ("ArrowRight", K::ARROW_RIGHT),
+            ("ArrowUp", K::ARROW_UP),
+            ("ArrowDown", K::ARROW_DOWN),
+            ("Backquote", K::BACKQUOTE),
+            ("Backslash", K::BACKSLASH),
+            ("BracketLeft", K::BRACKET_LEFT),
+            ("BracketRight", K::BRACKET_RIGHT),
+            ("Comma", K::COMMA),
+            ("Equal", K::EQUAL),
+            ("Minus", K::MINUS),
+            ("Period", K::PERIOD),
+            ("Quote", K::QUOTE),
+            ("Semicolon", K::SEMICOLON),
+            ("Slash", K::SLASH),
+        ]
+        .into_iter()
+        .find_map(|(name, physical)| (name == key.key).then_some(physical)),
+    };
+    // A key that names nothing reaches Orbit as one it refuses.
+    LeaseInput::Key {
+        key: physical.unwrap_or(K::UNIDENTIFIED).raw(),
+        modifiers: key.modifiers.into(),
+    }
 }
 
 /// A close reply; one that ended the generation shuts the supervisor down.
@@ -5426,8 +5481,8 @@ mod tests {
     use crate::platform::{test_children as children, test_program as program};
     use rustix::process::{Pid, Signal, kill_process};
     fn focus_frame(window_focused: bool) -> Vec<u8> {
-        eon_workspace_protocol::v50::encode_focus_report(
-            &eon_workspace_protocol::v50::FocusReport {
+        eon_workspace_protocol::v51::encode_focus_report(
+            &eon_workspace_protocol::v51::FocusReport {
                 window_focused,
                 terminal: None,
             },
@@ -5693,13 +5748,13 @@ mod tests {
         let inspected = crate::control::send_action_from_until(
             &socket,
             None,
-            Action::Workspace(eon_workspace_protocol::v50::WorkspaceAction::InspectRuntime),
+            Action::Workspace(eon_workspace_protocol::v51::WorkspaceAction::InspectRuntime),
             deadline,
         )
         .unwrap();
         assert!(
             matches!(inspected, crate::control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v50::LifecycleResponse::Runtime(runtime)
+            eon_workspace_protocol::v51::LifecycleResponse::Runtime(runtime)
         ) if !runtime.attach.available && runtime.attach.reason.contains("cleanup is incomplete"))
         );
         assert!(
@@ -5804,7 +5859,7 @@ mod tests {
 
     #[test]
     fn a_consent_matches_on_generation_runs_and_end_only() {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             CloseEnd, CloseScope, CloseTerminal, TargetId, TerminalTarget, UntrackedRun,
         };
         let mut scope = CloseScope {
@@ -5868,7 +5923,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn a_column_close_never_runs_without_a_consent_that_names_its_runs() {
-        use eon_workspace_protocol::v50::{CloseEnd, Side};
+        use eon_workspace_protocol::v51::{CloseEnd, Side};
         let root = temporary_directory();
         let (mut state, _) = finishing_window(&root);
         // A one-pane final column always asks, even once the default shell is idle.
@@ -6301,7 +6356,7 @@ mod tests {
             assert_eq!(error.code, "column-close-failed", "{context}: {error:?}");
             assert!(error.detail.contains("terminal-9"), "{context}: {error:?}");
             assert!(
-                eon_workspace_protocol::v50::encode_response(&super::Response::Failure(
+                eon_workspace_protocol::v51::encode_response(&super::Response::Failure(
                     error.clone()
                 ))
                 .is_ok(),
@@ -6489,7 +6544,7 @@ mod tests {
                 (
                     None,
                     crate::control::ControlResponse::Workspace(super::Response::Snapshot(snapshot)),
-                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v50::Sidebar::Off),
+                ) => assert_eq!(snapshot.sidebar, eon_workspace_protocol::v51::Sidebar::Off),
                 _ => panic!("unexpected sidebar result"),
             }
         }
@@ -6951,7 +7006,7 @@ mod tests {
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
         use crate::session_registry::{Operation, Registry, Worker};
-        use eon_workspace_protocol::v50::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v51::{Change, SubscriptionMessage, WorkspaceChange};
         let (root, inputs, mut state, old_peer) = subscribed_window();
         drop(old_peer);
         let registry_root = root.join("registry");
@@ -7065,7 +7120,7 @@ mod tests {
         let socket = root.join("eon.sock");
         let listener = control::ControlListener::bind(&socket).unwrap();
         let generation = "g1-00000000000000000000000000000001";
-        let starting = eon_workspace_protocol::v50::Runtime {
+        let starting = eon_workspace_protocol::v51::Runtime {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             terminal_inventory: Vec::new(),
@@ -7074,14 +7129,14 @@ mod tests {
             name: None,
             started_at: 1,
             eon_version: inputs.version.into(),
-            workspace_protocol: eon_workspace_protocol::v50::VERSION,
+            workspace_protocol: eon_workspace_protocol::v51::VERSION,
             component_report: inputs.component_report().unwrap().into(),
             sessions: Vec::new(),
-            attach: eon_workspace_protocol::v50::Availability {
+            attach: eon_workspace_protocol::v51::Availability {
                 available: false,
                 reason: "registering".into(),
             },
-            stop: eon_workspace_protocol::v50::Availability {
+            stop: eon_workspace_protocol::v51::Availability {
                 available: true,
                 reason: "starting".into(),
             },
@@ -7096,7 +7151,7 @@ mod tests {
             std::thread::sleep(Duration::from_millis(1));
         }
         let control::ControlResponse::Lifecycle(
-            eon_workspace_protocol::v50::LifecycleResponse::Runtime(status),
+            eon_workspace_protocol::v51::LifecycleResponse::Runtime(status),
         ) = control::send_action(&socket, Action::Workspace(WorkspaceAction::InspectRuntime))
             .unwrap()
         else {
@@ -7134,7 +7189,7 @@ mod tests {
             control,
             session_registry::{Fault, Registry, Worker},
         };
-        use eon_workspace_protocol::v50::{Request, encode_request};
+        use eon_workspace_protocol::v51::{Request, encode_request};
         use std::io::Write;
         let (root, inputs, mut state, peer) = subscribed_window();
         let registry_root = root.join("registry");
@@ -7374,16 +7429,16 @@ mod tests {
         state
             .subscribers
             .attach(stream, *subscriber, Instant::now());
-        let mut message = vec![0; eon_workspace_protocol::v50::HEADER_BYTES];
+        let mut message = vec![0; eon_workspace_protocol::v51::HEADER_BYTES];
         peer.read_exact(&mut message).unwrap();
         message.resize(
-            eon_workspace_protocol::v50::declared_message_len(&message).unwrap(),
+            eon_workspace_protocol::v51::declared_message_len(&message).unwrap(),
             0,
         );
-        peer.read_exact(&mut message[eon_workspace_protocol::v50::HEADER_BYTES..])
+        peer.read_exact(&mut message[eon_workspace_protocol::v51::HEADER_BYTES..])
             .unwrap();
-        let eon_workspace_protocol::v50::SubscriptionMessage::Subscribed(subscribed) =
-            eon_workspace_protocol::v50::decode_subscription_message(&message).unwrap()
+        let eon_workspace_protocol::v51::SubscriptionMessage::Subscribed(subscribed) =
+            eon_workspace_protocol::v51::decode_subscription_message(&message).unwrap()
         else {
             panic!("no SUBSCRIBED");
         };
@@ -7399,7 +7454,7 @@ mod tests {
         assert_eq!(state.workspace_snapshot_in(None).unwrap(), before);
         assert!(state.venus.is_none());
 
-        let missing = eon_workspace_protocol::v50::Filter {
+        let missing = eon_workspace_protocol::v51::Filter {
             workspaces: vec!["s9".into()],
             ..Default::default()
         };
@@ -7514,7 +7569,7 @@ mod tests {
     /// A pending window with one unfiltered subscriber that has read its
     /// snapshot, and that subscriber's end of the connection.
     fn subscribed_window() -> (PathBuf, crate::cli::Inputs, SupervisorState, UnixStream) {
-        use eon_workspace_protocol::v50::SubscriptionMessage;
+        use eon_workspace_protocol::v51::SubscriptionMessage;
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let workspace = WorkspaceSet::pending(
@@ -7599,9 +7654,9 @@ mod tests {
         mut peer: UnixStream,
     ) -> std::thread::JoinHandle<(
         super::Response,
-        Vec<eon_workspace_protocol::v50::SubscriptionMessage>,
+        Vec<eon_workspace_protocol::v51::SubscriptionMessage>,
     )> {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             HEADER_BYTES, declared_message_len, decode_response, encode_request,
         };
         use std::io::Write;
@@ -7671,9 +7726,9 @@ mod tests {
 
     /// The names of the `workspace-renamed` events in `messages`.
     fn renames(
-        messages: &[eon_workspace_protocol::v50::SubscriptionMessage],
+        messages: &[eon_workspace_protocol::v51::SubscriptionMessage],
     ) -> Vec<Option<String>> {
-        use eon_workspace_protocol::v50::{Change, SubscriptionMessage, WorkspaceChange};
+        use eon_workspace_protocol::v51::{Change, SubscriptionMessage, WorkspaceChange};
         messages
             .iter()
             .filter_map(|message| match message {
@@ -7692,8 +7747,8 @@ mod tests {
     /// Every whole subscription message already written to `peer`.
     fn subscription_messages(
         peer: &mut UnixStream,
-    ) -> Vec<eon_workspace_protocol::v50::SubscriptionMessage> {
-        use eon_workspace_protocol::v50::{declared_message_len, decode_subscription_message};
+    ) -> Vec<eon_workspace_protocol::v51::SubscriptionMessage> {
+        use eon_workspace_protocol::v51::{declared_message_len, decode_subscription_message};
         peer.set_nonblocking(true).unwrap();
         let mut bytes = Vec::new();
         let mut buffer = [0; 65536];
@@ -7721,7 +7776,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn attention_reaches_subscribers_in_the_loop_turn_that_polls_it() {
-        use eon_workspace_protocol::v50::{AttentionState, Change, SubscriptionMessage};
+        use eon_workspace_protocol::v51::{AttentionState, Change, SubscriptionMessage};
         let root = temporary_directory();
         let inputs = crate::fixtures::inputs();
         let session = leased_orbit(
@@ -7781,8 +7836,8 @@ mod tests {
                 id: "subscribe-1".into(),
                 caller: None,
                 action: Action::Subscribe {
-                    filter: eon_workspace_protocol::v50::Filter {
-                        kinds: vec![eon_workspace_protocol::v50::EventKind::Attention],
+                    filter: eon_workspace_protocol::v51::Filter {
+                        kinds: vec![eon_workspace_protocol::v51::EventKind::Attention],
                         ..Default::default()
                     },
                     after: None,
@@ -8006,7 +8061,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn reload_same_build_rereads_config_and_rolls_back_to_accepted_arguments() {
-        use eon_workspace_protocol::v50::InputLock;
+        use eon_workspace_protocol::v51::InputLock;
 
         for reject_connected in [false, true] {
             let root = temporary_directory();
@@ -8268,7 +8323,7 @@ mod tests {
         );
         assert!(!ended);
         assert!(
-            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v50::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
+            matches!(response, super::ControlResponse::Lifecycle(eon_workspace_protocol::v51::LifecycleResponse::Runtime(info)) if info.venus.as_deref() == newer.to_str())
         );
         let failed = super::reload_presentation(
             &mut fixture.state,
@@ -8345,7 +8400,7 @@ mod tests {
         assert_eq!(state.workspaces.as_ref().unwrap().snapshot(), before);
         assert_eq!(
             state.attention.as_ref().unwrap().sidebar(),
-            eon_workspace_protocol::v50::Sidebar::Closed
+            eon_workspace_protocol::v51::Sidebar::Closed
         );
         assert!(shown().is_none());
         drop(state);
@@ -8355,7 +8410,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn reload_crash_or_failed_reattach_returns_to_the_own_build() {
-        use eon_workspace_protocol::v50::LifecycleResponse;
+        use eon_workspace_protocol::v51::LifecycleResponse;
         use std::{io::Write, os::unix::fs::OpenOptionsExt, thread};
         for outcome in [9, 0] {
             let root = temporary_directory();
@@ -8504,16 +8559,16 @@ mod tests {
             return;
         };
         let result = std::env::var_os("EON_RELOAD_ATTACH_RESULT").unwrap();
-        let mut startup = vec![0; eon_workspace_protocol::v50::HEADER_BYTES];
+        let mut startup = vec![0; eon_workspace_protocol::v51::HEADER_BYTES];
         std::io::stdin().read_exact(&mut startup).unwrap();
-        let length = eon_workspace_protocol::v50::declared_message_len(&startup).unwrap();
+        let length = eon_workspace_protocol::v51::declared_message_len(&startup).unwrap();
         startup.resize(length, 0);
         std::io::stdin()
-            .read_exact(&mut startup[eon_workspace_protocol::v50::HEADER_BYTES..])
+            .read_exact(&mut startup[eon_workspace_protocol::v51::HEADER_BYTES..])
             .unwrap();
         assert!(matches!(
-            eon_workspace_protocol::v50::decode_response(&startup).unwrap(),
-            eon_workspace_protocol::v50::Response::Snapshot(_)
+            eon_workspace_protocol::v51::decode_response(&startup).unwrap(),
+            eon_workspace_protocol::v51::Response::Snapshot(_)
         ));
         let read = |stream: &mut UnixStream| {
             let mut bytes = vec![0; orbs::HEADER_BYTES];
@@ -8791,8 +8846,8 @@ mod tests {
     fn inspected(
         state: &mut SupervisorState,
     ) -> (
-        Option<eon_workspace_protocol::v50::Attention>,
-        Vec<eon_workspace_protocol::v50::QueueEntry>,
+        Option<eon_workspace_protocol::v51::Attention>,
+        Vec<eon_workspace_protocol::v51::QueueEntry>,
     ) {
         // Each request ID is accepted once.
         static INSPECTIONS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
@@ -8811,10 +8866,10 @@ mod tests {
         );
         assert!(!ended);
         let snapshot = match response {
-            super::ControlResponse::Workspace(eon_workspace_protocol::v50::Response::Snapshot(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v51::Response::Snapshot(
                 snapshot,
             )) => snapshot,
-            super::ControlResponse::Workspace(eon_workspace_protocol::v50::Response::Failure(
+            super::ControlResponse::Workspace(eon_workspace_protocol::v51::Response::Failure(
                 failure,
             )) => panic!("Inspect failed: {} {}", failure.code, failure.detail),
             _ => panic!("Inspect answers with a snapshot"),
@@ -8834,10 +8889,10 @@ mod tests {
     fn raise_finish(
         state: &mut SupervisorState,
         gate: &Path,
-    ) -> eon_workspace_protocol::v50::AttentionState {
-        use eon_workspace_protocol::v50::AttentionState;
+    ) -> eon_workspace_protocol::v51::AttentionState {
+        use eon_workspace_protocol::v51::AttentionState;
         use std::{io::Write, os::unix::fs::OpenOptionsExt};
-        let changed = |attention: &Option<eon_workspace_protocol::v50::Attention>| {
+        let changed = |attention: &Option<eon_workspace_protocol::v51::Attention>| {
             attention
                 .as_ref()
                 .and_then(|attention| attention.record.as_ref())
@@ -8897,7 +8952,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn selected_raise_waits_for_native_window_focus() {
-        use eon_workspace_protocol::v50::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v51::AttentionState::{Finished, Idle};
         use std::io::Write;
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -9167,7 +9222,7 @@ mod tests {
     #[test]
     fn a_capture_answers_reads_as_dispatch_does() {
         use super::{ControlResponse, LifecycleResponse, WorkspaceAction};
-        use eon_workspace_protocol::v50::{BusyTerminals, Response};
+        use eon_workspace_protocol::v51::{BusyTerminals, Response};
         let root = temporary_directory();
         let (mut state, peer, _) = leased_window(&root);
         let inputs = crate::fixtures::inputs();
@@ -9284,7 +9339,7 @@ mod tests {
     /// The failure code of a refused reply, in whichever framing it came.
     fn refusal(reply: &Dispatched) -> Option<&str> {
         use super::{ControlResponse, LifecycleResponse};
-        use eon_workspace_protocol::v50::Response;
+        use eon_workspace_protocol::v51::Response;
         match reply {
             Dispatched::Reply(ControlResponse::Workspace(Response::Failure(failure)), false)
             | Dispatched::Reply(
@@ -9335,7 +9390,7 @@ mod tests {
     #[test]
     fn denying_principal_is_refused_before_any_effect() {
         use crate::admission::Effect::{Arrange, Close, Inspect, Lifecycle, Read, Run, Send};
-        use eon_workspace_protocol::v50::{SendTarget, TerminalInput};
+        use eon_workspace_protocol::v51::{SendTarget, TerminalInput};
         let inputs = crate::fixtures::inputs();
         let scrollback = "scrollback".to_owned();
         let send = |pane: &str| Action::SendTerminal {
@@ -9363,7 +9418,7 @@ mod tests {
                 tab: tab.into(),
                 entry: "agent".into(),
                 expected_instance: None,
-                intent: eon_workspace_protocol::v50::InvokeIntent::Toggle,
+                intent: eon_workspace_protocol::v51::InvokeIntent::Toggle,
             }),
             (Arrange, |pane, _, _| Action::EditTerminalHistory {
                 target: pane.into(),
@@ -9417,7 +9472,7 @@ mod tests {
                 tab: tab.into(),
                 entry: scrollback.into(),
                 expected_instance: None,
-                intent: eon_workspace_protocol::v50::InvokeIntent::Toggle,
+                intent: eon_workspace_protocol::v51::InvokeIntent::Toggle,
             }),
             (Read, |pane, _, _| Action::EditTerminalHistory {
                 target: pane.into(),
@@ -9735,13 +9790,93 @@ mod tests {
                 tab,
                 entry: scrollback,
                 expected_instance: None,
-                intent: eon_workspace_protocol::v50::InvokeIntent::Toggle,
+                intent: eon_workspace_protocol::v51::InvokeIntent::Toggle,
             },
         );
         assert_eq!(refusal(&reply), Some("unavailable"));
         assert!(lease_untouched(&peer));
         drop((stopping, peer));
         fs::remove_dir_all(root).unwrap();
+    }
+
+    /// EON-C36: `terminal_access = "none"` refuses a focused, forced key in
+    /// normal admission, before the lease; and the 74 EONW terminal keys name
+    /// the 74 Orbit lease keys one to one, with Orbit's modifier bits.
+    #[test]
+    fn terminal_keys_pass_admission_and_name_their_lease_keys() {
+        use crate::managed_environment::TerminalAccess;
+        use eon_workspace_protocol::v51::{
+            ALT, CTRL, SHIFT, SUPER, SendTarget, TerminalInput, TerminalKey,
+        };
+        use orbit_protocol::{management::LeaseInput, session::Modifiers};
+        let key = |modifiers, key: &str| TerminalKey {
+            modifiers,
+            key: key.into(),
+        };
+        let root = temporary_directory();
+        let (mut state, peer, _pane) = leased_window(&root);
+        state.agents.terminal_access = TerminalAccess::None;
+        let send = Action::SendTerminal {
+            target: SendTarget::Focused {
+                expected_terminal: None,
+            },
+            input: TerminalInput::Key(key(SHIFT, "ArrowLeft")),
+            force: true,
+        };
+        let reply = admitted_as(Principal::Owner, &mut state, &root, None, send);
+        assert_eq!(refusal(&reply), Some("terminal-access-off"));
+        assert!(lease_untouched(&peer));
+        drop((state, peer));
+        fs::remove_dir_all(root).unwrap();
+
+        let named = "Escape Tab Enter Backspace Space Insert Delete Home End PageUp PageDown \
+                     ArrowLeft ArrowRight ArrowUp ArrowDown Backquote Backslash BracketLeft \
+                     BracketRight Comma Equal Minus Period Quote Semicolon Slash";
+        let names = (b'A'..=b'Z')
+            .map(|letter| format!("Key{}", char::from(letter)))
+            .chain((0..10).map(|digit| format!("Digit{digit}")))
+            .chain((1..=12).map(|n| format!("F{n}")))
+            .chain(named.split_whitespace().map(String::from));
+        let mut physical = Vec::new();
+        for name in names {
+            for modifiers in 0..16 {
+                let LeaseInput::Key {
+                    key: raw,
+                    modifiers: bits,
+                } = super::lease_key(&key(modifiers, &name))
+                else {
+                    panic!("{name} is not a lease key");
+                };
+                let (lease, _) = LeaseInput::allowed_key(raw, bits).expect(&name);
+                if modifiers == 0 {
+                    physical.push(lease);
+                }
+            }
+        }
+        physical.sort_by_key(|key| key.raw());
+        assert_eq!(physical, LeaseInput::KEYS);
+        // A name outside the 74 reaches Orbit as a key it refuses, never as
+        // a neighbour of one it takes.
+        for name in [
+            "Key[", "Key@", "Keya", "Digit:", "Digit/", "F0", "F13", "F01", "F+1", "F",
+        ] {
+            assert_eq!(
+                super::lease_key(&key(0, name)),
+                LeaseInput::Key {
+                    key: orbit_protocol::session::PhysicalKey::UNIDENTIFIED.raw(),
+                    modifiers: 0,
+                },
+                "{name}"
+            );
+        }
+        for (bit, modifier) in [
+            (SHIFT, Modifiers::SHIFT),
+            (CTRL, Modifiers::CTRL),
+            (ALT, Modifiers::ALT),
+            (SUPER, Modifiers::SUPER),
+        ] {
+            assert_eq!(u16::from(bit), modifier.bits());
+        }
     }
 
     /// Codex 8: the registry carries the principal admitted at dispatch.
@@ -9781,7 +9916,7 @@ mod tests {
     #[cfg(target_os = "linux")]
     #[test]
     fn replacement_venus_does_not_inherit_focus() {
-        use eon_workspace_protocol::v50::AttentionState::{Finished, Idle};
+        use eon_workspace_protocol::v51::AttentionState::{Finished, Idle};
         use std::{io::Write, net::Shutdown};
         let root = temporary_directory();
         let (mut state, gate) = finishing_window(&root);
@@ -10019,7 +10154,7 @@ mod tests {
 
     #[test]
     fn hiding_files_cancels_startup_and_leave_in_the_action_reply() {
-        use eon_workspace_protocol::v50::{PopupTarget, Response};
+        use eon_workspace_protocol::v51::{PopupTarget, Response};
 
         let root = temporary_directory();
         fs::set_permissions(&root, fs::Permissions::from_mode(0o700)).unwrap();
@@ -10853,7 +10988,7 @@ mod tests {
 
     #[test]
     fn startup_snapshot_transfer_uses_the_admission_deadline() {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             Column, Pane, PopupGeometry, Response, Snapshot, Tab, encode_response,
         };
         use std::time::{Duration, Instant};
@@ -10869,7 +11004,7 @@ mod tests {
             active_build: "g1-00000000000000000000000000000001".into(),
             workspace: "s1".into(),
             active_workspace: "s1".into(),
-            workspaces: vec![eon_workspace_protocol::v50::WorkspaceInfo {
+            workspaces: vec![eon_workspace_protocol::v51::WorkspaceInfo {
                 id: "s1".into(),
                 persistent_id: Some("s1".into()),
                 registration_error: None,
@@ -10916,7 +11051,7 @@ mod tests {
             claude_quota_failure: None,
             running: None,
             busy: None,
-            sidebar: eon_workspace_protocol::v50::Sidebar::Open,
+            sidebar: eon_workspace_protocol::v51::Sidebar::Open,
             attention_queue: Vec::new(),
         };
         let expected = encode_response(&Response::Snapshot(snapshot.clone())).unwrap();

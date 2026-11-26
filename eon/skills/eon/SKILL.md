@@ -255,6 +255,16 @@ the text arrived but Enter did not, including when the error is `person-typing`.
 Do not resend the text; later send `--enter` alone. Send only what the person
 asked for, and read the pane again to see the result.
 
+To answer a prompt that needs keys, such as a menu, run
+`eon pane send ID --json --key down --key enter`: each `--key` is one key
+(`escape`, `enter`, `tab`, `up`, `left`, `f1`-`f12`, one character...) after
+optional `shift+`, `ctrl+`, `alt+` or `super+`, up to 64 in order, and never
+with TEXT or `--enter`. `keys` in the reply counts the keys Orbit accepted;
+after a failure no later key is sent, so read the pane before retrying.
+On macOS, `alt+` types the plain character in a program's legacy
+keyboard mode; send `--key escape --key b` for readline's `alt+b`.
+Never press keys to accept folder trust or another approval for the person.
+
 A sandboxed agent that may connect to Unix sockets can drive Eon, and
 `eon pane create` and `eon pane send` then run commands outside its sandbox.
 Codex with `sandbox_workspace_write.network_access = true` and Claude Code with

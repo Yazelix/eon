@@ -22,7 +22,7 @@ use eon_workspace_protocol::shortcuts::{
     PopupPolicy, RELEASE_CHOICES, ReleasedShortcuts, config_chord, popup_policy,
     validate_input_lock,
 };
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     ALT, CTRL, MAX_ENTER_DELAY_MS, MAX_ENTRIES, MAX_ENTRY_ID_BYTES, MAX_LABEL_BYTES,
     MAX_QUOTA_SCOPE_BYTES, PopupGeometry, PopupKey, SHIFT, SUPER, Shortcut,
 };
@@ -1910,9 +1910,9 @@ pub(crate) fn prepare_edit(
     live: Option<&Path>,
     available: bool,
     log: Option<&DiagnosticLog>,
-) -> Result<super::editor::EditCommand, eon_workspace_protocol::v50::Failure> {
+) -> Result<super::editor::EditCommand, eon_workspace_protocol::v51::Failure> {
     use super::editor::{self, EditCommand, ListenerKind};
-    let command_error = |detail| eon_workspace_protocol::v50::Failure {
+    let command_error = |detail| eon_workspace_protocol::v51::Failure {
         code: "edit-command".into(),
         detail,
     };
@@ -2444,31 +2444,33 @@ pub(super) fn validate_popup_id(id: &str) -> Result<(), String> {
     }
 }
 
+/// The EONW modifier bits that case-insensitive `shift`, `ctrl` or
+/// `control`, `alt` and `super` name, each at most once.
+pub(crate) fn parse_modifiers<'a>(names: impl IntoIterator<Item = &'a str>) -> Result<u8, String> {
+    let mut modifiers = 0;
+    for modifier in names {
+        let bit = match modifier.to_ascii_lowercase().as_str() {
+            "shift" => SHIFT,
+            "ctrl" | "control" => CTRL,
+            "alt" => ALT,
+            "super" => SUPER,
+            _ => return Err(format!("has unsupported modifier {modifier:?}")),
+        };
+        if modifiers & bit != 0 {
+            return Err(format!("repeats modifier {modifier:?}"));
+        }
+        modifiers |= bit;
+    }
+    Ok(modifiers)
+}
+
 fn parse_shortcut(path: &str, value: &str) -> Result<Shortcut, String> {
     let mut parts = value.split('+').collect::<Vec<_>>();
     let key = parts
         .pop()
         .filter(|key| !key.is_empty())
         .ok_or_else(|| format!("{path} must contain modifiers and one physical key joined by +"))?;
-    let mut modifiers = 0;
-    for modifier in parts {
-        let bit = if modifier.eq_ignore_ascii_case("shift") {
-            SHIFT
-        } else if modifier.eq_ignore_ascii_case("ctrl") || modifier.eq_ignore_ascii_case("control")
-        {
-            CTRL
-        } else if modifier.eq_ignore_ascii_case("alt") {
-            ALT
-        } else if modifier.eq_ignore_ascii_case("super") {
-            SUPER
-        } else {
-            return Err(format!("{path} has unsupported modifier {modifier:?}"));
-        };
-        if modifiers & bit != 0 {
-            return Err(format!("{path} repeats modifier {modifier:?}"));
-        }
-        modifiers |= bit;
-    }
+    let modifiers = parse_modifiers(parts).map_err(|reason| format!("{path} {reason}"))?;
     let key = match key.as_bytes() {
         [letter] if letter.is_ascii_alphabetic() => {
             format!("Key{}", char::from(letter.to_ascii_uppercase()))
@@ -5907,7 +5909,7 @@ label = "Browse"
 
     #[test]
     fn editor_popup_settings_round_trip_and_count_against_the_catalog_limit() {
-        use eon_workspace_protocol::v50::MAX_ENTRIES;
+        use eon_workspace_protocol::v51::MAX_ENTRIES;
 
         let mut defaults = crate::fixtures::inputs().defaults;
         let editor = PopupDefinition {

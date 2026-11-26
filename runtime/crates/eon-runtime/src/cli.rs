@@ -11,7 +11,7 @@ use super::{
     },
     managed_environment,
     running::running_notice,
-    sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, terminal_session},
+    sessions::{TAB_VARIABLE, TERMINAL_VARIABLE, delivery_uncertain, terminal_session},
     supervisor::{
         self, LaunchMode, LaunchOptions, WORKSPACE_APPLICATION_ID, WORKSPACE_DECORATIONS,
         configuration_directory, launch_current, prepare_configuration, runtime_directory,
@@ -24,12 +24,12 @@ use super::{
         terminal_text_json,
     },
 };
-use eon_workspace_protocol::v50::{
+use eon_workspace_protocol::v51::{
     Action, AttentionState, CloseConsent, CloseEnd, CloseScope, Direction, FILES_ENTRY, Failure,
     InputLock, InvokeIntent, MAX_HISTORY_TEXT_BYTES, MAX_PASTE_BYTES, Pane, PopupTarget, Response,
-    Side, Snapshot, Tab, TargetId, TerminalHistory, TerminalInput, VERSION, WorkspaceAction,
-    WorkspaceInfo, WorkspaceTarget as SessionTarget, entry_popup, pane_label_character,
-    valid_caller, validate_paste,
+    SHIFT, Sent, Side, Snapshot, Tab, TargetId, TerminalHistory, TerminalInput, TerminalKey,
+    VERSION, WorkspaceAction, WorkspaceInfo, WorkspaceTarget as SessionTarget, entry_popup,
+    pane_label_character, valid_caller, validate_paste,
 };
 use std::{
     cmp::Ordering,
@@ -1418,6 +1418,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
                 "TEXT up to 64 KiB, or Enter alone",
             ),
             (
+                "pane send PANE|POPUP|focused --key KEY...",
+                "Press up to 64 named keys in order",
+            ),
+            (
                 "popup show ENTRY [--tab TAB] [--json]",
                 "Start a popup in a tab",
             ),
@@ -1642,6 +1646,10 @@ It refuses unknown or unfocused windows and missing terminal focus.
 --force cannot bypass these focus checks.
 With focused --enter, Enter requires the same focused terminal after the delay.
 pane send refuses while a person is typing; --force bypasses the typing check.
+pane send --key KEY repeats; KEY is escape, enter, tab, backspace, space,
+up, down, left, right, home, end, pageup, pagedown, insert, delete, f1-f12
+or one character, after optional shift+, ctrl+, alt+ or super+; it excludes
+TEXT, --stdin and --enter.
 Where shown, {command}--json{reset} prints JSON and never asks.
 Busy tab/pane closes require {command}--yes{reset} with {command}--json{reset};
 a column close always requires {command}--yes{reset} and reads no stdin.
@@ -2249,16 +2257,31 @@ fn window_json(window: Option<&str>) -> String {
     window.map_or_else(|| "null".into(), |id| format!("\"{}\"", json_escape(id)))
 }
 
-/// `eon pane send` (EON-C36): checks TEXT before anything is sent, pastes it,
-/// then waits the window's Enter delay and sends Enter when asked. Empty TEXT
-/// counts as none.
+/// `eon pane send` (EON-C36): checks TEXT or every key before anything is
+/// sent, pastes TEXT, then waits the window's Enter delay and sends Enter when
+/// asked, or sends each key in order. Empty TEXT counts as none.
 fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Result<i32, Error> {
     let json = send.json;
+    if send.keys.len() > MAX_SEND_KEYS {
+        let detail = format!("more than {MAX_SEND_KEYS} --key flags; send at most {MAX_SEND_KEYS}");
+        return Ok(report_failure(&failure("input-too-large", detail), json)?);
+    }
+    let mut keys = Vec::with_capacity(send.keys.len());
+    for operand in &send.keys {
+        let key = operand
+            .to_str()
+            .ok_or_else(|| "a --key operand is not UTF-8".to_owned())
+            .and_then(parse_terminal_key);
+        match key {
+            Ok(key) => keys.push(key),
+            Err(detail) => return Ok(report_failure(&failure("invalid-key", detail), json)?),
+        }
+    }
     let action = |input, expected_terminal| Action::SendTerminal {
         target: if send.target == "focused" {
-            eon_workspace_protocol::v50::SendTarget::Focused { expected_terminal }
+            eon_workspace_protocol::v51::SendTarget::Focused { expected_terminal }
         } else {
-            eon_workspace_protocol::v50::SendTarget::Id(send.target.clone())
+            eon_workspace_protocol::v51::SendTarget::Id(send.target.clone())
         },
         input,
         force: send.force,
@@ -2276,8 +2299,8 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     let text = match send.text {
         SendText::None if stdin_holds_data() => {
             let detail = "standard input holds text, so nothing was sent; add --stdin to send \
-                          that text, or give empty input to press Enter alone: </dev/null, or \
-                          null | eon ... in Nushell";
+                          that text, or give empty input to press Enter alone or send keys: \
+                          </dev/null, or null | eon ... in Nushell";
             return Ok(report_failure(&failure("unread-stdin", detail), json)?);
         }
         SendText::None => Vec::new(),
@@ -2296,9 +2319,9 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
             text
         }
     };
-    if text.is_empty() && !send.enter {
+    if text.is_empty() && !send.enter && keys.is_empty() {
         return Err(Error::usage(
-            "eon pane send needs TEXT or --enter\nRun `eon --help` for commands and examples.",
+            "eon pane send needs TEXT, --enter or --key\nRun `eon --help` for commands and examples.",
         ));
     }
     let text = if text.is_empty() {
@@ -2321,22 +2344,77 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
         Ok(resolved) => resolved,
         Err(error) => return Ok(report_failure(&error, json)?),
     };
+    // A failure carries whether the input may have been delivered anyway:
+    // the supervisor or Orbit took the whole request but gave no usable reply.
+    const SENT: &str = "the request was sent to the supervisor and may have been delivered";
     let request = |input, expected| match send_action_from(
         Ok(&resolved.socket),
         caller.clone(),
         action(input, expected),
     ) {
         Ok(ControlResponse::Workspace(Response::Sent(sent))) => Ok(sent),
-        Ok(ControlResponse::Workspace(Response::Failure(failure))) => Err(failure),
-        Ok(_) => Err(failure(
-            "unrepresentable-state",
-            "Eon returned the wrong result for a terminal send",
+        Ok(ControlResponse::Workspace(Response::Failure(failure))) => {
+            let uncertain = delivery_uncertain(&failure);
+            Err((failure, uncertain))
+        }
+        Ok(_) => Err((
+            failure(
+                "unrepresentable-state",
+                format!("Eon returned the wrong result for a terminal send; {SENT}"),
+            ),
+            true,
         )),
         Err(error) if error.kind == EndpointFailureKind::InvalidAction => {
-            Err(failure("malformed-action", error.detail))
+            Err((failure("malformed-action", error.detail), false))
         }
-        Err(error) => Err(unreachable_supervisor(error, &resolved.label)),
+        Err(error) => {
+            let dispatched = error.dispatched;
+            let mut failure = unreachable_supervisor(error, &resolved.label);
+            if dispatched {
+                failure.detail = format!("{}; {SENT}", failure.detail);
+            }
+            Err((failure, dispatched))
+        }
     };
+    let header = format!(
+        "{{\"generation\":\"{}\",\"window\":{},",
+        json_escape(&resolved.generation),
+        window_json(resolved.window.as_deref()),
+    );
+    if !keys.is_empty() {
+        // Keys after the first stay on the terminal that took it, so a
+        // `focused` send stops if focus moves.
+        let (total, mut acknowledged, mut count, mut failed) = (keys.len(), None::<Sent>, 0, None);
+        for key in keys {
+            let expected = acknowledged
+                .as_ref()
+                .map(|sent| sent.target.terminal.clone());
+            match request(TerminalInput::Key(key), expected) {
+                Ok(sent) => (acknowledged, count) = (Some(sent), count + 1),
+                Err((failure, _)) if count == 0 => return Ok(report_failure(&failure, json)?),
+                Err(error) => {
+                    failed = Some(error);
+                    break;
+                }
+            }
+        }
+        let sent = acknowledged.expect("the first key either failed or was acknowledged");
+        let error = failed.as_ref().map(|(failure, _)| failure);
+        if json {
+            let sent = terminal_sent_json(&sent, 0, false, count, error);
+            write_stdout(format!("{header}{}", &sent[1..]))?;
+        } else if let Some((failure, uncertain)) = &failed {
+            let next = match uncertain {
+                true => "whether the next key arrived is uncertain",
+                false => "the next key was not sent",
+            };
+            eprintln!(
+                "{}{count} of {total} keys were sent; {next}, and no later key was sent",
+                failure_human(failure)
+            );
+        }
+        return Ok(if failed.is_some() { 1 } else { 0 });
+    }
     // No TEXT means --enter alone. The Enter goes after the window's delay, so
     // the program takes the whole paste first; once the paste is in, an Enter
     // failure leaves it there.
@@ -2344,10 +2422,10 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     let (sent, mut enter_failure) = match text {
         None => match request(TerminalInput::Enter, None) {
             Ok(sent) => (sent, None),
-            Err(failure) => return Ok(report_failure(&failure, json)?),
+            Err((failure, _)) => return Ok(report_failure(&failure, json)?),
         },
         Some(text) => match request(TerminalInput::Paste(text), None) {
-            Err(failure) => return Ok(report_failure(&failure, json)?),
+            Err((failure, _)) => return Ok(report_failure(&failure, json)?),
             Ok(pasted) if send.enter => {
                 thread::sleep(Duration::from_millis(pasted.enter_delay_ms.into()));
                 let enter_failure =
@@ -2357,7 +2435,7 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
             Ok(pasted) => (pasted, None),
         },
     };
-    if let Some(failure) = &mut enter_failure
+    if let Some((failure, _)) = &mut enter_failure
         && failure.code == "person-typing"
     {
         failure.detail = "a person is typing in the target terminal; wait for a quiet interval, \
@@ -2366,17 +2444,15 @@ fn send_terminal(inputs: &Inputs, send: PaneSend, target: WorkspaceTarget) -> Re
     }
     let enter = send.enter && enter_failure.is_none();
     if json {
-        write_stdout(format!(
-            "{{\"generation\":\"{}\",\"window\":{},{}",
-            json_escape(&resolved.generation),
-            window_json(resolved.window.as_deref()),
-            &terminal_sent_json(&sent, bytes, enter, enter_failure.as_ref())[1..]
-        ))?;
-    } else if let Some(failure) = &enter_failure {
-        eprintln!(
-            "{}the text was pasted; Enter was not sent",
-            failure_human(failure)
-        );
+        let error = enter_failure.as_ref().map(|(failure, _)| failure);
+        let sent = terminal_sent_json(&sent, bytes, enter, 0, error);
+        write_stdout(format!("{header}{}", &sent[1..]))?;
+    } else if let Some((failure, uncertain)) = &enter_failure {
+        let enter = match uncertain {
+            true => "whether Enter arrived is uncertain",
+            false => "Enter was not sent",
+        };
+        eprintln!("{}the text was pasted; {enter}", failure_human(failure));
     }
     Ok(if enter_failure.is_some() { 1 } else { 0 })
 }
@@ -2469,7 +2545,7 @@ fn close_question(
     let Some(target_label) = close_target_label(action) else {
         return Ok(None);
     };
-    let tab_terminals = |tab: &eon_workspace_protocol::v50::Tab| -> Vec<(String, String)> {
+    let tab_terminals = |tab: &eon_workspace_protocol::v51::Tab| -> Vec<(String, String)> {
         tab.panes()
             .map(|pane| (pane.session.clone(), pane.label.clone()))
             .chain(tab.popups.iter().map(|popup| {
@@ -3117,7 +3193,8 @@ fn parse_workspace_target_arguments(
             break;
         }
         // Named operands stay literal, even `--window`.
-        if argument == "--name" || argument == "--dir" || argument == "--tag" {
+        if argument == "--name" || argument == "--dir" || argument == "--tag" || argument == "--key"
+        {
             values.push(argument.clone());
             values.extend(arguments.next().cloned());
             continue;
@@ -3135,11 +3212,13 @@ fn parse_workspace_target_arguments(
     Ok((values, target))
 }
 
-/// `pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]` (EON-C36).
+/// `pane send TARGET [--enter] [--force] [--stdin] [--json] [-- TEXT]`, or
+/// with `--key KEY` flags in place of TEXT, `--stdin` and `--enter` (EON-C36).
 #[derive(Debug, PartialEq)]
 struct PaneSend {
     target: String,
     text: SendText,
+    keys: Vec<OsString>,
     enter: bool,
     force: bool,
     json: bool,
@@ -3159,14 +3238,20 @@ fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>,
     if command != "pane" || operation != "send" {
         return Ok(None);
     }
-    let (options, operands) = match rest.iter().position(|argument| argument == "--") {
-        Some(separator) => (&rest[..separator], Some(&rest[separator + 1..])),
-        None => (rest, None),
-    };
-    let mut target = None;
+    let (mut target, mut keys, mut operands) = (None, Vec::new(), None);
     let (mut enter, mut force, mut stdin, mut json) = (false, false, false, false);
-    for option in options {
+    let mut rest = rest.iter();
+    while let Some(option) = rest.next() {
         let flag = match option.to_str() {
+            Some("--") => {
+                operands = Some(rest.as_slice());
+                break;
+            }
+            // A key's operand stays its own, even `--` or `--window`.
+            Some("--key") => {
+                keys.push(rest.next().ok_or_else(|| Error::usage(EON_USAGE))?.clone());
+                continue;
+            }
             Some("--enter") => &mut enter,
             Some("--force") => &mut force,
             Some("--stdin") => &mut stdin,
@@ -3187,13 +3272,113 @@ fn parse_pane_send_arguments(arguments: &[OsString]) -> Result<Option<PaneSend>,
         (Some([text]), false) => SendText::Operand(text.clone()),
         _ => return Err(Error::usage(EON_USAGE)),
     };
+    if !keys.is_empty() && (enter || text != SendText::None) {
+        return Err(Error::usage(EON_USAGE));
+    }
     Ok(Some(PaneSend {
         target: target.ok_or_else(|| Error::usage(EON_USAGE))?,
         text,
+        keys,
         enter,
         force,
         json,
     }))
+}
+
+/// The most `--key` flags one `eon pane send` submits (EON-C36).
+const MAX_SEND_KEYS: usize = 64;
+
+/// The named keys `--key` takes, as lowercase `name=Key` pairs.
+const NAMED_KEYS: &str = "escape=Escape esc=Escape enter=Enter tab=Tab backspace=Backspace \
+    space=Space up=ArrowUp down=ArrowDown left=ArrowLeft right=ArrowRight home=Home end=End \
+    pageup=PageUp page_up=PageUp pagedown=PageDown page_down=PageDown insert=Insert \
+    delete=Delete del=Delete";
+
+/// The US-QWERTY digit and punctuation keys' characters, unshifted and
+/// shifted in the same order: the digits, then `PUNCTUATION_KEYS`.
+const UNSHIFTED_KEYS: &str = "0123456789`\\[],=-.';/";
+const SHIFTED_KEYS: &str = ")!@#$%^&*(~|{}<+_>\":?";
+const PUNCTUATION_KEYS: [&str; 11] = [
+    "Backquote",
+    "Backslash",
+    "BracketLeft",
+    "BracketRight",
+    "Comma",
+    "Equal",
+    "Minus",
+    "Period",
+    "Quote",
+    "Semicolon",
+    "Slash",
+];
+
+fn named_keys() -> impl Iterator<Item = (&'static str, &'static str)> {
+    NAMED_KEYS
+        .split_whitespace()
+        .filter_map(|pair| pair.split_once('='))
+}
+
+/// The key of the character at `index` in `UNSHIFTED_KEYS` or `SHIFTED_KEYS`.
+fn character_key(index: usize) -> String {
+    match index.checked_sub(10) {
+        Some(punctuation) => PUNCTUATION_KEYS[punctuation].to_owned(),
+        None => format!("Digit{index}"),
+    }
+}
+
+/// One `--key` operand in Eon's fixed ASCII key grammar (EON-C36): optional
+/// `+`-separated modifiers, then a named key or one printable character. A
+/// bare uppercase letter or shifted character adds Shift; with modifiers,
+/// letters ignore case and shifted characters are refused.
+fn parse_terminal_key(operand: &str) -> Result<TerminalKey, String> {
+    let (prefix, base) = match operand.strip_suffix("++") {
+        Some(prefix) => (Some(prefix), "+"),
+        None => match operand.rsplit_once('+') {
+            Some((prefix, base)) if !base.is_empty() => (Some(prefix), base),
+            _ => (None, operand),
+        },
+    };
+    let modifiers = prefix.map_or(Ok(0), |prefix| {
+        managed_environment::parse_modifiers(prefix.split('+'))
+            .map_err(|reason| format!("--key {operand:?} {reason}"))
+    })?;
+    let lower = base.to_ascii_lowercase();
+    let function = lower.strip_prefix('f').and_then(|n| n.parse::<u8>().ok());
+    let function = function.filter(|n| (1..=12).contains(n) && lower == format!("f{n}"));
+    let character = |keys: &str| keys.find(base).filter(|_| base.len() == 1);
+    let (key, shift) = if let Some((_, key)) = named_keys().find(|(name, _)| *name == lower) {
+        (key.to_owned(), false)
+    } else if let Some(n) = function {
+        (format!("F{n}"), false)
+    } else if let [letter] = base.as_bytes()
+        && letter.is_ascii_alphabetic()
+    {
+        let shift = prefix.is_none() && letter.is_ascii_uppercase();
+        (
+            format!("Key{}", char::from(letter.to_ascii_uppercase())),
+            shift,
+        )
+    } else if let Some(index) = character(UNSHIFTED_KEYS) {
+        (character_key(index), false)
+    } else if let Some(index) = character(SHIFTED_KEYS)
+        && prefix.is_none()
+    {
+        (character_key(index), true)
+    } else if character(SHIFTED_KEYS).is_some() {
+        return Err(format!(
+            "--key {operand:?} has a shifted character after modifiers; use shift+ with its \
+             unshifted key"
+        ));
+    } else {
+        return Err(format!("--key {operand:?} names no key"));
+    };
+    let key = TerminalKey {
+        modifiers: modifiers | if shift { SHIFT } else { 0 },
+        key,
+    };
+    key.validate()
+        .map_err(|_| format!("--key {operand:?} names no key"))?;
+    Ok(key)
 }
 
 /// An exact tab, pane or column close, with --yes and --json at most once.
@@ -3359,7 +3544,7 @@ fn parse_pane_rename_arguments(arguments: &[OsString]) -> Result<(Action, bool),
         ),
         _ => return Err(Error::usage(EON_USAGE)),
     };
-    eon_workspace_protocol::v50::validate_pane_rename(name, tag)
+    eon_workspace_protocol::v51::validate_pane_rename(name, tag)
         .map_err(|error| Error::usage(error.to_string()))?;
     Ok((
         Action::RenamePane {
@@ -4069,7 +4254,7 @@ mod tests {
     #[test]
     fn startup_notice_fails_closed_if_supervision_is_lost_while_waiting_for_peers() {
         use crate::workspace::{WorkspaceSet, tests};
-        use eon_workspace_protocol::v50::{RunningWindows, WindowEntry, WindowState};
+        use eon_workspace_protocol::v51::{RunningWindows, WindowEntry, WindowState};
         let root = supervisor::temporary_directory();
         let workspace = WorkspaceSet::pending(
             root.join("runtime"),
@@ -4255,7 +4440,7 @@ mod tests {
 
     #[test]
     fn column_close_steps_follow_runtimes_answer() {
-        use eon_workspace_protocol::v50::{CloseTerminal, TerminalTarget, UntrackedRun};
+        use eon_workspace_protocol::v51::{CloseTerminal, TerminalTarget, UntrackedRun};
         let mut scope = CloseScope {
             generation: "g1".into(),
             pane: "p3".into(),
@@ -5525,7 +5710,7 @@ mod tests {
     fn reveal_parser_refuses_ambiguous_or_unrepresentable_requests() {
         let long_path = format!(
             "/{}",
-            "x".repeat(eon_workspace_protocol::v50::MAX_DIRECTORY_BYTES)
+            "x".repeat(eon_workspace_protocol::v51::MAX_DIRECTORY_BYTES)
         );
         for words in [
             &["files", "reveal"][..],
@@ -5712,7 +5897,7 @@ mod tests {
 
     #[test]
     fn close_question_is_target_scoped_and_conservative() {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -5972,7 +6157,7 @@ mod tests {
 
     #[test]
     fn close_question_combines_busy_and_final_warnings_once() {
-        use eon_workspace_protocol::v50::{
+        use eon_workspace_protocol::v51::{
             BusyTerminal, BusyTerminals, Column, Pane, Popup, PopupEntry, PopupGeometry, PopupKey,
             Sidebar, Tab, TargetId, TerminalTarget,
         };
@@ -6182,6 +6367,7 @@ mod tests {
             Ok(Some(PaneSend {
                 target: "u2".into(),
                 text,
+                keys: Vec::new(),
                 enter,
                 force: false,
                 json,
@@ -6214,8 +6400,109 @@ mod tests {
             &["pane", "send", "u2", "--enter", "--enter"],
             &["pane", "send", "u2", "--force", "--force", "--enter"],
             &["pane", "send", "u2", "--no-focus", "--", "text"],
+            &["pane", "send", "u2", "--key"],
+            &["pane", "send", "u2", "--key", "a", "--enter"],
+            &["pane", "send", "u2", "--key", "a", "--stdin"],
+            &["pane", "send", "u2", "--key", "a", "--", "text"],
         ] {
             assert_eq!(parse(args), Err(2), "{args:?}");
+        }
+        // A key's operand stays paired in both passes, even one that looks
+        // like an option, so `--window` is never taken from it.
+        let both = |args: &[&str]| {
+            let args = args.iter().map(OsString::from).collect::<Vec<_>>();
+            let (args, target) = parse_workspace_target_arguments(&args).unwrap();
+            (
+                parse_pane_send_arguments(&args).unwrap().unwrap(),
+                target.window,
+            )
+        };
+        let (send, window) = both(&["pane", "send", "u2", "--key", "--window", "--key", "-"]);
+        assert_eq!(
+            (send.keys, send.text, window),
+            (vec!["--window".into(), "-".into()], SendText::None, None)
+        );
+        let (send, window) = both(&["pane", "send", "u2", "--key", "--", "--json", "--force"]);
+        assert_eq!(
+            (send.keys, send.json, send.force, window),
+            (vec!["--".into()], true, true, None)
+        );
+    }
+
+    /// `--key` follows Eon's fixed ASCII grammar (EON-C36), and each valid
+    /// key's spelling parses back to it.
+    #[test]
+    fn parse_terminal_key_grammar_and_spelling_round_trip() {
+        use eon_workspace_protocol::v51::{ALT, CTRL, SUPER};
+        let key = |modifiers, key: &str| {
+            Ok(TerminalKey {
+                modifiers,
+                key: key.into(),
+            })
+        };
+        for (operand, expected) in [
+            ("a", key(0, "KeyA")),
+            ("R", key(SHIFT, "KeyR")),
+            ("Ctrl+C", key(CTRL, "KeyC")),
+            ("ctrl+c", key(CTRL, "KeyC")),
+            ("CONTROL+Shift+Left", key(SHIFT | CTRL, "ArrowLeft")),
+            ("shift+left", key(SHIFT, "ArrowLeft")),
+            ("+", key(SHIFT, "Equal")),
+            ("shift+=", key(SHIFT, "Equal")),
+            ("ctrl+-", key(CTRL, "Minus")),
+            ("-", key(0, "Minus")),
+            ("?", key(SHIFT, "Slash")),
+            ("!", key(SHIFT, "Digit1")),
+            ("(", key(SHIFT, "Digit9")),
+            ("\"", key(SHIFT, "Quote")),
+            ("7", key(0, "Digit7")),
+            ("Esc", key(0, "Escape")),
+            ("page_down", key(0, "PageDown")),
+            ("F12", key(0, "F12")),
+            ("super+alt+f", key(ALT | SUPER, "KeyF")),
+            ("alt+space", key(ALT, "Space")),
+            ("DEL", key(0, "Delete")),
+        ] {
+            assert_eq!(parse_terminal_key(operand), expected, "{operand:?}");
+        }
+        for operand in [
+            "",
+            " ",
+            "ctrl+",
+            "shift",
+            "ctrl++",
+            "ctrl+?",
+            "shift+!",
+            "ctrl+ctrl+a",
+            "meta+a",
+            "f13",
+            "f0",
+            "f01",
+            "é",
+            "\t",
+            "ab",
+            "++",
+            "+a",
+            "numpad0",
+        ] {
+            assert!(parse_terminal_key(operand).is_err(), "{operand:?}");
+        }
+        let named = "Escape Tab Enter Backspace Space Insert Delete Home End PageUp PageDown \
+                     ArrowLeft ArrowRight ArrowUp ArrowDown Backquote Backslash BracketLeft \
+                     BracketRight Comma Equal Minus Period Quote Semicolon Slash";
+        let keys = (b'A'..=b'Z')
+            .map(|letter| format!("Key{}", char::from(letter)))
+            .chain((0..10).map(|digit| format!("Digit{digit}")))
+            .chain((1..=12).map(|n| format!("F{n}")))
+            .chain(named.split_whitespace().map(String::from));
+        for name in keys {
+            for modifiers in 0..16 {
+                let key = TerminalKey {
+                    modifiers,
+                    key: name.clone(),
+                };
+                assert_eq!(parse_terminal_key(&parity::cli_spelling(&key)), Ok(key));
+            }
         }
     }
 

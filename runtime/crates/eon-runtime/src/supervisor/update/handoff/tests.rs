@@ -1298,7 +1298,7 @@ fn update_cannot_audit_while_an_observer_is_between_socket_and_cloexec() {
 /// another EONW before dispatch. The Stop after it is the window's one Stop.
 #[test]
 fn update_drains_a_held_lease_and_leaves_queued_clients_to_their_owner() {
-    use eon_workspace_protocol::v50::{
+    use eon_workspace_protocol::v51::{
         Action, Request, Response, VERSION, WorkspaceAction, decode_response, encode_request,
     };
     use rustix::process::{Pid, Signal, kill_process};
@@ -1339,7 +1339,7 @@ fn update_drains_a_held_lease_and_leaves_queued_clients_to_their_owner() {
         Response::Snapshot(snapshot) => snapshot,
         other => panic!("{other:?}\n{}", fixture.transcript()),
     };
-    let names = |snapshot: &eon_workspace_protocol::v50::Snapshot| {
+    let names = |snapshot: &eon_workspace_protocol::v51::Snapshot| {
         snapshot
             .workspaces
             .iter()

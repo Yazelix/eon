@@ -780,15 +780,16 @@ impl Orbit {
     }
 
     /// Writes one lease input request whole, encoded as an attached client's
-    /// paste, unmodified Enter press or non-text key press (each key with its
+    /// paste, unmodified Enter press or lease key press (each key with its
     /// release, when the keyboard mode reports releases) would be, and
     /// reports whether a paste was bracketed (ORB-C5). It refuses input less
-    /// than `quiet_ms` after an attached client typed, a paste holding a
-    /// control character other than tab, line feed and carriage return, one
-    /// holding a line feed or carriage return while the program has not
-    /// enabled bracketed paste, a key that produces text or carries a
-    /// modifier other than Shift, Ctrl, Alt and Super, and input the PTY
-    /// queue cannot take whole; a refusal writes nothing.
+    /// than `quiet_ms` after an attached client typed, before it checks the
+    /// payload; then a paste holding a control character other than tab,
+    /// line feed and carriage return, one holding a line feed or carriage
+    /// return while the program has not enabled bracketed paste, a key
+    /// outside the lease set or carrying a modifier other than Shift, Ctrl,
+    /// Alt and Super, and input the PTY queue cannot take whole; a refusal
+    /// writes nothing.
     pub(crate) fn lease_input(
         &mut self,
         input: LeaseInput,
@@ -822,14 +823,22 @@ impl Orbit {
                 )
             }
             LeaseInput::Enter => (
-                self.encode_lease_key(session::PhysicalKey::ENTER, session::Modifiers::empty())?,
+                encode_lease_key(
+                    &self.terminal,
+                    self.surface,
+                    session::PhysicalKey::ENTER,
+                    session::Modifiers::empty(),
+                )?,
                 false,
             ),
             LeaseInput::Key { key, modifiers } => {
                 let Some((key, modifiers)) = LeaseInput::allowed_key(key, modifiers) else {
                     return Ok(Err(Refusal::InvalidInput));
                 };
-                (self.encode_lease_key(key, modifiers)?, false)
+                (
+                    encode_lease_key(&self.terminal, self.surface, key, modifiers)?,
+                    false,
+                )
             }
         };
         if !self.writes.push(&bytes) {
@@ -837,38 +846,6 @@ impl Orbit {
         }
         self.flush_writes()?;
         Ok(Ok(bracketed))
-    }
-
-    /// One lease key encoded as an attached client's press of it would be,
-    /// plus its release when the keyboard mode reports releases; it carries
-    /// no text, so it types none in any keyboard mode (ORB-C5).
-    fn encode_lease_key(
-        &self,
-        key: session::PhysicalKey,
-        modifiers: session::Modifiers,
-    ) -> io::Result<Vec<u8>> {
-        let event = |action| {
-            ClientMessage::Key(session::KeyEvent {
-                action,
-                key,
-                modifiers,
-                consumed_modifiers: session::Modifiers::empty(),
-                composing: false,
-                text: None,
-                unshifted_codepoint: None,
-            })
-        };
-        let mut bytes = encode_input(
-            &self.terminal,
-            self.surface,
-            event(session::KeyAction::Press),
-        )?;
-        bytes.extend(encode_input(
-            &self.terminal,
-            self.surface,
-            event(session::KeyAction::Release),
-        )?);
-        Ok(bytes)
     }
 
     /// The terminal's foreground process group, if it has one.
@@ -941,6 +918,61 @@ pub(crate) fn status_code(status: ExitStatus) -> u32 {
         .unwrap_or_else(|| status.signal().map_or(1, |signal| 128 + signal)) as u32
 }
 
+/// One lease key's press, plus its release when the keyboard mode reports
+/// releases, encoded against `terminal` (ORB-C5).
+fn encode_lease_key(
+    terminal: &Terminal<'static, '_>,
+    surface: session::SurfaceSize,
+    key: session::PhysicalKey,
+    modifiers: session::Modifiers,
+) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::new();
+    for action in [session::KeyAction::Press, session::KeyAction::Release] {
+        let event = ClientMessage::Key(lease_key_event(key, modifiers, action));
+        bytes.extend(encode_input(terminal, surface, event)?);
+    }
+    Ok(bytes)
+}
+
+/// A lease key as the canonical event a US-QWERTY attached client sends:
+/// the functional keys carry no text, while Space and the printable keys
+/// carry their unshifted codepoint and their text, shifted under Shift, on
+/// press and release, consuming Shift only when Shift alone changes the
+/// character (ORB-C5).
+fn lease_key_event(
+    key: session::PhysicalKey,
+    modifiers: session::Modifiers,
+    action: session::KeyAction,
+) -> session::KeyEvent {
+    // Raw keys 1 through 50; 17 through 19 are not lease keys.
+    const UNSHIFTED: &[u8; 50] = b"`\\[],0123456789=   abcdefghijklmnopqrstuvwxyz-.';/";
+    const SHIFTED: &[u8; 50] = b"~|{}<)!@#$%^&*(+   ABCDEFGHIJKLMNOPQRSTUVWXYZ_>\":?";
+    let characters = match usize::from(key.raw()) {
+        _ if key == session::PhysicalKey::SPACE => Some((' ', ' ')),
+        raw @ 1..=50 if UNSHIFTED[raw - 1] != b' ' => {
+            Some((UNSHIFTED[raw - 1].into(), SHIFTED[raw - 1].into()))
+        }
+        _ => None,
+    };
+    let shift = modifiers.contains(session::Modifiers::SHIFT);
+    let consumes_shift = modifiers == session::Modifiers::SHIFT
+        && characters.is_some_and(|(unshifted, shifted)| unshifted != shifted);
+    session::KeyEvent {
+        action,
+        key,
+        modifiers,
+        consumed_modifiers: if consumes_shift {
+            session::Modifiers::SHIFT
+        } else {
+            session::Modifiers::empty()
+        },
+        composing: false,
+        text: characters
+            .map(|(unshifted, shifted)| String::from(if shift { shifted } else { unshifted })),
+        unshifted_codepoint: characters.map(|(unshifted, _)| unshifted),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1011,6 +1043,157 @@ mod tests {
         assert_eq!(last_error.get(), Some(ClipboardWriteError::Busy));
         assert_eq!(writes().len(), 1);
         assert!(clipboard.borrow().overflowed);
+    }
+
+    /// Lease keys carry canonical US-QWERTY metadata (ORB-C5): functional keys
+    /// no text, printable keys their text on press and release, consuming
+    /// Shift only alone; each encodes as an equivalent attached client's key
+    /// would, with these independent bytes in every keyboard mode. Orbit's
+    /// encoder leaves macOS Option unmapped to Alt.
+    #[test]
+    fn lease_key_encoding_and_venus_parity_across_modes() {
+        use session::{KeyAction, Modifiers as M, PhysicalKey as K};
+        let (shift, ctrl, alt) = (M::SHIFT, M::CTRL, M::ALT);
+        let all = [M::SHIFT, M::CTRL, M::ALT, M::SUPER];
+        let subsets = (0..16).map(|bits: usize| {
+            (0..4)
+                .filter(|bit| bits & (1 << bit) != 0)
+                .fold(M::empty(), |set, bit| set.union(all[bit]))
+        });
+        for key in LeaseInput::KEYS {
+            for modifiers in subsets.clone() {
+                for action in [KeyAction::Press, KeyAction::Release] {
+                    let event = lease_key_event(key, modifiers, action);
+                    assert!(modifiers.contains(event.consumed_modifiers));
+                    let printable = event.unshifted_codepoint.is_some();
+                    assert_eq!(printable, event.text.is_some());
+                    assert_eq!(printable, key == K::SPACE || key.raw() <= 50, "{key:?}");
+                    assert_eq!(
+                        event.consumed_modifiers == shift,
+                        printable && key != K::SPACE && modifiers == shift
+                    );
+                }
+            }
+        }
+        let surface = session::SurfaceSize {
+            cols: 80,
+            rows: 24,
+            screen_width: 800,
+            screen_height: 432,
+            cell_width: 10,
+            cell_height: 18,
+            padding_top: 0,
+            padding_bottom: 0,
+            padding_left: 0,
+            padding_right: 0,
+        };
+        let mac = cfg!(target_os = "macos");
+        let alt_shift = alt.union(shift);
+        let cases: [(&[u8], K, M, &[u8]); 30] = [
+            (b"", K::C, ctrl, b"\x03"),
+            (b"\x1b[>4;2m", K::C, ctrl, b"\x1b[27;5;99~"),
+            (b"\x1b[>1u", K::C, ctrl, b"\x1b[99;5u"),
+            (b"\x1b[>31u", K::C, ctrl, b"\x1b[99;5u\x1b[99;5:3u"),
+            (b"", K::MINUS, ctrl.union(shift), b"\x1f"),
+            (b"\x1b[>4;2m", K::MINUS, ctrl.union(shift), b"\x1b[27;6;95~"),
+            (
+                b"\x1b[>31u",
+                K::MINUS,
+                ctrl.union(shift),
+                b"\x1b[45:95;6u\x1b[45:95;6:3u",
+            ),
+            (b"", K::R, shift, b"R"),
+            (b"\x1b[>1u", K::R, shift, b"R"),
+            (b"\x1b[>3u", K::R, shift, b"R\x1b[114;2:3u"),
+            (
+                b"\x1b[>31u",
+                K::R,
+                shift,
+                b"\x1b[114:82;2;82u\x1b[114:82;2:3u",
+            ),
+            (b"", K::SLASH, shift, b"?"),
+            (b"\x1b[>3u", K::SLASH, shift, b"?\x1b[47;2:3u"),
+            (
+                b"\x1b[>31u",
+                K::SLASH,
+                shift,
+                b"\x1b[47:63;2;63u\x1b[47:63;2:3u",
+            ),
+            (b"", K::ARROW_UP, M::empty(), b"\x1b[A"),
+            (b"\x1b[?1h", K::ARROW_UP, M::empty(), b"\x1bOA"),
+            (b"", K::ARROW_LEFT, shift, b"\x1b[1;2D"),
+            (
+                b"\x1b[>31u",
+                K::ARROW_LEFT,
+                shift,
+                b"\x1b[1;2:1D\x1b[1;2:3D",
+            ),
+            (b"\x1b[>31u", K::ESCAPE, M::empty(), b"\x1b[27u\x1b[27;1:3u"),
+            (b"\x1b[>31u", K::ENTER, M::empty(), b"\x1b[13u\x1b[13;1:3u"),
+            (b"", K::SPACE, M::empty(), b" "),
+            (b"", K::SPACE, ctrl, b"\x00"),
+            (b"\x1b[>4;2m", K::SPACE, ctrl, b"\x1b[27;5;32~"),
+            (b"\x1b[>31u", K::SPACE, ctrl, b"\x1b[32;5u\x1b[32;5:3u"),
+            (b"\x1b[>4;2m", K::SPACE, shift, b"\x1b[27;2;32~"),
+            (b"\x1b[>31u", K::SPACE, shift, b"\x1b[32;2;32u\x1b[32;2:3u"),
+            (b"", K::X, alt, if mac { b"x" } else { b"\x1bx" }),
+            (b"", K::X, alt_shift, if mac { b"X" } else { b"\x1bX" }),
+            (
+                b"\x1b[>31u",
+                K::X,
+                alt_shift,
+                if mac {
+                    b"\x1b[120:88;4;88u\x1b[120:88;4:3u"
+                } else {
+                    b"\x1b[120:88;4u\x1b[120:88;4:3u"
+                },
+            ),
+            (b"", K::A, M::SUPER, if mac { b"" } else { b"a" }),
+        ];
+        for (mode, key, modifiers, expected) in cases {
+            let mut terminal = Terminal::new(80, 24).unwrap();
+            terminal.vt_write(mode);
+            let lease = encode_lease_key(&terminal, surface, key, modifiers).unwrap();
+            assert_eq!(lease, expected, "{key:?} {modifiers:?} after {mode:?}");
+            // An attached client's equivalent canonical events encode alike.
+            let layout = [
+                (K::C, 'c', 'C'),
+                (K::R, 'r', 'R'),
+                (K::X, 'x', 'X'),
+                (K::A, 'a', 'A'),
+                (K::MINUS, '-', '_'),
+                (K::SLASH, '/', '?'),
+                (K::SPACE, ' ', ' '),
+            ];
+            let characters = layout.iter().find(|(k, ..)| *k == key);
+            let unshifted = characters.map(|(_, unshifted, _)| *unshifted);
+            let text = characters.map(|(_, unshifted, shifted)| {
+                String::from(if modifiers.contains(shift) {
+                    *shifted
+                } else {
+                    *unshifted
+                })
+            });
+            let mut client = Vec::new();
+            for action in [KeyAction::Press, KeyAction::Release] {
+                let event = session::KeyEvent {
+                    action,
+                    key,
+                    modifiers,
+                    consumed_modifiers: if modifiers == shift && key != K::SPACE {
+                        shift
+                    } else {
+                        M::empty()
+                    },
+                    composing: false,
+                    text: text.clone(),
+                    unshifted_codepoint: unshifted,
+                };
+                let message = ClientMessage::Key(event);
+                client.extend(encode_input(&terminal, surface, message).unwrap());
+            }
+            assert_eq!(client, lease);
+        }
     }
 
     #[test]

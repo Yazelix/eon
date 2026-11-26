@@ -64,7 +64,7 @@ fn an_unsettled_row_refuses_capture() {
                 unsent: Vec::new(),
                 reply: Vec::new(),
                 deadline: Instant::now(),
-                drainer: None,
+                reader: super::super::Reader::Lease,
             });
         }),
         ("a terminal status answer is not consumed", |session| {

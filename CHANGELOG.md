@@ -25,6 +25,18 @@ installation, and proven contract changes.
   at the end of its row's second line, such as `1h · p25 · eon-igae.25`. On a
   narrow sidebar only the tag shortens, with `…`, and screen readers hear the
   whole tag (`eon-wih11`).
+- `eon pane send TARGET --key KEY` presses named keys such as `shift+left`,
+  `escape`, `ctrl+c`, `down` and `enter`, up to 64 in order, so an agent can
+  answer TUI menus and questions that pasted text cannot. Orbit encodes each
+  key for the program's keyboard mode, with the same typing refusal,
+  `--force`, `focused` and `terminal_access` rules as text; JSON adds
+  `keys`. A send whose reply was lost after the request went out says its
+  delivery is uncertain (`eon-pane-send-key-vlgu0`, EON-C36). This bumps
+  EONW v50 to v51 and Orbit management v9 to v10: after updating Eon,
+  restart each running Eon window to activate EONW v51; until then that
+  window's own build refuses `--key` with a usage error. Live update
+  refuses a window whose terminals still run management v9 and asks you to
+  move it to a new window by hand once.
 - `slots.boat.allow_shapes` accepts `eon-darwin-clippy`, so
   `nix develop -c eon-darwin-clippy` (bare or with `-p NAME`) can run on Boat.
   Older Eon builds reject the value; update them before listing it

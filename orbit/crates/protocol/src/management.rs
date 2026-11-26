@@ -6,7 +6,7 @@ use std::fmt;
 const MESSAGE_MAGIC: [u8; 4] = *b"ORBM";
 const RECORD_MAGIC: [u8; 4] = *b"ORBR";
 
-pub const VERSION: u16 = 9;
+pub const VERSION: u16 = 10;
 pub const RECORD_GENERATION: u16 = 1;
 pub const HEADER_BYTES: usize = 12;
 /// Every message's bound, except a `Visible` or `History` reply's and an
@@ -317,10 +317,10 @@ pub enum LeaseInput {
     /// Nonempty UTF-8 text of at most [`MAX_INPUT_PASTE_BYTES`].
     Paste(String),
     Enter,
-    /// One key that produces no text, with only Shift, Ctrl, Alt and Super
-    /// among its modifiers (management v9), as the wire's raw key and
-    /// modifier values. The wire carries no text, so Orbit builds the key
-    /// with none; it refuses any key [`LeaseInput::allowed_key`] does not
+    /// One key of [`LeaseInput::KEYS`], with only Shift, Ctrl, Alt and Super
+    /// among its modifiers (management v10), as the wire's raw key and
+    /// modifier values. Orbit adds the key's canonical US-QWERTY layout
+    /// metadata; it refuses any key [`LeaseInput::allowed_key`] does not
     /// name, a value that names no key or modifier included
     /// (`invalid-input`).
     Key {
@@ -330,31 +330,39 @@ pub enum LeaseInput {
 }
 
 impl LeaseInput {
-    /// The keys a lease may send: those that produce no text.
-    pub const KEYS: [PhysicalKey; 22] = [
-        PhysicalKey::F1,
-        PhysicalKey::F2,
-        PhysicalKey::F3,
-        PhysicalKey::F4,
-        PhysicalKey::F5,
-        PhysicalKey::F6,
-        PhysicalKey::F7,
-        PhysicalKey::F8,
-        PhysicalKey::F9,
-        PhysicalKey::F10,
-        PhysicalKey::F11,
-        PhysicalKey::F12,
-        PhysicalKey::ARROW_UP,
-        PhysicalKey::ARROW_DOWN,
-        PhysicalKey::ARROW_LEFT,
-        PhysicalKey::ARROW_RIGHT,
-        PhysicalKey::HOME,
-        PhysicalKey::END,
-        PhysicalKey::PAGE_UP,
-        PhysicalKey::PAGE_DOWN,
-        PhysicalKey::INSERT,
-        PhysicalKey::DELETE,
+    /// The inclusive raw ranges of [`LeaseInput::KEYS`].
+    const KEY_RANGES: [(PhysicalKey, PhysicalKey); 8] = [
+        (PhysicalKey::BACKQUOTE, PhysicalKey::EQUAL),
+        (PhysicalKey::A, PhysicalKey::SLASH),
+        (PhysicalKey::BACKSPACE, PhysicalKey::BACKSPACE),
+        (PhysicalKey::ENTER, PhysicalKey::ENTER),
+        (PhysicalKey::SPACE, PhysicalKey::TAB),
+        (PhysicalKey::DELETE, PhysicalKey::END),
+        (PhysicalKey::HOME, PhysicalKey::ARROW_UP),
+        (PhysicalKey::ESCAPE, PhysicalKey::F12),
     ];
+
+    /// The 74 keys a lease may send: F1-F12, the arrows, Home, End, PageUp,
+    /// PageDown, Insert, Delete, Escape, Enter, Tab, Backspace, Space and the
+    /// 47 US-QWERTY letter, digit and punctuation keys.
+    pub const KEYS: [PhysicalKey; 74] = {
+        let mut keys = [PhysicalKey::UNIDENTIFIED; 74];
+        let (mut range, mut next) = (0, 0);
+        while range < Self::KEY_RANGES.len() {
+            let (first, last) = Self::KEY_RANGES[range];
+            let mut raw = first.raw();
+            while raw <= last.raw() {
+                let Some(key) = PhysicalKey::from_raw(raw) else {
+                    panic!("a lease key range names no key");
+                };
+                keys[next] = key;
+                (raw, next) = (raw + 1, next + 1);
+            }
+            range += 1;
+        }
+        assert!(next == keys.len());
+        keys
+    };
 
     /// The modifiers a lease key may carry.
     pub const KEY_MODIFIERS: Modifiers = Modifiers::SHIFT
@@ -373,7 +381,11 @@ impl LeaseInput {
     /// The key and modifiers a lease may send for these raw values, or
     /// `None` for any other key or modifier bit (ORB-C5).
     pub fn allowed_key(key: u16, modifiers: u16) -> Option<(PhysicalKey, Modifiers)> {
-        let key = PhysicalKey::from_raw(key).filter(|key| Self::KEYS.contains(key))?;
+        let key = PhysicalKey::from_raw(key).filter(|key| {
+            Self::KEY_RANGES
+                .iter()
+                .any(|(first, last)| (first.raw()..=last.raw()).contains(&key.raw()))
+        })?;
         let modifiers =
             Modifiers::from_bits(modifiers).filter(|bits| Self::KEY_MODIFIERS.contains(*bits))?;
         Some((key, modifiers))

@@ -12,7 +12,7 @@ use super::{
     start_pump::StartPump,
 };
 use eon_workspace_protocol::TERMINAL_START_TIMEOUT;
-use eon_workspace_protocol::v50::{InvokeIntent, PROJECT_ENTRY};
+use eon_workspace_protocol::v51::{InvokeIntent, PROJECT_ENTRY};
 use orbit_protocol::{
     management::LeaseInput,
     session::{Modifiers, PhysicalKey},

@@ -8,7 +8,7 @@ use super::{
     sessions::{self, RunningSession},
     supervisor::{effective_uid, prepare_runtime, validate_private_directory},
 };
-use eon_workspace_protocol::v50::Failure;
+use eon_workspace_protocol::v51::Failure;
 use std::{
     ffi::OsString,
     fs,
@@ -105,7 +105,7 @@ pub(super) fn reuse(
     file: &Path,
     id: &str,
     kind: ListenerKind,
-    key: &eon_workspace_protocol::v50::PopupKey,
+    key: &eon_workspace_protocol::v51::PopupKey,
 ) -> Result<(), Failure> {
     match kind {
         ListenerKind::Helix => open(endpoint, file, id),
@@ -195,7 +195,7 @@ fn exchange(
     request: Vec<u8>,
     kind: ListenerKind,
     id: &str,
-    key: Option<&eon_workspace_protocol::v50::PopupKey>,
+    key: Option<&eon_workspace_protocol::v51::PopupKey>,
 ) -> Result<(), Failure> {
     if request.len() > FRAME_LIMIT {
         return Err(failure("editor-rejected", "Editor request exceeds 64 KiB"));
@@ -1280,7 +1280,7 @@ mod tests {
             Path::new(std::ffi::OsStr::from_bytes(b"/bad\xff")),
             "edit-1",
             ListenerKind::Neovim,
-            &eon_workspace_protocol::v50::PopupKey::Unbound,
+            &eon_workspace_protocol::v51::PopupKey::Unbound,
         )
         .unwrap_err();
         assert_eq!(error.code, "editor-rejected");
@@ -1337,7 +1337,7 @@ mod tests {
             Path::new("/a\n\"b.rs:2:3"),
             "edit-1",
             ListenerKind::Neovim,
-            &eon_workspace_protocol::v50::PopupKey::Unbound,
+            &eon_workspace_protocol::v51::PopupKey::Unbound,
         )
         .unwrap();
         server.join().unwrap();
@@ -1385,7 +1385,7 @@ mod tests {
                 Path::new("/a"),
                 "r1",
                 ListenerKind::Neovim,
-                &eon_workspace_protocol::v50::PopupKey::Unbound,
+                &eon_workspace_protocol::v51::PopupKey::Unbound,
             );
             if passes {
                 result.unwrap();
@@ -1426,7 +1426,7 @@ mod tests {
             Path::new("/a"),
             "r1",
             ListenerKind::Neovim,
-            &eon_workspace_protocol::v50::PopupKey::Unbound,
+            &eon_workspace_protocol::v51::PopupKey::Unbound,
         )
         .unwrap_err();
         assert_eq!(error.code, "editor-unresponsive");
@@ -2314,7 +2314,7 @@ mod tests {
 
     #[test]
     fn owner_sockets_derive_from_terminal_endpoints_inside_the_generation_directory() {
-        use eon_workspace_protocol::v50::MAX_SESSIONS;
+        use eon_workspace_protocol::v51::MAX_SESSIONS;
         let base = super::super::supervisor::temporary_directory()
             .canonicalize()
             .unwrap();

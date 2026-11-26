@@ -284,10 +284,10 @@ pub(super) fn import(
 // EONU's own bounds must cover what a window can hold; an owner raising its
 // bound breaks this build and forces an EONU decision (eon-t3fyd.7).
 const _: () = {
-    use eon_workspace_protocol::{update as eonu, v50};
-    assert!(eonu::MAX_HOSTS >= v50::MAX_SESSIONS);
+    use eon_workspace_protocol::{update as eonu, v51};
+    assert!(eonu::MAX_HOSTS >= v51::MAX_SESSIONS);
     assert!(eonu::MAX_ID_BYTES >= orbit_protocol::management::MAX_ID_BYTES);
-    assert!(eonu::MAX_PATH_BYTES >= v50::MAX_DIRECTORY_BYTES);
+    assert!(eonu::MAX_PATH_BYTES >= v51::MAX_DIRECTORY_BYTES);
     assert!(eonu::MAX_CHECKPOINT_BYTES >= crate::checkpoint::MAX_BYTES);
 };
 
@@ -315,7 +315,7 @@ impl SupervisorState {
             active_build: self.active_build.clone(),
             active_launcher: launcher,
             // The one place EONU learns the workspace version: as a number.
-            eonw: eon_workspace_protocol::v50::VERSION,
+            eonw: eon_workspace_protocol::v51::VERSION,
             eonr: crate::checkpoint::VERSION,
             update_schema: update::SCHEMA,
             presentation: if self.venus.is_some() {

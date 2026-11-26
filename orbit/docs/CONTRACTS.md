@@ -273,14 +273,15 @@ rule keeps its wire representation.
 
 ## ORB-C5 — Semantic terminal interaction
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** Attached clients sending key, mouse, focus, paste, or resize
   interaction, and the management lease holder (ORB-C13) sending paste, Enter
-  or non-text key input with a quiet window.
+  or semantic key input with a quiet window.
 - **Trigger:** Orbit accepts one canonical semantic input message or begins one
   revision-bound left-pointer sequence, or Orbit accepts one management lease
-  input request: a paste of up to 64 KiB, one Enter key, or one non-text key,
-  each with a quiet window of 0 to 65,535 ms.
+  input request: a paste of up to 64 KiB, one Enter key, or one semantic key
+  from Orbit's bounded 74-key lease set, each with a quiet window of 0 to
+  65,535 ms.
 - **Result:**
   - Orbit encodes terminal interaction against its authoritative terminal
     state.
@@ -294,8 +295,24 @@ rule keeps its wire representation.
       program enabled bracketed paste;
     - a lease Enter as an unmodified Enter press, plus its release when the
       terminal's keyboard mode reports releases;
-    - a lease key as that key's press with its modifiers and no text, plus
-      its release when the keyboard mode reports releases.
+    - a lease key as that key's press and release (when the keyboard mode
+      reports releases) with its modifiers and canonical layout metadata:
+      the 26 functional keys (`F1`–`F12`, arrows, `Home`, `End`, `PageUp`,
+      `PageDown`, `Insert`, `Delete`, `Escape`, `Enter`, `Tab`, `Backspace`)
+      carry no printable text, no unshifted codepoint and no consumed
+      modifiers; `Space` and the 47 US-QWERTY printable ASCII keys carry
+      their canonical unshifted codepoint, printable layout text (shifted
+      when `Shift` is set, unshifted otherwise) on both press and release,
+      and consumed `Shift` only when `Shift` alone changes the character
+      (`Space` consumes none). The encoder governs Kitty associated text
+      independently (suppressing associated text on every release and under
+      modifiers that prevent text, while retaining printable metadata for
+      `modifyOtherKeys`, control chords such as `Ctrl+Shift+-`, and Kitty
+      shifted alternates on both press and release). Orbit encodes these
+      canonical `KeyEvent`s identically to equivalent canonical attached-
+      client events (note: pinned macOS Winit supplies no text on release,
+      so a native macOS `Shift+r` release omits the shifted `:82` alternate
+      in Kitty mode 31 that this canonical synthetic release carries).
   - Each lease paste is written whole, in owner-loop order with the attached
     client's input, never interleaved with it.
   - Lease input needs no attachment, works whether or not a client is
@@ -309,40 +326,52 @@ rule keeps its wire representation.
     for the PTY, is refused (`typing`) and writes nothing. Orbit
     tests this and writes the input in one step, so no client input lands
     between the test and the write. A zero window never refuses for typing.
-  - The reply says whether a paste was bracketed.
+  - The reply acknowledges that Orbit accepted the encoded bytes into its
+    ordered PTY write queue (the encoding may be empty in the active keyboard
+    mode, and queued bytes are discarded if the PTY closes before draining)
+    and says whether a paste was bracketed.
 - **Important failures:** Invalid or terminal-forbidden input fails without
   fallback text or duplicate insertion. Invalid phase order, pressure, cancel,
   endpoint loss, or a terminal-mode change cannot switch an active sequence,
-  emit partial input, or synthesize terminal input. A lease paste containing
-  a line feed or carriage return while the program has not enabled bracketed
-  paste is refused (`unbracketed-newline`) and writes nothing. Lease input
-  after child exit is impossible because the run has ended (ORB-C13). A lease
-  request within its quiet window after an attached client's typing is
-  refused (`typing`), writes nothing, and keeps the lease.
+  emit partial input, or synthesize terminal input. Lease input after child
+  exit is impossible because the run has ended (ORB-C13). Orbit checks the
+  quiet window before validating the lease input payload: a lease request
+  within its quiet window after an attached client's typing is refused
+  (`typing`), writes nothing, and keeps the lease even if its payload would
+  otherwise be invalid. Once the quiet window is satisfied (or zero), a lease
+  paste containing a line feed or carriage return while the program has not
+  enabled bracketed paste is refused (`unbracketed-newline`) and writes
+  nothing, and a lease key outside the 74-key set or carrying any modifier
+  bit outside Shift, Ctrl, Alt and Super (including lock, side or unknown
+  bits, even when a side bit is paired with its base modifier) is refused
+  (`invalid-input`), writes nothing, and keeps the lease.
 - **Owner:** Canonical platform-neutral `orbit-protocol` values, Orbit's Bend
   selection policy for the pointer route, and its Rust host's libghostty input
   encoding.
 - **Consumes:** Canonical ORBS v9 semantic input, preserved through ORBS v15,
-  and management v9 lease input; Venus and Eon consume it in this repository.
+  and management v10 lease input; Venus and Eon consume it in this repository.
 - **Boundary:** Candidate-list IME and native input quality remain Venus-owned.
-  Lease input carries no text-producing keys other than Enter, and no
-  multi-key sequences, mouse, focus or resize; raw bytes are never written. Orbit tells an attached client's input from lease input,
-  not a person from a program. Whatever drives the attached client, such as a
+  Lease input admits only the 74 canonical keys (F1–F12, arrows, Home, End,
+  PageUp, PageDown, Insert, Delete, Escape, Enter, Tab, Backspace, Space, and
+  the 47 US-QWERTY ASCII letter, digit and punctuation keys) with Shift,
+  Ctrl, Alt and Super modifiers; it carries no other keys, lock or side
+  modifier bits, multi-key sequences, mouse, focus or resize, and raw bytes are
+  never written. Orbit tells an attached client's input from lease input, not
+  a person from a program. Whatever drives the attached client, such as a
   synthetic keystroke from code running as the same user, counts as typing.
 - **Proof:** the `eon-awmq.3` import commit, with the `eon-awmq.7.1` commit
   for the Kitty release and the `eon-agent-parity-a9g0.15` commit
   (`9c90032`) for lease input, proved installed by the
   `eon-agent-parity-a9g0.19` commit, and the `eon-buys1.1` commit for the
-  quiet window. Amended on 2026-11-17 (approved by eon-lead under Lucca's
-  delegation, 2026-11-17) by `eon-260mh.2.4`: the lease holder may also send
-  one key that produces no text (F1-F12, the arrows, Home, End, PageUp,
-  PageDown, Insert, Delete) with any of the Shift, Ctrl, Alt and Super
-  modifiers. The wire carries only the key and its modifiers; Orbit builds
-  the key event with no text, no unshifted codepoint and not composing, and
-  encodes it as an attached client's press and release would be. Any other
-  key or modifier bit is refused (`invalid-input`). Management v9. The lease
-  key's proof is the `eon-260mh.2.4` commit's `orbit-lease-input` check
-  (`a_lease_key_is_a_client_key_without_text`); the rest keeps its proof
+  quiet window. Historical management v9 evidence (`eon-260mh.2.4`, approved
+  on 2026-11-17 by eon-lead under Lucca's delegation): management v9 first
+  added the 22 non-text lease keys (F1-F12, arrows, Home, End, PageUp,
+  PageDown, Insert, Delete) with Shift, Ctrl, Alt and Super, built with no
+  text and no unshifted codepoint, refusing all other keys and modifier bits
+  (`invalid-input`); that v9 slice was proved by the `eon-260mh.2.4` commit's
+  `orbit-lease-input` check (`a_lease_key_is_a_client_key_without_text`), and
+  the rest kept its proof. Management v10 widens the set to 74 keys with
+  canonical US-QWERTY printable metadata above (Open proof below).
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -374,6 +403,20 @@ rule keeps its wire representation.
       bracketed, and `cat` unbracketed; a line break for `cat` was refused
       and wrote nothing; the lease Enter ran each shell line and submitted
       prompts to Claude Code 2.1.303 and Codex 0.166.0, which answered them.
+- **Open proof:** Management v10 expanded 74-key lease input
+  (`eon-pane-send-key-vlgu0`, `eon-0um2b`): exhaustive 74-key × 16-modifier
+  `orbit-protocol` and `libghostty-vt` unit checks with platform-aware
+  independent byte expectations (`Ctrl+C`, `Ctrl+Shift+-`, shifted
+  press/release `R` and `?`, `Shift+Left` Kitty mode 31 press/release,
+  zero associated text on the 26 functional keys in Kitty mode 31, `Alt`/
+  `Super` platform expectations matching `Options::fromTerminal`, and parity
+  with Venus for equivalent canonical `KeyEvent`s across legacy, DECCKM,
+  modifyOtherKeys mode 2 and Kitty modes 1, 3 and 31 — noting that pinned
+  macOS Winit supplies no text on release, so a native macOS `Shift+r`
+  release lacks the shifted `:82` alternate that the synthetic release
+  carries in Kitty mode 31) plus `orbit-lease-input` real-PTY checks
+  verifying quiet-window-satisfied `invalid-input` and `typing` precedence
+  on `LeaseInput::Key`.
 
 ## ORB-C6 — Rich presentation without silent degradation
 
@@ -881,7 +924,7 @@ rule keeps its wire representation.
 
 ## ORB-C13 — Same-boot management ownership
 
-- **Status:** Proved
+- **Status:** Partially proved
 - **Consumer:** One local Eon launcher and one later replacement on the same boot
   and login.
 - **Trigger:** A launcher prepares an owned mode-0600 record, Orbit crosses Ready,
@@ -941,9 +984,15 @@ rule keeps its wire representation.
   - Symlinks, unexpected types, wrong ownership or mode, replacement, overflow,
     malformed or incompatible state, and slow peers fail closed without blocking
     PTY, presentation, child observation, or shutdown.
+  - Management messages (`ORBM`) and records (`ORBR` live records and
+    tombstones) carry the exact management version in their frame header;
+    bumping management v9 to v10 rejects v9 `ORBR` live records and tombstones
+    (`UnsupportedVersion`) even though `RECORD_GENERATION` stays 1, so
+    mixed-version recovery fails closed and live update refuses v9 hosts
+    before handoff.
 - **Owner:** Orbit's private management owner and canonical protocol package;
   platform mechanics remain isolated, while Eon owns consumer policy.
-- **Consumes:** Canonical management v9, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
+- **Consumes:** Canonical management v10, ORB-C12, ORB-C3, ORB-C5 and ORB-C17.
 - **Boundary:**
   - The contract is per live Orbit run. Eon retains topology, enumeration,
     cleanup, and recovery policy.
@@ -1007,6 +1056,11 @@ rule keeps its wire representation.
       terminal's Orbit stopped (`SIGSTOP`), a read failed after 2 s while
       other terminals answered; after `SIGCONT` the lease served the
       next read and send.
+- **Open proof:** Management v10 (`eon-pane-send-key-vlgu0`): `orbit-protocol`
+  rejection of v9-framed `ORBR` live records and tombstones
+  (`UnsupportedVersion`), mixed-version fail-closed recovery in Eon Runtime,
+  and live-update preflight refusal (`HostProtocol`) for v9 hosts before
+  handoff.
 
 ## ORB-C14 — Apple Silicon macOS platform
 
@@ -1674,7 +1728,7 @@ rule keeps its wire representation.
     reply;
   - its Rust host, which extracts the text with libghostty's plain-text
     formatter;
-  - canonical `orbit-protocol` management v9.
+  - canonical `orbit-protocol` management v10.
 - **Consumes:** ORB-C13 (lease, validation, slow-peer rule), ORB-C4 (held
   updates), ORB-C3 (title and directory values).
 - **Boundary:**

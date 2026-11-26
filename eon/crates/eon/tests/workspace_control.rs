@@ -1,12 +1,12 @@
 use eon_workspace_protocol::stop;
-use eon_workspace_protocol::v50::{
-    Action as ProtocolAction, Availability, Change, Direction, End, Failure as ProtocolFailure,
-    Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse, MAX_SESSIONS, Popup, PopupTarget,
-    Request, Response, Runtime, Screen, Sent, Snapshot, SubscriptionMessage, Tab, TabChange,
-    TargetId, TerminalHistory, TerminalInput, TerminalTarget, TerminalText, VERSION,
-    WorkspaceAction as Action, declared_message_len, decode_lifecycle_response, decode_request,
-    decode_response, decode_subscription_message, encode_lifecycle_response, encode_request,
-    encode_response,
+use eon_workspace_protocol::v51::{
+    Action as ProtocolAction, Availability, CTRL, Change, Direction, End, Ended,
+    Failure as ProtocolFailure, Filter, HEADER_BYTES, InvokeIntent, LifecycleResponse,
+    MAX_SESSIONS, Popup, PopupTarget, Request, Response, Runtime, SHIFT, Screen, SendTarget, Sent,
+    Snapshot, SubscriptionMessage, Tab, TabChange, TargetId, TerminalHistory, TerminalInput,
+    TerminalKey, TerminalTarget, TerminalText, VERSION, WorkspaceAction as Action,
+    declared_message_len, decode_lifecycle_response, decode_request, decode_response,
+    decode_subscription_message, encode_lifecycle_response, encode_request, encode_response,
 };
 use orbit_protocol::management::{
     self as management, ClientMessage as ManagementClientMessage, EndpointIdentity, Failure,
@@ -3179,7 +3179,7 @@ fn managed_orbit_helper() {
     let presentation = PathBuf::from(&arguments[serve + 1]);
     let management_argument = arguments
         .iter()
-        .position(|argument| argument == OsStr::new("--management-v9"))
+        .position(|argument| argument == OsStr::new("--management-v10"))
         .unwrap();
     let session_id = arguments[management_argument + 1]
         .to_str()
@@ -9769,7 +9769,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "switch",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("original".into()),
+            workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("original".into()),
         },
     ));
     assert_eq!(switched.workspace, "s1");
@@ -9779,7 +9779,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
                 &control,
                 "same",
                 Action::SwitchWorkspace {
-                    workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into())
+                    workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s1".into())
                 }
             ))
             .tabs
@@ -9790,7 +9790,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s2".into()),
+            workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s2".into()),
         },
     ));
     let inspected = snapshot(protocol_action_from(
@@ -9805,7 +9805,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     // The first confirmed stop is pruned; the failing terminal and workspace remain.
     fs::write(&fail, "terminal-2").unwrap();
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "session-close-failed" && error.detail.contains("injected stop failure"))
     );
     let remaining = snapshot(protocol_action_from(
         &control,
@@ -9823,14 +9823,14 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
     );
     assert_eq!(remaining.active_workspace, "s2");
     assert!(
-        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
+        matches!(workspace_action(&control, "close-fails", Action::CloseWorkspace { workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s1".into()) }), Response::Failure(error) if error.code == "duplicate-request")
     );
     let closed = snapshot(protocol_action_from(
         &control,
         "retry-close",
         Some(&second),
         ProtocolAction::Workspace(Action::CloseWorkspace {
-            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s1".into()),
         }),
     ));
     assert_eq!(
@@ -9852,7 +9852,7 @@ fn workspace_requests_project_callers_and_close_only_the_target_workspace() {
             &control,
             "last",
             Action::CloseWorkspace {
-                workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s2".into())
+                workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s2".into())
             }
         ),
         Response::Ended(_)
@@ -12502,7 +12502,7 @@ fn a_workspace_final_close_shows_the_recent_one_and_attach_keeps_it() {
         &control,
         "back",
         Action::SwitchWorkspace {
-            workspace: eon_workspace_protocol::v50::WorkspaceTarget::Selector("s1".into()),
+            workspace: eon_workspace_protocol::v51::WorkspaceTarget::Selector("s1".into()),
         },
     ));
     assert_eq!(first.tabs.len(), 1);
@@ -16474,7 +16474,7 @@ fn running_windows_name_each_other_and_refresh_on_start_and_end() {
         }
         let response = read_request(&mut stream);
         assert!(matches!(
-            eon_workspace_protocol::v50::decode_lifecycle_response(&response).unwrap(),
+            eon_workspace_protocol::v51::decode_lifecycle_response(&response).unwrap(),
             LifecycleResponse::Runtime(_)
         ));
     }
@@ -18372,7 +18372,7 @@ fn previous_runtime(id: &str) -> Runtime {
     Runtime {
         created_build: "g1-00000000000000000000000000000001".into(),
         active_build: "g1-00000000000000000000000000000001".into(),
-        terminal_inventory: vec![eon_workspace_protocol::v50::TerminalInventory {
+        terminal_inventory: vec![eon_workspace_protocol::v51::TerminalInventory {
             terminal: "terminal-1".into(),
             run: "fixture-run".into(),
             origin_build: None,
@@ -18509,7 +18509,7 @@ fn default_alias_fixture(
             snapshot.active_build = record.active_build.clone();
             snapshot.running = None;
             if current && id == ids.last().unwrap() {
-                use eon_workspace_protocol::v50::{RunningWindows, WindowEntry, WindowState};
+                use eon_workspace_protocol::v51::{RunningWindows, WindowEntry, WindowState};
                 snapshot.running = Some(RunningWindows {
                     this: WindowEntry {
                         window: None,
@@ -19502,7 +19502,7 @@ fn session_commands_run_the_build_of_a_window_of_another_eonw() {
     stream.read_to_end(&mut reply).unwrap();
     assert_eq!(
         decode_response(&reply),
-        Err(eon_workspace_protocol::v50::Error::UnsupportedVersion {
+        Err(eon_workspace_protocol::v51::Error::UnsupportedVersion {
             version: VERSION - 1
         })
     );
@@ -20540,7 +20540,7 @@ fn terminal_reads_and_sends_reach_a_hidden_workspace_and_change_nothing() {
             &control,
             id,
             ProtocolAction::SendTerminal {
-                target: eon_workspace_protocol::v50::SendTarget::Id(pane.id.clone()),
+                target: eon_workspace_protocol::v51::SendTarget::Id(pane.id.clone()),
                 force: false,
                 input,
             },
@@ -22877,7 +22877,7 @@ fn popup_show_scrollback_access_precedes_stale_and_replay_checks() {
         protocol_action(
             &window.control(),
             "hide",
-            ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
+            ProtocolAction::DismissPopup(eon_workspace_protocol::v51::PopupTarget {
                 tab: "t1".into(),
                 instance: popup.id
             })
@@ -23018,7 +23018,7 @@ fn popup_show_refusals_precede_history_pair_and_input_effects() {
     protocol_action(
         &window.control(),
         "hide-scrollback",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v51::PopupTarget {
             tab: "t1".into(),
             instance: popup.id,
         }),
@@ -23142,7 +23142,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
     protocol_action(
         &window.control(),
         "hide-background",
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v51::PopupTarget {
             tab: target.id.clone(),
             instance: popup.id.clone(),
         }),
@@ -23210,7 +23210,7 @@ fn popup_show_background_scrollback_uses_target_terminal_and_preserves_selection
         &window.control(),
         "hide-hidden",
         Some(&caller),
-        ProtocolAction::DismissPopup(eon_workspace_protocol::v50::PopupTarget {
+        ProtocolAction::DismissPopup(eon_workspace_protocol::v51::PopupTarget {
             tab: target.id.clone(),
             instance: hidden_popup.id.clone(),
         }),
@@ -23967,7 +23967,7 @@ fn pane_history_prints_the_text_or_json_and_names_what_the_bound_left_out() {
 
 #[test]
 fn focused_send_reports_the_persons_terminal_and_guards_enter() {
-    use eon_workspace_protocol::v50::{FocusReport, encode_focus_report};
+    use eon_workspace_protocol::v51::{FocusReport, encode_focus_report};
     let root = temporary_directory();
     let fifo = root.join("focus-reports");
     assert!(
@@ -24170,7 +24170,7 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
     let before = sent();
     assert!(
         matches!(protocol_action(&control, "guarded-old-pane", ProtocolAction::SendTerminal {
-        target: eon_workspace_protocol::v50::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
+        target: eon_workspace_protocol::v51::SendTarget::Focused { expected_terminal: Some("terminal-1".into()) },
         force: true, input: TerminalInput::Enter,
     }), Response::Failure(failure) if failure.code == "focus-changed")
     );
@@ -24267,6 +24267,345 @@ fn focused_send_reports_the_persons_terminal_and_guards_enter() {
     fs::remove_dir_all(root).unwrap();
 }
 
+/// EON-C36 `--key`: keys go in order, each after the one before it is
+/// acknowledged, and keys after the first must reach the first key's
+/// terminal. A failure on a later key reports how many were sent and whether
+/// the failed key may have arrived, and sends no later key; one on the first
+/// key is the command's failure. A fake supervisor answers each send as the
+/// case's script says and refuses every other request.
+#[test]
+fn pane_send_keys_deliver_in_order_and_say_what_was_sent() {
+    #[derive(Clone, Copy)]
+    enum Reply {
+        Sent,
+        Fail(&'static str, &'static str),
+        /// A valid result that is not a send's.
+        Wrong,
+        /// The whole request is read, then the connection closes.
+        Lost,
+    }
+    let root = temporary_directory();
+    let (runtime, config) = (root.join("runtime"), root.join("config"));
+    configure_mock_desktop(&config);
+    let id = format!("g1-{:032x}", 13);
+    let listener = generation_listener(&runtime, &id);
+    let held = fs::OpenOptions::new()
+        .read(true)
+        .write(true)
+        .create(true)
+        .truncate(false)
+        .mode(0o600)
+        .open(runtime.join(format!("supervisor-{id}.lock")))
+        .unwrap();
+    held.lock().unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let script = Arc::new(Mutex::new(std::collections::VecDeque::new()));
+    let received = Arc::new(Mutex::new(Vec::new()));
+    let done = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let (server_script, server_received) = (script.clone(), received.clone());
+    let (server_done, server_id) = (done.clone(), id.clone());
+    let server = thread::spawn(move || {
+        while !server_done.load(Ordering::SeqCst) {
+            let (mut stream, _) = match listener.accept() {
+                Ok(peer) => peer,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                Err(error) => panic!("{error}"),
+            };
+            stream.set_nonblocking(false).unwrap();
+            let response = match decode_request(&read_request(&mut stream)).unwrap().action {
+                ProtocolAction::Workspace(Action::InspectPresentation | Action::InspectRuntime) => {
+                    let window = LifecycleResponse::Runtime(previous_runtime(&server_id));
+                    encode_lifecycle_response(&window).unwrap()
+                }
+                ProtocolAction::SendTerminal { target, input, .. } => {
+                    let expected = match target {
+                        SendTarget::Focused { expected_terminal } => expected_terminal,
+                        SendTarget::Id(_) => None,
+                    };
+                    server_received.lock().unwrap().push((input, expected));
+                    let reply = server_script.lock().unwrap().pop_front();
+                    let response = match reply.unwrap_or(Reply::Sent) {
+                        Reply::Sent => Response::Sent(Sent {
+                            target: TerminalTarget {
+                                workspace: "s1".into(),
+                                tab: "t1".into(),
+                                id: TargetId::Pane("p1".into()),
+                                terminal: "terminal-1".into(),
+                            },
+                            caller: None,
+                            bracketed: true,
+                            enter_delay_ms: 0,
+                        }),
+                        Reply::Fail(code, detail) => Response::Failure(ProtocolFailure {
+                            code: code.into(),
+                            detail: detail.into(),
+                        }),
+                        Reply::Wrong => Response::Ended(Ended {
+                            generation: server_id.clone(),
+                        }),
+                        Reply::Lost => continue,
+                    };
+                    encode_response(&response).unwrap()
+                }
+                other => panic!("pane send asked for {other:?}"),
+            };
+            stream.write_all(&response).unwrap();
+        }
+    });
+    let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
+    let send = |replies: &[Reply], arguments: &[&str]| {
+        *script.lock().unwrap() = replies.iter().copied().collect();
+        let window = ["--window", &id[3..]];
+        let arguments = [
+            &["pane", "send", arguments[0]][..],
+            &window,
+            &arguments[1..],
+        ]
+        .concat();
+        let output = invoke(&binary, &runtime, &config, &arguments);
+        (output, std::mem::take(&mut *received.lock().unwrap()))
+    };
+    let key = |modifiers, key: &str| {
+        TerminalInput::Key(TerminalKey {
+            modifiers,
+            key: key.into(),
+        })
+    };
+    let json = |output: &Output| serde_json::from_str::<serde_json::Value>(stdout(output)).unwrap();
+    let terminal = Some("terminal-1".to_owned());
+
+    let three = [
+        "focused",
+        "--key",
+        "ctrl+c",
+        "--key",
+        "shift+left",
+        "--key",
+        "R",
+    ];
+    let (output, keys) = send(&[], &[&three[..], &["--json"]].concat());
+    assert_eq!(output.status.code(), Some(0), "{output:?}");
+    let sent = json(&output);
+    assert_eq!(
+        (&sent["keys"], &sent["terminal"]),
+        (&3.into(), &"terminal-1".into())
+    );
+    assert_eq!(
+        (&sent["generation"], sent.get("error")),
+        (&id.as_str().into(), None)
+    );
+    assert_eq!(
+        keys,
+        [
+            (key(CTRL, "KeyC"), None),
+            (key(SHIFT, "ArrowLeft"), terminal.clone()),
+            (key(SHIFT, "KeyR"), terminal.clone()),
+        ]
+    );
+    let (human, _) = send(&[], &three);
+    assert_eq!(human.status.code(), Some(0), "{human:?}");
+    assert!(
+        human.stdout.is_empty() && human.stderr.is_empty(),
+        "{human:?}"
+    );
+
+    // Every key is checked before the first is sent; usage errors print no
+    // JSON.
+    let many = |count| ["--key", "a"].repeat(count);
+    let (output, keys) = send(&[], &[&["p1", "--json"][..], &many(64)].concat());
+    assert_eq!(
+        (output.status.code(), json(&output)["keys"].clone()),
+        (Some(0), 64.into())
+    );
+    assert_eq!(keys.len(), 64);
+    for (arguments, code) in [
+        (
+            &[&["p1", "--json"][..], &many(65)].concat(),
+            "input-too-large",
+        ),
+        (
+            &vec!["p1", "--json", "--key", "a", "--key", "numpad0"],
+            "invalid-key",
+        ),
+    ] {
+        let (output, keys) = send(&[], arguments);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert_eq!(json(&output)["error"]["code"], code, "{output:?}");
+        assert!(keys.is_empty(), "{code}");
+    }
+    for (arguments, said) in [
+        (
+            &["p1", "--json", "--key"][..],
+            "invalid command or arguments",
+        ),
+        (
+            &["p1", "--json", "--key", "a", "--enter"][..],
+            "invalid command or arguments",
+        ),
+        (&["p1"][..], "eon pane send needs TEXT, --enter or --key\n"),
+    ] {
+        let (output, keys) = send(&[], arguments);
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(
+            output.stdout.is_empty() && String::from_utf8_lossy(&output.stderr).contains(said),
+            "{output:?}"
+        );
+        assert!(keys.is_empty());
+    }
+    // Input waiting on standard input fails before anything is sent.
+    let held_input = root.join("stdin");
+    fs::write(&held_input, "lost text").unwrap();
+    let unread = eon_command(&binary)
+        .args([
+            "pane",
+            "send",
+            "p1",
+            "--json",
+            "--key",
+            "a",
+            "--window",
+            &id[3..],
+        ])
+        .env("EON_RUNTIME_DIR", &runtime)
+        .env("EON_CONFIG_HOME", &config)
+        .stdin(fs::File::open(&held_input).unwrap())
+        .output()
+        .unwrap();
+    assert_eq!(unread.status.code(), Some(2), "{unread:?}");
+    assert_eq!(json(&unread)["error"]["code"], "unread-stdin");
+    assert!(received.lock().unwrap().is_empty());
+
+    // A failed first key is the command's failure, with its own exit.
+    let typing = "a person is typing in terminal terminal-1; use --force";
+    let first = ["focused", "--key", "a", "--key", "b", "--json"];
+    for (code, status) in [
+        ("person-typing", 5),
+        ("window-unfocused", 1),
+        ("terminal-unfocused", 1),
+    ] {
+        let detail = if code == "person-typing" {
+            typing
+        } else {
+            "not focused"
+        };
+        let (output, keys) = send(&[Reply::Fail(code, detail)], &first);
+        assert_eq!(output.status.code(), Some(status), "{output:?}");
+        let error = serde_json::json!({"error": {"code": code, "detail": detail}});
+        assert_eq!(json(&output), error);
+        assert_eq!(keys.len(), 1, "{code}");
+    }
+
+    // A failed later key: exit 1, one key sent, the third never submitted, and
+    // whether the second may have arrived, which these details carry.
+    let uncertain_lease = "Orbit closed the management lease for terminal terminal-1 before \
+                           replying; the input may have been delivered";
+    for (reply, code, uncertain) in [
+        (Reply::Fail("person-typing", typing), "person-typing", false),
+        (
+            Reply::Fail(
+                "focus-changed",
+                "keyboard focus moved to another terminal after the earlier keys; this key \
+                 was not sent",
+            ),
+            "focus-changed",
+            false,
+        ),
+        (
+            Reply::Fail(
+                "terminal-ended",
+                "terminal terminal-1's PTY is closed; nothing was sent",
+            ),
+            "terminal-ended",
+            false,
+        ),
+        // The local lease reader failed on the second key (EON-C36).
+        (
+            Reply::Fail(
+                "terminal-unavailable",
+                "terminal terminal-1 is unavailable: the local lease reader failed before \
+                 returning a reply; the input may have been delivered",
+            ),
+            "terminal-unavailable",
+            true,
+        ),
+        (
+            Reply::Fail(
+                "terminal-unavailable",
+                "terminal terminal-1 is unavailable: Orbit did not answer within 2 s; the \
+                 input may still arrive",
+            ),
+            "terminal-unavailable",
+            true,
+        ),
+        (
+            Reply::Fail("terminal-ended", uncertain_lease),
+            "terminal-ended",
+            true,
+        ),
+        (Reply::Wrong, "unrepresentable-state", true),
+        (Reply::Lost, "supervisor-unavailable", true),
+    ] {
+        let replies = [Reply::Sent, reply];
+        let (output, keys) = send(&replies, &[&three[..], &["--json"]].concat());
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        let sent = json(&output);
+        assert_eq!(
+            (&sent["keys"], &sent["error"]["code"]),
+            (&1.into(), &code.into())
+        );
+        let detail = sent["error"]["detail"].as_str().unwrap();
+        let may_have =
+            detail.ends_with("may have been delivered") || detail.ends_with("may still arrive");
+        assert_eq!(may_have, uncertain, "{detail}");
+        assert!(!detail.contains("has ended"), "{detail}");
+        assert_eq!(keys.len(), 2, "{code}: the third key was submitted");
+        let (human, keys) = send(&replies, &three);
+        let next = match uncertain {
+            true => "1 of 3 keys were sent; whether the next key arrived is uncertain",
+            false => "1 of 3 keys were sent; the next key was not sent",
+        };
+        assert!(
+            String::from_utf8_lossy(&human.stderr).contains(next),
+            "{human:?}"
+        );
+        assert_eq!((human.status.code(), keys.len()), (Some(1), 2), "{human:?}");
+    }
+
+    // After a pasted TEXT, a lost Enter reply leaves Enter uncertain, and a
+    // refused Enter was not sent.
+    let paste = ["p1", "--enter", "--", "ls"];
+    let lost = "terminal terminal-1 is unavailable: Orbit did not answer within 2 s; the input \
+                may still arrive";
+    for (detail, said) in [
+        (
+            lost,
+            "the text was pasted; whether Enter arrived is uncertain",
+        ),
+        ("Orbit is busy", "the text was pasted; Enter was not sent"),
+    ] {
+        let replies = [Reply::Sent, Reply::Fail("terminal-unavailable", detail)];
+        let (output, _) = send(&replies, &[&["p1", "--json"][..], &paste[1..]].concat());
+        assert_eq!(output.status.code(), Some(1), "{output:?}");
+        assert_eq!(
+            (&json(&output)["enter"], &json(&output)["error"]["detail"]),
+            (&false.into(), &detail.into())
+        );
+        let (human, keys) = send(&replies, &paste);
+        assert!(
+            String::from_utf8_lossy(&human.stderr).contains(said),
+            "{human:?}"
+        );
+        assert_eq!(keys.len(), 2);
+    }
+    done.store(true, Ordering::SeqCst);
+    server.join().unwrap();
+    drop(held);
+    fs::remove_dir_all(root).unwrap();
+}
+
 #[test]
 fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     let root = temporary_directory();
@@ -24297,6 +24636,7 @@ fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
             "bytes": bytes,
             "bracketed": bracketed,
             "enter": enter,
+            "keys": 0,
         })
     };
 
@@ -25902,7 +26242,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
                     encode_lifecycle_response(&LifecycleResponse::Runtime(Runtime {
                         created_build: "g1-00000000000000000000000000000001".into(),
                         active_build: "g1-00000000000000000000000000000001".into(),
-                        terminal_inventory: vec![eon_workspace_protocol::v50::TerminalInventory {
+                        terminal_inventory: vec![eon_workspace_protocol::v51::TerminalInventory {
                             terminal: "terminal-1".into(),
                             run: "fixture-run".into(),
                             origin_build: None,
@@ -26891,7 +27231,7 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
     );
     assert_eq!(
         failure.reason,
-        eon_workspace_protocol::v50::QuotaFailureReason::Start
+        eon_workspace_protocol::v51::QuotaFailureReason::Start
     );
     drop(supervisor);
 }
@@ -27273,10 +27613,10 @@ fn native_quota_deadline_bounds_the_window_and_leaves_time_for_the_store() {
         let id = format!("g1-{:032x}", 151);
         write_native_quota_config(&root);
         let mut snapshot = inspected_snapshot();
-        snapshot.codex_quota = Some(eon_workspace_protocol::v50::CodexQuota {
-            state: eon_workspace_protocol::v50::CodexQuotaState::Fresh,
+        snapshot.codex_quota = Some(eon_workspace_protocol::v51::CodexQuota {
+            state: eon_workspace_protocol::v51::CodexQuotaState::Fresh,
             observed_at: 1,
-            windows: vec![eon_workspace_protocol::v50::QuotaWindow {
+            windows: vec![eon_workspace_protocol::v51::QuotaWindow {
                 duration_minutes: 300,
                 remaining_percent: 80,
                 resets_at: None,
@@ -27690,10 +28030,10 @@ fn native_quota_fills_only_the_providers_the_window_lacks_from_the_store() {
     let id = format!("g1-{:032x}", 156);
     let now = unix_seconds();
     let mut snapshot = inspected_snapshot();
-    snapshot.codex_quota = Some(eon_workspace_protocol::v50::CodexQuota {
-        state: eon_workspace_protocol::v50::CodexQuotaState::Fresh,
+    snapshot.codex_quota = Some(eon_workspace_protocol::v51::CodexQuota {
+        state: eon_workspace_protocol::v51::CodexQuotaState::Fresh,
         observed_at: now - 5,
-        windows: vec![eon_workspace_protocol::v50::QuotaWindow {
+        windows: vec![eon_workspace_protocol::v51::QuotaWindow {
             duration_minutes: 300,
             remaining_percent: 90,
             resets_at: None,
