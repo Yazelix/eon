@@ -1226,8 +1226,19 @@ mod tests {
         assert_eq!(apply(ClientMessage::Paste(Vec::new())), Effect::Key);
         assert_eq!(apply(focus()), Effect::Write);
         assert!(orbit.writes.push(b"\n"));
-        orbit.flush_writes().unwrap();
-        assert!(orbit.child.take().unwrap().wait().unwrap().success());
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let status = loop {
+            orbit.flush_writes().unwrap();
+            // On macOS the shell can wait for echoed input to drain before exiting.
+            orbit.discard_shutdown_output();
+            if let Some(status) = orbit.try_reap().unwrap() {
+                break status;
+            }
+            assert!(Instant::now() < deadline, "PTY child did not exit in time");
+            thread::sleep(Duration::from_millis(10));
+        };
+        assert_eq!(status, 0);
     }
 
     #[test]
