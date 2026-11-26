@@ -67,6 +67,14 @@ outside workspace topology, and never authorizes fallback signals or automatic
 command replay. The canonical protocol crate supplies the lifecycle budgets
 consumed by Runtime and Venus; EONW and Reserved Stop bytes are unchanged.
 
+Runtime gives an ordinary pane close one fifteen-second completion budget for
+Stop and reconciliation. A close of the final tab's last pane uses the
+five-second tab-close budget. Tab close and generation cleanup each retain
+their own five-second budget. Orbit confirms the end of the exact run, and
+Runtime reconciles that result before answering the waiting client. This
+follows the [lifecycle reference route](../docs/REFERENCES.md#how-should-eon-separate-live-terminal-continuity-from-workspace-reconstruction-after-the-terminal-owner-exits)
+and the division of authority in [systemd v257's synchronous job wait](https://github.com/systemd/systemd/blob/v257/src/systemctl/systemctl-start-unit.c).
+
 Eon's `eon/crates/eon/src/product.rs` supplies the concrete inputs; its
 `build.rs` digests the source tree into the assembly contribution.
 Consumers in this workspace use path dependencies; crates are not published to

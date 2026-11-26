@@ -68,6 +68,8 @@ pub(crate) use update::{
 pub(super) use eon_workspace_protocol::{
     PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
 };
+/// Time for an ordinary pane close to confirm the end of its terminal.
+pub(super) const PANE_CLOSE_TIMEOUT: Duration = Duration::from_secs(15);
 /// How long an ending supervisor waits to close its detach notice (EON-C8).
 const NOTICE_CLOSE_TIMEOUT: Duration = Duration::from_millis(500);
 static NEXT_REQUEST: AtomicU64 = AtomicU64::new(0);
@@ -2665,7 +2667,7 @@ fn close_workspace_tab(
             "closing tab {tab}: stopping {}",
             sessions.join(", ")
         ));
-        stop_closed_sessions(state, sessions, "tab-close-failed", &[])?;
+        stop_closed_sessions(state, sessions, "tab-close-failed", &[], None)?;
         Ok(reply_workspace)
     })();
     let elapsed = started.elapsed().as_millis();
@@ -2700,8 +2702,10 @@ fn close_workspace_pane(
         .as_mut()
         .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
-    let sessions = workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
-    stop_closed_sessions(state, sessions, "pane-close-failed", &[])?;
+    let (sessions, final_tab) =
+        workspace.prepare_close_pane(&request.id, caller.as_deref(), pane)?;
+    let timeout = (!final_tab).then_some(PANE_CLOSE_TIMEOUT);
+    stop_closed_sessions(state, sessions, "pane-close-failed", &[], timeout)?;
     closed_response(
         state,
         runtime,
@@ -2876,7 +2880,7 @@ fn stop_consented_runs(
         .map(|terminal| terminal.target.terminal.clone())
         .chain(untracked.iter().cloned())
         .collect();
-    let mut result = stop_closed_sessions(state, closing, "column-close-failed", &untracked);
+    let mut result = stop_closed_sessions(state, closing, "column-close-failed", &untracked, None);
     if let Err(error) = &mut result
         && !scope.untracked.is_empty()
     {
@@ -2975,7 +2979,7 @@ fn close_workspace(
         .ok_or_else(|| failure("session-unavailable", "eonbase has no Eon session"))?;
     let reply_workspace = workspace.caller_workspace_id(caller.as_deref())?;
     let sessions = workspace.prepare_close_workspace(&request.id, caller.as_deref(), target)?;
-    stop_closed_sessions(state, sessions, "session-close-failed", &[])?;
+    stop_closed_sessions(state, sessions, "session-close-failed", &[], None)?;
     closed_response(
         state,
         runtime,
@@ -2993,8 +2997,14 @@ fn stop_closed_sessions(
     sessions: Vec<String>,
     code: &str,
     untracked: &[String],
+    timeout: Option<Duration>,
 ) -> Result<(), Failure> {
-    let (ended, errors) = stop_owned_sessions(&mut state.sessions, &sessions, &state.log);
+    let (ended, errors) = stop_owned_sessions(
+        &mut state.sessions,
+        &sessions,
+        &state.log,
+        timeout.unwrap_or(SESSION_CLEANUP_TIMEOUT),
+    );
     for (id, natural_status) in ended {
         if untracked.contains(&id) {
             continue;
@@ -3480,7 +3490,8 @@ fn stop_owned_session(
     id: &str,
     log: &DiagnosticLog,
 ) -> Result<Option<i32>, String> {
-    let (ended, errors) = stop_owned_sessions(sessions, &[id.to_owned()], log);
+    let (ended, errors) =
+        stop_owned_sessions(sessions, &[id.to_owned()], log, SESSION_CLEANUP_TIMEOUT);
     match ended.into_iter().next() {
         Some((_, status)) => Ok(status),
         None => Err(errors.join("; ")),
@@ -3497,10 +3508,11 @@ fn stop_owned_sessions(
     sessions: &mut Vec<RunningSession>,
     ids: &[String],
     log: &DiagnosticLog,
+    timeout: Duration,
 ) -> (Vec<(String, Option<i32>)>, Vec<String>) {
     // Reconciling, stopping and reconciling after a failed stop share one
     // bound (EON-C8).
-    let deadline = Instant::now() + SESSION_CLEANUP_TIMEOUT;
+    let deadline = Instant::now() + timeout;
     let remaining = || deadline.saturating_duration_since(Instant::now());
     let mut errors = ids
         .iter()
@@ -10408,7 +10420,8 @@ mod tests {
         .collect::<Vec<_>>();
 
         let started = Instant::now();
-        let (ended, errors) = stop_owned_sessions(&mut sessions, &ids, &log);
+        let (ended, errors) =
+            stop_owned_sessions(&mut sessions, &ids, &log, SESSION_CLEANUP_TIMEOUT);
         let elapsed = started.elapsed();
         assert!(
             elapsed < Duration::from_millis(2500),
@@ -10470,7 +10483,8 @@ mod tests {
         let ids = ["terminal-1", "terminal-2", "terminal-3"].map(String::from);
 
         let started = Instant::now();
-        let (ended, errors) = stop_owned_sessions(&mut sessions, &ids, &log);
+        let (ended, errors) =
+            stop_owned_sessions(&mut sessions, &ids, &log, SESSION_CLEANUP_TIMEOUT);
         let elapsed = started.elapsed();
         assert!(
             elapsed < SESSION_CLEANUP_TIMEOUT + Duration::from_millis(1500),

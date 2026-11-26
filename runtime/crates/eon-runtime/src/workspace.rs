@@ -1220,7 +1220,7 @@ impl WorkspaceSet {
         request_id: &str,
         caller: Option<&str>,
         pane: &str,
-    ) -> Result<Vec<String>, Failure> {
+    ) -> Result<(Vec<String>, bool), Failure> {
         self.reject_duplicate(request_id)?;
         let index = self.caller_workspace(caller)?;
         let sessions = self.workspaces[index].prepare_close_pane(caller, pane)?;
@@ -2669,12 +2669,12 @@ impl Workspace {
     /// Validates closing one pane of this workspace, and names the terminals to
     /// stop: the pane's, and when it is the final tab's last pane, every
     /// terminal of that tab, since the close removes the workspace, or ends the
-    /// window when it is the last one.
+    /// window when it is the last one. Returns whether the tab's close rules apply.
     pub(crate) fn prepare_close_pane(
         &mut self,
         caller: Option<&str>,
         id: &str,
-    ) -> Result<Vec<String>, Failure> {
+    ) -> Result<(Vec<String>, bool), Failure> {
         let (tab_index, (column, pane)) = self
             .tabs
             .iter()
@@ -2700,12 +2700,13 @@ impl Workspace {
                 ));
             }
         }
-        let sessions = if self.tabs.len() == 1 && tab.panes().count() == 1 {
+        let final_tab = self.tabs.len() == 1 && tab.panes().count() == 1;
+        let sessions = if final_tab {
             self.tab_sessions(tab_index)
         } else {
             vec![tab.columns[column].panes[pane].session.id.clone()]
         };
-        Ok(sessions)
+        Ok((sessions, final_tab))
     }
 
     /// Names only the runs this column close may stop; pruning follows their exits.
@@ -9956,7 +9957,7 @@ pub(crate) mod tests {
             workspace.dispatch(id, None, action, prepared, ok).unwrap()
         };
         let close = |workspace: &mut WorkspaceSet, id: &str, pane: &str| {
-            let sessions = workspace.prepare_close_pane(id, None, pane)?;
+            let (sessions, _) = workspace.prepare_close_pane(id, None, pane)?;
             let [session] = sessions.as_slice() else {
                 panic!("a non-final pane close stops only its pane");
             };
@@ -10030,6 +10031,7 @@ pub(crate) mod tests {
             let [session] = workspace
                 .prepare_close_pane(&format!("{id}-close"), Some(caller), &pane)
                 .unwrap()
+                .0
                 .try_into()
                 .unwrap();
             workspace
@@ -10053,7 +10055,7 @@ pub(crate) mod tests {
             workspace
                 .prepare_close_pane("x6", Some(&agent), &background.id)
                 .unwrap(),
-            std::slice::from_ref(&background.session)
+            (vec![background.session.clone()], false)
         );
         workspace
             .session_ended(&background.session, SessionEnd::Closed, ok)
@@ -10097,7 +10099,7 @@ pub(crate) mod tests {
         assert_eq!(workspace.snapshot().tabs[0].selected_popup, None);
         assert_eq!(
             workspace.prepare_close_pane("x8", None, "p1").unwrap(),
-            ["terminal-1".to_owned(), popup.session]
+            (vec!["terminal-1".to_owned(), popup.session], true)
         );
     }
 
@@ -10190,10 +10192,10 @@ pub(crate) mod tests {
         );
 
         // Closing resolves the pane by its ID, here in the caller's background tab.
-        let [session] = &workspace
+        let (sessions, _) = workspace
             .prepare_close_pane("x1", Some("terminal-1"), &created[1])
-            .unwrap()[..]
-        else {
+            .unwrap();
+        let [session] = sessions.as_slice() else {
             panic!("a non-final pane close stops only its pane");
         };
         workspace
@@ -12435,9 +12437,10 @@ pub(crate) mod tests {
                 (collapsed.clone(), expanded.clone())
             };
             let request_caller = with_caller.then_some(caller.as_str());
-            let sessions = set
+            let (sessions, final_tab) = set
                 .prepare_close_pane("close-pane", request_caller, &target.id)
                 .unwrap();
+            assert!(!final_tab);
             assert_eq!(sessions, vec![target.session.clone()]);
             assert_eq!(set.snapshot(), before);
             set.session_ended(&target.session, SessionEnd::Closed, |operation| {
@@ -12527,7 +12530,7 @@ pub(crate) mod tests {
             assert_eq!(
                 set.prepare_close_pane(&format!("{id}-close"), Some(caller), &pane.id)
                     .unwrap(),
-                std::slice::from_ref(&pane.session)
+                (vec![pane.session.clone()], false)
             );
             set.session_ended(&pane.session, SessionEnd::Closed, |_| Ok(()))
                 .unwrap();
@@ -12572,7 +12575,7 @@ pub(crate) mod tests {
         assert_eq!(set.snapshot().tabs[1], before.tabs[1]);
         assert_eq!(
             set.prepare_close_pane("t1-last", None, "p1").unwrap(),
-            ["terminal-1".to_owned()]
+            (vec!["terminal-1".to_owned()], false)
         );
         set.session_ended("terminal-1", SessionEnd::Closed, |_| Ok(()))
             .unwrap();
@@ -12605,7 +12608,7 @@ pub(crate) mod tests {
         assert_eq!(
             set.prepare_close_pane("close-sole-pane", None, &t2_pane.id)
                 .unwrap(),
-            [t2_pane.session, popup_caller]
+            (vec![t2_pane.session, popup_caller], true)
         );
         assert_eq!(set.snapshot(), sole);
     }
@@ -12778,7 +12781,7 @@ pub(crate) mod tests {
         let pane_sessions = set
             .prepare_close_pane("s2-close-pane", Some(&s2_caller), &s2_second_pane)
             .unwrap();
-        assert_eq!(pane_sessions, vec![s2_second_pane_session.clone()]);
+        assert_eq!(pane_sessions, (vec![s2_second_pane_session.clone()], false));
         set.session_ended(&s2_second_pane_session, SessionEnd::Closed, |_| Ok(()))
             .unwrap();
         assert_eq!(set.shown, 0);
@@ -12814,7 +12817,7 @@ pub(crate) mod tests {
         assert_eq!(
             set.prepare_close_pane("s2-final-pane", Some(&s2_caller), &s2_pane)
                 .unwrap(),
-            final_sessions
+            (final_sessions.clone(), true)
         );
         assert_eq!(set.workspaces, unchanged.workspaces);
         for session in &final_sessions {

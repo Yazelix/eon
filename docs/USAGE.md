@@ -1521,6 +1521,9 @@ TAB, the command refuses with exit 1 (`unavailable`); use `--no-focus` there.
 `tab close TAB` and `pane close PANE` close any named tab or pane in the
 caller's session, even when another session is shown, and refuse IDs in
 another session with exit 3 (`unknown-tab` or `unknown-pane`).
+`pane close PANE` waits for Eon to confirm the terminal has ended. If Eon
+cannot confirm the end within its deadline, it returns `pane-close-failed`
+(exit 1) and keeps the unconfirmed pane visible in the session.
 `pane close PANE` works from a calling terminal even while a popup covers the
 target tab, and the popup stays shown; it refuses the target tab's last pane
 while a popup covers it, or any pane of a popup-covered tab without a calling

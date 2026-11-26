@@ -1179,7 +1179,7 @@ mod tests {
 
     #[test]
     fn client_deadlines_cover_admission_failed_files_and_failed_fallback() {
-        use crate::{fixtures, workspace::SessionOperation};
+        use crate::{fixtures, supervisor::PANE_CLOSE_TIMEOUT, workspace::SessionOperation};
         use eon_workspace_protocol::{
             PRESENTATION_ADMISSION_TIMEOUT, SESSION_CLEANUP_TIMEOUT, TERMINAL_START_TIMEOUT,
         };
@@ -1191,6 +1191,11 @@ mod tests {
         assert_eq!(
             super::STOP_TIMEOUT,
             super::CONTROL_TIMEOUT + SESSION_CLEANUP_TIMEOUT
+        );
+        let (_, _, close_timeout) =
+            super::prepare_action(None, super::Action::ClosePane { pane: "p1".into() }).unwrap();
+        assert!(
+            close_timeout > PANE_CLOSE_TIMEOUT + super::CLIENT_IO_TIMEOUT + super::REPLY_DEADLINE
         );
         // Exact budgets are checked above; allow fixture scheduling slack in the exchange.
         const SCALE: u32 = 100;

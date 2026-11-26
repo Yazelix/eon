@@ -15,6 +15,8 @@ installation, and proven contract changes.
 - Pasting into a pane scrolled back into its history returns it to live
   output, as typing does, so the pasted text lands in view (`eon-41sxd`,
   ORB-C8).
+- `eon pane close` gives ordinary pane closes more time to confirm termination
+  under load, reducing false `pane-close-failed` errors (`eon-7nor8`).
 - Google quota chips keep working when agy updates. Eon reads Google quota
   from any agy version whose `/usage` report passes its checks, and keeps the
   last good reading when a report does not. `eon doctor` names the agy

@@ -3682,6 +3682,15 @@ fn managed_orbit_helper() {
             {
                 thread::sleep(Duration::from_millis(delay.parse().unwrap()));
             }
+            if let Some(gate) = std::env::var_os("EON_TEST_STOP_GATE").map(PathBuf::from)
+                && gate.exists()
+            {
+                fs::write(gate.with_extension("waiting"), b"1").unwrap();
+                let deadline = Instant::now() + Duration::from_secs(60);
+                while gate.exists() && Instant::now() < deadline {
+                    thread::sleep(Duration::from_millis(10));
+                }
+            }
             drop(child.take());
             finish_managed_orbit(
                 &record_path,
@@ -14233,6 +14242,8 @@ fn quit_workspace_with_config(extra_config: &str) -> (PathBuf, TestProcess) {
     let supervisor = TestProcess {
         child: quit_command(&root)
             .arg("run")
+            .env("EON_TEST_STOP_DELAY", root.join("stop-delay"))
+            .env("EON_TEST_STOP_GATE", root.join("stop-gate"))
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .spawn()
@@ -25353,6 +25364,108 @@ fn assert_closed_only(before: &serde_json::Value, after: &serde_json::Value, tar
         } else {
             assert_eq!(after, expected);
         }
+    }
+}
+
+#[test]
+fn cli_pane_close_waits_for_delayed_tombstone() {
+    for (final_pane, status) in [(false, 0), (false, 1), (true, 1)] {
+        let (root, mut supervisor) = quit_workspace();
+        let invoke = |args: &[&str]| quit_command(&root).args(args).output().unwrap();
+        let inspect = || presented(&invoke(&["session", "--json"]));
+        if !final_pane {
+            let directory = root.to_str().unwrap();
+            let tab = invoke(&["tab", "create", "--dir", directory, "--json"]);
+            assert!(tab.status.success(), "{tab:?}");
+            let pane = invoke(&["pane", "create", "--tab", "t1", "--no-focus", "--json"]);
+            assert!(pane.status.success(), "{pane:?}");
+            let active = inspect()["active_tab"].as_str().unwrap().to_owned();
+            assert_ne!(active, "t1");
+            let control = generation_runtime(&root.join("r")).join("eon.sock");
+            show_agent(&control, "keep-shown", &active);
+        }
+        let before = inspect();
+        let pane = &before["tabs"][0]["panes"][usize::from(!final_pane)];
+        let target = pane["id"].as_str().unwrap();
+        let endpoint = pane["endpoint"].as_str().unwrap().to_owned();
+        let terminals = live_terminals(&terminal_endpoints(&before));
+        if final_pane {
+            assert_eq!(before["tabs"].as_array().unwrap().len(), 1);
+            assert_eq!(terminals.len(), 1);
+        }
+        let gate = root.join("stop-gate");
+        if status == 0 {
+            fs::write(root.join("stop-delay"), "7000").unwrap();
+        } else {
+            fs::write(&gate, b"hold").unwrap();
+        }
+        let reply = root.join("close.json");
+        let mut close = TestProcess {
+            child: quit_command(&root)
+                .args(["pane", "close", target, "--yes", "--json"])
+                .stdin(Stdio::null())
+                .stdout(fs::File::create(&reply).unwrap())
+                .spawn()
+                .unwrap(),
+            stop: supervisor.stop.clone(),
+        };
+        if status != 0 {
+            wait_for(&gate.with_extension("waiting"));
+        }
+        let started = Instant::now();
+        let exit = loop {
+            if let Some(exit) = close.child.try_wait().unwrap() {
+                break exit;
+            }
+            // A final close still pending at 10 s can confirm the end if it
+            // accidentally received the longer ordinary-pane budget.
+            if final_pane && started.elapsed() >= Duration::from_secs(10) && gate.exists() {
+                fs::remove_file(&gate).unwrap();
+            }
+            assert!(started.elapsed() < Duration::from_secs(45), "close stalled");
+            thread::sleep(Duration::from_millis(10));
+        };
+        close.stop.clear();
+        let reply = fs::read_to_string(reply).unwrap();
+        assert_eq!(exit.code(), Some(status), "final={final_pane}: {reply}");
+        if status == 0 {
+            let output = Output {
+                status: exit,
+                stdout: reply.into_bytes(),
+                stderr: Vec::new(),
+            };
+            assert_closed_only(&before, &presented(&output), target);
+            assert_closed_only(&before, &inspect(), target);
+            let path = Path::new(&endpoint);
+            assert!(!path.exists());
+            assert!(!artifact_path(path, ".management").exists());
+            assert!(!artifact_path(path, ".record").exists());
+            assert_only_ended(&terminals, &[endpoint]);
+        } else {
+            let reply: serde_json::Value = serde_json::from_str(&reply).unwrap();
+            assert_eq!(reply["error"]["code"], "pane-close-failed", "{reply}");
+            assert!(
+                reply["error"]["detail"]
+                    .as_str()
+                    .unwrap()
+                    .contains("terminal tombstone reconciliation exceeded its deadline"),
+                "{reply}"
+            );
+            assert_eq!(inspect(), before);
+            assert_only_ended(&terminals, &[]);
+            fs::remove_file(&gate).unwrap();
+        }
+        fs::write(&supervisor.stop, "stop").unwrap();
+        if final_pane {
+            // Once released, the final fixture ends with its recorded signal.
+            assert_eq!(
+                wait_for_exit(&mut supervisor.child).code(),
+                Some(128 + libc::SIGHUP)
+            );
+        } else {
+            wait_for_successful_exit(&mut supervisor.child);
+        }
+        fs::remove_dir_all(root).unwrap();
     }
 }
 
