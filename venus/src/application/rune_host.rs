@@ -21,7 +21,7 @@
 //!   (VEN-C14). Rune's `focus` only requests attention on Wayland, Eon's Linux backend.
 //!   Elsewhere it activates and unminimizes, so VEN-C14 requires Venus to refuse Present
 //!   ([`FOCUS_IS_ATTENTION`]) until Rune has an attention-only
-//!   request (eon-yp6vg.57 and .54 bring the candidate to macOS).
+//!   request (eon-yp6vg.71 and .54 bring the candidate to macOS).
 //!
 //! Limits kept for later beads: the hosted renderer draws the active terminal only, without
 //! workspace chrome or dialogs (eon-yp6vg.8-.16) or a platform accessibility adapter

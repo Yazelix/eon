@@ -54,6 +54,32 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### Rune winit APIs pin (eon-yp6vg.57)
+
+For `eon-yp6vg.57` over `a03d7f88`, the `dpi` and `winit` source records move
+from `c1dacc9d` to `c7b36f8a`, which descends from it. The four workspace
+producers that share the lock change context: `eon`, `orbit`, `venus` and
+`venus-rune-preview`. Reversing the winit revision in their canonical graphs,
+both the full revision and the 8-character form in Venus's native
+linked-dependency records, reproduces the accepted base graphs byte for byte:
+`2de28260` → `58b9cfc7` for Eon, `1bfadfd3` → `f905a6a6` for Orbit,
+`e9e02cae` → `a9e46774` for Venus and `656cec82` → `a1b8522a` for
+`venus-rune-preview`. The other nine producers' graphs are unchanged. Because
+each graph differs from its base only in that revision, the producer feature
+selections, audit exception identities and their classes are the base's: Eon
+9 host-only and 2 unselected, Orbit 6 and 1, Venus 15 and 4, and
+`venus-rune-preview` 20 and 8, as `eon-33cww.4.1` confirmed from the exact
+trees and build logs. The `inspect-audit` replays against the actual binaries
+reproduce each saved `graph.json` and `observation.json`. The strict
+`propose-audit-renewal` proposal changes these eight `graph_sha256` fields, and
+parsed, it equals the checked-in file. Zoxide's `prove-audit-omission` accepts
+the retained root under the root-only baseline and rejects omitted
+`anyhow 1.0.98` with the renewed data.
+
+- Vendor at `/nix/store/gg7g6lssgvf05ni5y97x04cxpy1sxdri-cargo-vendor-dir`.
+- Base input at `/nix/store/67wqwg2ff14ql01vcnmabrx0kb39lfdb-eon-archive-notice-input.json` (edge `a03d7f88`).
+- Proposal input at `/nix/store/pffj2gpmwnd23kljjgwk8i499z16hmn9-eon-archive-notice-input.json` (candidate over `a03d7f88`, before this renewal).
+
 ### Benchmark input-method fixtures (eon-33cww.4.1)
 
 For `eon-33cww.4.1` over `70561545`, the Eon, Orbit, Venus and
@@ -581,6 +607,19 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-26 for `eon-yp6vg.57` to context
+`2de282601af32298979ad5f99258f0449dee47bad73b9aaaeacd9563c2a8a87d`.
+Reversing the winit revision reproduces `58b9cfc7…`.
+
+- Source at `/nix/store/2nxgz7lk0zqdil29v3rbfcgrw5v11pnh-source` (candidate over edge `a03d7f88`, before this renewal's own edits).
+- Vendor at `/nix/store/gg7g6lssgvf05ni5y97x04cxpy1sxdri-cargo-vendor-dir`.
+- Observation at `/nix/store/8xs1866nks35780jknfi4w1hjnbz9mh7-eon-cargo-notices-0.1.29`.
+- Binary at `/nix/store/bh5dd5nn467hsjg16ka2shxdzyyyxyk3-eon-rust-0.1.29/bin/eon`
+  with SHA-256 `5709feafec5a775ebd89d3ea5fd552ab71d2261ae03339b0f90db7256701bd50`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-33cww.4.1`):
+
 Renewed on 2026-11-25 for `eon-33cww.4.1` to context
 `58b9cfc776d2a2d6e582c3c5d9a7e1d5ebda18426eae33c3d93ee2ac9249c170`.
 Only `lock` changes. It gains the bench-only `wayland-protocols-misc 0.3.12`
@@ -917,6 +956,19 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-26 for `eon-yp6vg.57` to context
+`1bfadfd3fb58dfcd62f843adf6ff79d458566afae233461b92396fe2aae1af00`.
+Reversing the winit revision reproduces `f905a6a6…`.
+
+- Source at `/nix/store/kb6ypy3sgjb907b033r9s7sjyb4a781i-source` (candidate over edge `a03d7f88`, before this renewal's own edits).
+- Vendor at `/nix/store/gg7g6lssgvf05ni5y97x04cxpy1sxdri-cargo-vendor-dir`.
+- Observation at `/nix/store/akbfnvpdqcw5wzs2ylq6jhjiw3dbayzb-orbit-cargo-notices-0.1.0`.
+- Binary at `/nix/store/jdly16ibps1sdfyzpwyd2jq18fxah7z8-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `6862153d1dc50dc997eba9dcdfef6826663a397d88ce5bc34b9dfc1e0dda2688`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-33cww.4.1`):
+
 Renewed on 2026-11-25 for `eon-33cww.4.1` to context
 `f905a6a6c166b6df39e0558324eb472c2990b6d008d75495ad3ab9db0b66efe7`.
 Only `lock` changes. It gains the bench-only `wayland-protocols-misc 0.3.12`
@@ -1245,6 +1297,19 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-26 for `eon-yp6vg.57` to context
+`e9e02caeda1e303ffbc2c91e3454af99b35da437b8ab9aa87b5634c741f753f6`.
+Reversing the winit revision reproduces `a9e46774…`.
+
+- Source at `/nix/store/zik9dyrm1sv8z2qh6cqwm8447ac802p4-source` (candidate over edge `a03d7f88`, before this renewal's own edits).
+- Vendor at `/nix/store/gg7g6lssgvf05ni5y97x04cxpy1sxdri-cargo-vendor-dir`.
+- Observation at `/nix/store/81w0w6grc4x543xi058i3g0dsriia86j-venus-cargo-notices-0.1.0`.
+- Binary at `/nix/store/5psbww3f54wvphf5j8faszvp9772p205-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `01a75cda6d890ca4ba3f2934b245528e842b85214a28199eb4470640381b101d`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-33cww.4.1`):
 
 Renewed on 2026-11-25 for `eon-33cww.4.1` to context
 `a9e4677440f96de7bee418196aaa32877196137ca391a36097dff3395daeccdf`.
@@ -1591,6 +1656,21 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 - Result: 15 exact host exceptions; 4 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus-rune-preview
+
+Renewed on 2026-11-26 for `eon-yp6vg.57` to context
+`656cec82e17bf33d98adcad692457d2f59cffac7e6c02ed7982e3919df1b66bd`.
+Reversing the winit revision reproduces `a1b8522a…`. The 20 host and 8
+unselected identities below keep their class in the `--features candidate-rune`
+trees.
+
+- Source at `/nix/store/zik9dyrm1sv8z2qh6cqwm8447ac802p4-source` (candidate over edge `a03d7f88`, before this renewal's own edits).
+- Vendor at `/nix/store/gg7g6lssgvf05ni5y97x04cxpy1sxdri-cargo-vendor-dir`.
+- Observation at `/nix/store/7h40jsj6pg79x60a521n0alx547m5dhz-venus-rune-preview-cargo-notices-0.1.0`.
+- Binary at `/nix/store/3rkk141r9vm5wryd5a3da788fn40wiya-venus-rune-preview-0.1.0/bin/.venus-rune-candidate-wrapped`
+  with SHA-256 `a1c87b29b45029a399d48d89c646cd5fbf86dd627d58c1bafa517678f1d043e2`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --features=candidate-rune --package yazelix-venus --bin venus-rune-candidate`.
+
+Historical (`eon-33cww.4.1`):
 
 Renewed on 2026-11-25 for `eon-33cww.4.1` to context
 `a1b8522abfddbefb6138b63e9fc27288787c42adb70a0674c7e1c9efa3a1a170`.

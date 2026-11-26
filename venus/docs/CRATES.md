@@ -114,7 +114,7 @@ for one zero-payload semantic action without a new dependency or adapter.
 
 - **Selected shape:** winit 0.30.13 with Wayland, dynamic Wayland loading, and
   raw-window-handle 0.6 only, patched to exact `Yazelix/winit-0.30` commit
-  `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`
+  `c7b36f8a72c1bcb43d21343b02d6b625889a871f` (branch `eon-rune-winit-5986ab76`)
 - **Status:** Active on native Linux Wayland
 - **Owner consequence:** The host owns window and event-loop lifecycle, native input and IME
   collection, compositor blur protocol selection, resize, surface recovery, socket
@@ -123,12 +123,22 @@ for one zero-payload semantic action without a new dependency or adapter.
   and clears both on pointer focus departure. Venus owns scroll momentum.
   Replace the patch with the first accepted stable winit containing the
   background-effect backport, marked-text source-transition correction,
-  and the Wayland precision scroll fix.
-- **Next IME pin:** The macOS IME integration (eon-yp6vg.47) and root pin
-  move (eon-yp6vg.57) must keep this Wayland revision in their winit
-  ancestry. Check the proposed IME revision with
-  `git merge-base --is-ancestor` and repeat the split-axis and compact-frame
-  scroll regressions before moving the root pin.
+  the Wayland precision scroll fix, and the Rune APIs below (macOS IME,
+  Wayland wake and frame, macOS launch); a winit without them breaks the
+  `candidate-rune` build.
+- **Rune APIs:** `c7b36f8a` (eon-yp6vg.47, pinned by eon-yp6vg.57)
+  descends from the Wayland precision scroll commit `c1dacc9d` and adds only
+  opt-in APIs that Rune calls: macOS IME clauses and reconversion, Wayland
+  wake on display reads and client-side frame queries, and macOS launch
+  hooks. Shipping Venus calls none of them. On the macOS default path two
+  things differ from `c1dacc9d`: `validAttributesForMarkedText` advertises
+  `NSUnderline` and `NSMarkedClauseSegment`, and `setMarkedText:` reads the
+  marked text's clauses (`marked_clauses`) into the `CLAUSES` thread-local,
+  which Venus never reads. By the source, Venus's `Ime::Preedit` and
+  `Ime::Commit` payloads are unchanged; the native proof is eon-yp6vg.59
+  and the post-landing mac-proof. A later pin keeps `c7b36f8a` in
+  its ancestry (`git merge-base --is-ancestor`) and repeats the split-axis
+  and compact-frame scroll regressions.
 
 ### GPU and text
 
@@ -365,8 +375,9 @@ dependency decision does not establish public-distribution proof.
   shipping `yazelix-venus` package, ordinary tests and the other archive
   producers use the feature-off graph. On Linux, the `venus-rune-preview`
   package builds the candidate entry with the feature for
-  `eon window new --rune-preview` (eon-yp6vg.7.4); Darwin waits for
-  eon-yp6vg.57. The Nix graph check resolves the candidate separately. Its first user is the
+  `eon window new --rune-preview` (eon-yp6vg.7.4). The feature-on Darwin
+  build compiles (eon-yp6vg.57); the Darwin package and entry are
+  eon-yp6vg.71. The Nix graph check resolves the candidate separately. Its first user is the
   private entry from eon-yp6vg.7.7: the `rune_candidate` module and the
   `venus-rune-candidate` binary and test, each behind the feature
   (`required-features` for the binary and test). The single switch
@@ -410,7 +421,7 @@ dependency decision does not establish public-distribution proof.
   | `parley_engine` | UAX #9 L1, shaping reuse; needed to resolve | root patch, same Git rev |
   | `wgpu-hal` | DXGI/DX12 only | not applied: Windows only |
   | `accesskit_windows` | Windows only | not applied |
-  | `winit` | Windows taskbar and placement; macOS IME APIs (`set_ime_text`, `take_ime_clauses`, `take_ime_replacement`); Wayland finger and continuous scroll gain ×12 | not applied. The IME APIs belong to eon-yp6vg.47/.57, whose winit `78b8f28` has them. Root winit `c1dacc9d` and `78b8f28` both lack the scroll gain. Root winit is shared with shipping Venus, so the decision is eon-yp6vg.7.2's |
+  | `winit` | Windows taskbar and placement; macOS IME APIs (`set_ime_text`, `take_ime_clauses`, `take_ime_replacement`); Wayland finger and continuous scroll gain ×12 | IME APIs applied: root winit `c7b36f8a` (eon-yp6vg.47/.57) has them. Taskbar and placement not applied (Windows only). Scroll gain not applied: root winit `c7b36f8a` lacks it. Root winit is shared with shipping Venus, so the decision is eon-yp6vg.7.2's |
   | `accesskit_macos` | `AXHeading`, a main-thread borrow panic guard, text runs past 64 KiB | not applied. A root patch would change shipping Darwin Venus's `accesskit_macos 0.27.2`. Gap for Darwin qualification (eon-yp6vg.58) |
 
   `tiny-skia-path` is a path dependency inside the Rune Git source, so it is
@@ -487,8 +498,8 @@ dependency decision does not establish public-distribution proof.
     `wl-clipboard-rs 0.9.3` dependency. wgpu gains `parking_lot` and
     `metal`, with Vulkan still the Linux backend. `accesskit_unix` remains
     the source of `zbus`.
-  - **Darwin:** 130 → 202, from resolution only, because eon-yp6vg.57
-    blocks the build. wgpu gains `custom`, and shipping `accesskit_macos
+  - **Darwin:** 130 → 202. Since eon-yp6vg.57 the feature-on graph also
+    compiles (cross-Clippy). wgpu gains `custom`, and shipping `accesskit_macos
     0.27.2` gets Rune as a second dependent.
 - **Graph guard:** eon-5a9kx replaces the temporary eon-yp6vg.7.14 X11
   waiver. The `candidate-rune-graph` check in `flake.nix` resolves the
@@ -607,8 +618,10 @@ Upstream PR 4087 remains rejected because its broader rewrite routes ordinary
 input through IME commit; corrected two-Enter A/B showed PR 4650 unnecessary.
 The IME-qualified commit `7c209ec5bebbd2963f75a39f79b320af6b03f72c` has the
 same tree as guard-only commit `92722876415d5f2e3e97b2897b84c9a768c79b82`.
-The current winit pin adds the Wayland precision scroll fixes on top of that
-tree. The package graph, public API, and input owners stay the same.
+The current winit pin adds the Wayland precision scroll fixes and Rune's opt-in
+APIs on top of that tree. The package graph and input owners stay the same;
+the public API only gains those APIs, and the Kotoeri commit methods
+(`insertText:`, `unmarkText`, `doCommandBySelector:`) are unchanged.
 
 ## Native clipboard decision
 

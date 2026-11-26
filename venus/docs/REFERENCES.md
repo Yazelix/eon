@@ -21,15 +21,15 @@ and [Rune tree guard](https://github.com/Yazelix/eon-rune/blob/c22cc2d459cc6b80a
 
 Native window settings follow equality at the effect sink: the state owner
 marks real changes and the sink sends a level only when its value changes
-within a window's lifetime, as winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` already does for
+within a window's lifetime, as winit `c7b36f8a72c1bcb43d21343b02d6b625889a871f` already does for
 input-method permission on
-[Wayland](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/mod.rs#L616-L625)
-and [AppKit](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/macos/view.rs#L883-L899).
+[Wayland](https://github.com/Yazelix/winit-0.30/blob/c7b36f8a72c1bcb43d21343b02d6b625889a871f/src/platform_impl/linux/wayland/window/mod.rs#L622-L631)
+and [AppKit](https://github.com/Yazelix/winit-0.30/blob/c7b36f8a72c1bcb43d21343b02d6b625889a871f/src/platform_impl/macos/view.rs#L918-L934).
 The same pin sends a
-[Wayland title](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/state.rs#L1122-L1139)
-and [pointer icon](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/state.rs#L734-L746)
+[Wayland title](https://github.com/Yazelix/winit-0.30/blob/c7b36f8a72c1bcb43d21343b02d6b625889a871f/src/platform_impl/linux/wayland/window/state.rs#L1135-L1152)
+and [pointer icon](https://github.com/Yazelix/winit-0.30/blob/c7b36f8a72c1bcb43d21343b02d6b625889a871f/src/platform_impl/linux/wayland/window/state.rs#L747-L759)
 and invalidates
-[AppKit caret coordinates](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/macos/view.rs#L901-L906)
+[AppKit caret coordinates](https://github.com/Yazelix/winit-0.30/blob/c7b36f8a72c1bcb43d21343b02d6b625889a871f/src/platform_impl/macos/view.rs#L936-L941)
 on every call, so Venus keeps one memo per window in front of its host
 (VEN-C2; the feedback table is in `INTERACTION.md`). Elm's virtual-tree diff
 and Salsa's tracked graph were rejected (eon-33cww.1).
@@ -101,7 +101,7 @@ and leave only non-tab titlebar areas draggable. These are UX comparisons, not
 dependencies or implementation sources.
 
 Exact patched winit 0.30.13 at
-`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` owns native movement. Its
+`c7b36f8a72c1bcb43d21343b02d6b625889a871f` owns native movement. Its
 `Window::drag_window` contract requires an immediately preceding left press;
 the Wayland implementation uses the latest pointer-button serial and requires
 the cursor inside the window. Venus therefore exposes one Scene-owned empty
@@ -345,7 +345,7 @@ space between stacked cards; Renderer paints it once. Popup and sidebar fills
 follow their own rounded outer edges. Above and outside those fills, the gaps
 and footer take the header's opaque color. Hover adds
 a label pill; keyboard focus adds a mint pill outline.
-Pinned winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`, Wayland
+Pinned winit `c7b36f8a72c1bcb43d21343b02d6b625889a871f`, Wayland
 `window/state.rs::set_blur`, already requests blur over the entire surface; its
 `types/bgr_effects.rs` routes compositor support. The regression uses a colored
 underlay to expose missing paint.
@@ -362,7 +362,7 @@ default/off interaction are the falsifiers. Eon delivery remains separate.
 for cell-authored targets and inspection of the actual URI. The preserved
 2020-05-31 document supplies protocol semantics, not current terminal support
 claims. Current Ghostty and Kitty documentation supplied UX comparisons only.
-The exact selected winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` cursor and
+The exact selected winit `c7b36f8a72c1bcb43d21343b02d6b625889a871f` cursor and
 event APIs own the native pointer boundary. Foot
 `85655c74a4ded119392ea8b632626c3920042807` (`url-mode.c`, `doc/foot.ini.5.scd`)
 demonstrates explicit keyboard traversal, clipboard activation and a distinct
@@ -415,7 +415,7 @@ and unicode-script 0.5.8's `Script`. Explicit primary names preserve ordered
 fallback before generic family search. Keep the existing font fitter and
 `CellMetrics`; reject another resolver or geometry owner.
 
-Patched winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` owns native sizing.
+Patched winit `c7b36f8a72c1bcb43d21343b02d6b625889a871f` owns native sizing.
 Its Wayland event loop consumes `ScaleFactorChanged`'s `InnerSizeWriter`
 synchronously; use that one admission to preserve the requested grid when the
 initial output scale arrives after the first buffer. Later user size/scale
@@ -671,7 +671,7 @@ once per successful present when the rectangle changed or text input re-entered.
 Workspace layout is built at geometry consumers. AppKit retains its native caret
 and enable ordering.
 [Alacritty 0.15.1 preedit](https://github.com/alacritty/alacritty/blob/0c405d53e74ace2980fc5e6c6d5b710c144bc075/alacritty/src/event.rs#L1730)
-[Pinned winit Wayland IME](https://github.com/Yazelix/winit-0.30/blob/c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9/src/platform_impl/linux/wayland/window/mod.rs#L605)
+[Pinned winit Wayland IME](https://github.com/Yazelix/winit-0.30/blob/c7b36f8a72c1bcb43d21343b02d6b625889a871f/src/platform_impl/linux/wayland/window/mod.rs#L611)
 
 ## Canonical workspace protocol provider
 
@@ -769,7 +769,7 @@ revision-bound nearest-first row window and one signed atomic viewport commit;
 Venus does not infer routing, edges, cells, or revisions.
 
 Patched winit 0.30.13 at
-`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` maps Wayland discrete axes to
+`c7b36f8a72c1bcb43d21343b02d6b625889a871f` maps Wayland discrete axes to
 `LineDelta` and precision axes to physical `PixelDelta`. It retains activity
 per pointer and emits `Ended` when the last active precision axis stops.
 A gesture that starts and stops within one frame carries its delta in a
@@ -809,7 +809,7 @@ terminal-state inference, dependency, or unreleased winit API.
 `ven-adopt-orbit-click-selection-ladder-23e` consumes accepted Orbit
 `6bc269c40b18f08b95778939518f77556ba91c67` through unchanged ORBF v2 / ORBS v13
 and package tree `d1151ce365f371cd06498c8d65fbcf6831ee0afe`. Exact patched winit
-`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` delivers native button phases;
+`c7b36f8a72c1bcb43d21343b02d6b625889a871f` delivers native button phases;
 Venus forwards position, modifiers and monotonic delivery time through its
 existing release-presentation gate. Orbit owns words at two clicks, punctuation
 spans at three and logical lines at four or later, including drag/upward-tick
@@ -846,7 +846,7 @@ Venus's presentation owner separates content dirtiness from input geometry:
 ordinary frames with unchanged dimensions/screen advance the renderer cache
 without withdrawing the last actually presented revision. Structural changes
 still invalidate publication. Finish retains its authoritative presentation
-gate. Patched winit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`
+gate. Patched winit `c7b36f8a72c1bcb43d21343b02d6b625889a871f`
 `Window::request_redraw` gives no strong ordering guarantee, so input eligibility
 cannot depend on the next output frame being repainted first.
 
@@ -922,7 +922,8 @@ persistent Venus setting is introduced.
 ## Required for compositor-owned background blur
 
 The current exact winit 0.30.13 patch is `Yazelix/winit-0.30` commit
-`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9`. It retains ancestor
+`c7b36f8a72c1bcb43d21343b02d6b625889a871f`. It retains the Wayland precision
+scroll commit `c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` and ancestor
 `fb45fbf901fbe70cc9a877b5d651d0b60c206b08`, directly above the v0.30.13 tag
 and an exact backport of verified merged upstream commit
 `c4afadbfabf7b1e7989b40b493db1a4c7bd8ff4e`. That ancestor prefers
@@ -933,7 +934,7 @@ Apache-2.0.
 ## Required for caller-owned application identity
 
 Exact patched winit 0.30.13 commit
-`c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9` documents and implements
+`c7b36f8a72c1bcb43d21343b02d6b625889a871f` documents and implements
 `WindowAttributesExtWayland::with_name`: its general name becomes the Wayland
 application ID and should match the distributed desktop-file ID; its instance
 name is unused on Wayland. VEN-C17 reuses only this existing native window

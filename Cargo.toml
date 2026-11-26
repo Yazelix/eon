@@ -23,7 +23,7 @@ resolver = "3"
 # Required by Venus's optional Rune (candidate-rune graph only): registry parley_engine lacks
 # Rune's `line-dictionaries`, and a dependency's own [patch] does not apply here. Moves with the pin.
 parley_engine = { git = "https://github.com/Yazelix/eon-rune", rev = "c22cc2d459cc6b80a3f4ecf45b136eed1d205507" }
-winit = { git = "https://github.com/Yazelix/winit-0.30.git", rev = "c1dacc9d455ff836a415fc97e1e1f15b6c50f0c9" }
+winit = { git = "https://github.com/Yazelix/winit-0.30.git", rev = "c7b36f8a72c1bcb43d21343b02d6b625889a871f" }
 
 [profile.release]
 lto = "thin"

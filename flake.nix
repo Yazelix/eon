@@ -245,7 +245,7 @@
           };
           workspaceCargoLock = {
             lockFile = ./Cargo.lock;
-            outputHashes."dpi-0.1.1" = "sha256-hVTGymDtJZFu0sGp34WI3fLOBi2BoT6XEHJXLm4BfJk=";
+            outputHashes."dpi-0.1.1" = "sha256-5PryoOJXKGW/5cGtDynPnyTwk5kZg5azgeDbYSj0Q9k=";
             outputHashes."libghostty-vt-0.2.1" = "sha256-Wl/JOS2KD/s+fiUz5W2bgXt07gLhwWO9MkPWik/9/gs=";
             outputHashes."rune-0.0.1" = "sha256-YzugFz3uEg7vGK/+N/YfJyGm0nHfmkSy/ZFmPzudNQg=";
           };
@@ -705,7 +705,7 @@
               '';
             });
           # The Rune candidate behind `eon window new --rune-preview` (eon-yp6vg.7.4), with
-          # shipping Venus's libraries and fonts. Linux only until eon-yp6vg.57; eon-yp6vg.54
+          # shipping Venus's libraries and fonts. Linux only until eon-yp6vg.71; eon-yp6vg.54
           # removes it. Shipping Venus keeps the feature off.
           venusRunePreviewPackage = buildWorkspacePackage {
             pname = "venus-rune-preview";

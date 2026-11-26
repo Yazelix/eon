@@ -20,7 +20,7 @@ installation, and proven contract changes.
 - `eon window new --rune-preview` opens a window on the Rune preview client,
   beside the shipping client, which stays the default. On Linux the profile
   ships the client and an "Eon (Rune preview)" desktop entry that runs it.
-  On macOS the flag exits 1 until the client builds there (`eon-yp6vg.57`).
+  On macOS the flag exits 1 until it ships there (`eon-yp6vg.71`).
   `eon session --json` names each running window's `client` (`shipping` or
   `rune-preview`). The preview is temporary: `eon-yp6vg.54` removes the flag
   and the entry when Rune becomes the client (`eon-yp6vg.7.4`).
