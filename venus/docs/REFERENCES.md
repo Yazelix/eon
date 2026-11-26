@@ -760,6 +760,15 @@ focus/geometry/accessibility regressions and an isolated native Wayland consumer
 using real Orbit Sessions with a bounded canonical workspace producer. It does
 not establish Eon command/lifetime behavior or composed runtime activation.
 
+`eon-u788h` uses the existing EONW pane-target `FocusId` for activation of the
+already-shown, popup-covered tab. Runtime's `dismiss_for_pane_action` restores
+the selected pane, stops a transient and keeps keep-alive instances hidden.
+Tab selection still uses tab-target `FocusId`. The label shares the passive
+version/clock hover path and AccessKit's static `Role::Label`. The comparison
+is Kitty's exact overlay targeting above and tmux's separate tab and pane
+selection in
+[`cmd-switch-client.c` at `7f2a35a`](https://github.com/tmux/tmux/blob/7f2a35ad3321f9ba57a1062ca73b1f3ff26aca53/cmd-switch-client.c#L127-L151).
+
 ## Required for pixel and kinetic retained-history scrolling
 
 `ven-venus-kinetic-touchpad-scroll-5sl` consumes Orbit `ORB-C8` and `ORB-C9`

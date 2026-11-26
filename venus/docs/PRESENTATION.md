@@ -46,10 +46,10 @@ those integrations.
   allocated card areas start lower so the tops of the card title tabs sit one
   card gap below the pills. This extra space yields first on
   short windows, before the bar's top gap and pill height. Widgets use filled
-  capsules in the unselected-tab fill, with neutral outlines and status dots. The session
-  label uses the tab hover fill on hover and its own quieter pressed fill;
-  keyboard focus retains its mint outline. The header controls share their centre.
-  Hover and accessibility bounds stay unchanged.
+  capsules in the unselected-tab fill, with neutral outlines and status dots.
+  The read-only session label uses the idle fill with no outline. Its tooltip
+  names the configured Sessions shortcut, and it is static text in the
+  accessibility tree. The header controls share their centre.
 - The Eon logo, in its own colours and two logical pixels shorter than the tab
   pills, leads the bar before the session label and tabs. Its centre is as far
   from the window's left edge as the bar's centre line is below the window top,
@@ -65,8 +65,7 @@ those integrations.
   running windows with their counts and a Quit action each. These are Runtime's
   running-window facts; unknown counts and unresponsive windows say so. The
   menu stays available with shortcut hints and the sidebar off. Its icon keeps
-  the minimum-width rule above. The session pill still opens the Sessions picker;
-  the hints-bar version stays read-only.
+  the minimum-width rule above. The hints-bar version is read-only.
   With Commands enabled, **Updates** opens that configured popup; search
   `update` to check or install through the product CLI's target and consent
   flow. It shares pointer, keyboard and accessible menu activation.

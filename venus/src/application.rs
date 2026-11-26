@@ -78,11 +78,10 @@ use scroll::{
 };
 
 use shortcuts::{
-    HintPopupLatch, NativeShortcutAction, NativeShortcutExt, ShortcutDirection, WORKSPACES_ENTRY,
-    command_q, detach_chord, invoke_popup, native_key_shortcut, native_pointer_shortcut,
-    paste_shortcut, popup_shortcut, position_key_action, quit_retry_chord, shortcut,
-    shortcut_groups, shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip,
-    workspace_shortcut,
+    HintPopupLatch, NativeShortcutAction, NativeShortcutExt, ShortcutDirection, command_q,
+    detach_chord, invoke_popup, native_key_shortcut, native_pointer_shortcut, paste_shortcut,
+    popup_shortcut, position_key_action, quit_retry_chord, shortcut, shortcut_groups,
+    shortcut_hints_for, sideways_move_opens_column, workspace_picker_tooltip, workspace_shortcut,
 };
 
 #[cfg(test)]
@@ -4726,14 +4725,6 @@ impl Application {
             WorkspaceHeaderAction::ToggleShortcuts => {
                 self.set_shortcut_viewer(!self.shortcut_viewer.open);
             }
-            // The workspace label uses the picker's Focus intent.
-            WorkspaceHeaderAction::PickWorkspace => {
-                if let Some(action) = invoke_popup(snapshot, WORKSPACES_ENTRY, false)
-                    && self.request_workspace(action)
-                {
-                    self.set_workspace_focus(WorkspaceFocus::Terminal);
-                }
-            }
         }
     }
 
@@ -5122,7 +5113,6 @@ impl Application {
                     cycle_header_focus(
                         focus,
                         modifiers == session::Modifiers::SHIFT,
-                        shows(WorkspaceHeaderControl::Workspaces),
                         shows(WorkspaceHeaderControl::Shortcuts),
                         shows(WorkspaceHeaderControl::WindowMenu),
                     )
@@ -6410,6 +6400,9 @@ impl Application {
             .set_scrollback_label(scrollback_label.clone());
         state.renderer.set_hovered_header(hovered_header);
         state.renderer.set_quota_hovered(quota_hovered);
+        state
+            .renderer
+            .set_workspace_label_hovered(matches!(hovered_hit, Some(WorkspaceHit::WorkspaceLabel)));
         state.renderer.set_version_hovered(version_hovered);
         state.renderer.set_hint_group_hovered(
             hint_group_hovered,
@@ -6923,6 +6916,7 @@ impl Application {
                         match scene.hit_test(position.x as f32, position.y as f32) {
                             hit @ Some(
                                 WorkspaceHit::Tab(_)
+                                | WorkspaceHit::WorkspaceLabel
                                 | WorkspaceHit::Pane(_)
                                 | WorkspaceHit::PaneAction(..)
                                 | WorkspaceHit::HeadingAction(_)
@@ -7198,11 +7192,19 @@ impl Application {
                     && button == MouseButton::Left
                 {
                     match hit {
-                        Some(
-                            WorkspaceHit::Tab(id)
-                            | WorkspaceHit::Pane(id)
-                            | WorkspaceHit::ColumnTerminal(id),
-                        ) => {
+                        Some(WorkspaceHit::Tab(id)) => {
+                            self.set_workspace_focus(WorkspaceFocus::Terminal);
+                            bench_trace("focus", id);
+                            if let Some(action) = self
+                                .workspace_model
+                                .snapshot()
+                                .and_then(|snapshot| tab_activation(snapshot, id))
+                            {
+                                self.send_workspace(action);
+                            }
+                            return;
+                        }
+                        Some(WorkspaceHit::Pane(id) | WorkspaceHit::ColumnTerminal(id)) => {
                             self.set_workspace_focus(WorkspaceFocus::Terminal);
                             bench_trace("focus", id);
                             self.send_workspace(CommonAction::FocusId(id.into()));
@@ -7546,8 +7548,13 @@ impl Application {
                                 if click {
                                     self.set_workspace_focus(WorkspaceFocus::Terminal);
                                 }
+                                let request = accessibility_workspace_request(
+                                    target,
+                                    click,
+                                    self.workspace_model.snapshot(),
+                                );
                                 if let Some(focus) =
-                                    accessibility_workspace_focus(target, |action| {
+                                    accessibility_workspace_focus(request, |action| {
                                         self.queue_workspace(WorkspaceAction::Workspace(action))
                                     })
                                     && !click
@@ -8212,14 +8219,29 @@ fn terminal_focused(window_focused: bool, workspace_focus: WorkspaceFocus) -> bo
     window_focused && workspace_focus == WorkspaceFocus::Terminal
 }
 
-fn accessibility_workspace_focus(
+fn tab_activation(snapshot: &Snapshot, id: &str) -> Option<CommonAction> {
+    if id == snapshot.active_tab
+        && let Some(tab) = snapshot.tabs.iter().find(|tab| tab.id == id)
+        && tab.selected_popup.is_some()
+    {
+        return tab.selected_pane.clone().map(CommonAction::FocusId);
+    }
+    Some(CommonAction::FocusId(id.into()))
+}
+
+fn accessibility_workspace_request(
     target: AccessibilityTarget,
-    queue: impl FnOnce(CommonAction) -> bool,
-) -> Option<WorkspaceFocus> {
-    let (focus, id) = match target {
-        AccessibilityTarget::Terminal => return Some(WorkspaceFocus::Terminal),
-        AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, id),
-        AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, id),
+    click: bool,
+    snapshot: Option<&Snapshot>,
+) -> Option<(WorkspaceFocus, Option<CommonAction>)> {
+    Some(match target {
+        AccessibilityTarget::Terminal => (WorkspaceFocus::Terminal, None),
+        AccessibilityTarget::Tab(id) if click => (
+            WorkspaceFocus::Terminal,
+            snapshot.and_then(|snapshot| tab_activation(snapshot, &id)),
+        ),
+        AccessibilityTarget::Tab(id) => (WorkspaceFocus::Tabs, Some(CommonAction::FocusId(id))),
+        AccessibilityTarget::Pane(id) => (WorkspaceFocus::Panes, Some(CommonAction::FocusId(id))),
         AccessibilityTarget::PaneAction { .. }
         | AccessibilityTarget::HeadingAction { .. }
         | AccessibilityTarget::HeaderControl { .. }
@@ -8231,8 +8253,15 @@ fn accessibility_workspace_focus(
         | AccessibilityTarget::ReturnToLive => {
             return None;
         }
-    };
-    queue(CommonAction::FocusId(id)).then_some(focus)
+    })
+}
+
+fn accessibility_workspace_focus(
+    request: Option<(WorkspaceFocus, Option<CommonAction>)>,
+    queue: impl FnOnce(CommonAction) -> bool,
+) -> Option<WorkspaceFocus> {
+    let (focus, action) = request?;
+    action.is_none_or(queue).then_some(focus)
 }
 
 /// What a heading's button sends: the popup's dismissal that `eon popup hide` sends, the
@@ -8430,7 +8459,6 @@ enum WorkspaceHeaderAction {
     Workspace(CommonAction),
     ToggleShortcuts,
     ToggleWindowMenu,
-    PickWorkspace,
 }
 
 fn workspace_header_action(
@@ -8439,7 +8467,6 @@ fn workspace_header_action(
 ) -> WorkspaceHeaderAction {
     match control {
         WorkspaceHeaderControl::WindowMenu => WorkspaceHeaderAction::ToggleWindowMenu,
-        WorkspaceHeaderControl::Workspaces => WorkspaceHeaderAction::PickWorkspace,
         WorkspaceHeaderControl::NewTab => WorkspaceHeaderAction::Workspace(CommonAction::CreateTab),
         WorkspaceHeaderControl::Shortcuts => WorkspaceHeaderAction::ToggleShortcuts,
         WorkspaceHeaderControl::CloseTab => {
@@ -8484,15 +8511,13 @@ fn cycle_pane_focus(
 fn cycle_header_focus(
     focus: WorkspaceFocus,
     backwards: bool,
-    workspace_label: bool,
     shortcuts_visible: bool,
     window_menu: bool,
 ) -> Option<WorkspaceFocus> {
-    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts, WindowMenu, Workspaces};
+    use WorkspaceHeaderControl::{CloseTab, NewTab, Shortcuts, WindowMenu};
     let controls = [
         Some(WorkspaceFocus::Tabs),
         window_menu.then_some(WorkspaceFocus::Header(WindowMenu)),
-        workspace_label.then_some(WorkspaceFocus::Header(Workspaces)),
         Some(WorkspaceFocus::Header(NewTab)),
         shortcuts_visible.then_some(WorkspaceFocus::Header(Shortcuts)),
         Some(WorkspaceFocus::Header(CloseTab)),

@@ -20,12 +20,12 @@ fn palette_contrast_is_available_to_other_consumers() {
         assert!(
             pairs.iter().any(|pair| {
                 pair.foreground == "accent"
-                    && pair.background == "session_pressed"
+                    && pair.background == "chrome_highlight"
                     && !pair.adapted
                     && pair.target >= 3.0
                     && pair.ratio >= pair.target
             }),
-            "pressed session keyboard-focus outline must be guarded"
+            "pressed control keyboard-focus outline must be guarded"
         );
         assert!(pairs.iter().all(|p| p.ratio >= p.target));
         for pair in pairs {

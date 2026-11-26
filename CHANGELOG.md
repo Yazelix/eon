@@ -13,6 +13,10 @@ installation, and proven contract changes.
 - When Eon retries an Orbit attachment, the notice explains that an earlier
   client may still hold the terminal or the window may be waiting for admission
   (`eon-dlvwy`).
+- The Eon Bar session label is read-only and shows the Sessions shortcut on
+  hover. Click the shown tab to return to its panes from a popup. Transient
+  popups close, keep-alive popups keep running hidden, and a pending tab
+  keeps its chooser (`eon-u788h`, EON-C10, EON-C33).
 - `eon import nova` brings Nova settings into Eon: the shell, Atuin, the
   editor, the welcome animation, the agent command, popup keys, bar widgets and
   custom popups. With no Eon `config.toml` it writes one that loads without

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- VEN-C18 and VEN-C21: Activating the shown tab reveals its panes under a
+  popup, and the session label is read-only with a shortcut tooltip
+  (`eon-u788h`).
+
 - VEN-C30: A sidebar pane row's second line ends with the pane's tag, after
   the age, pane ID, `+N` and `status stale` (`1h · p25 · eon-igae.25`). Only the
   tag shortens, with `…`, when the line does not fit, and the row's accessible

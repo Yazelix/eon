@@ -649,7 +649,7 @@ pub(super) fn popup_shortcut(
     invoke_popup(snapshot, &entry.id, terminal_focused)
 }
 
-/// The popup entry the Eon Bar's workspace label opens (VEN-C21).
+/// The popup entry named in the session label's tooltip (VEN-C21).
 pub(super) const WORKSPACES_ENTRY: &str = "sessions";
 
 /// The workspace label's tooltip: its popup entry's label and any chord, while Eon configures it.

@@ -611,19 +611,11 @@ impl Snapshot {
         }
         if let Some(workspace) = &self.workspace {
             if let Some(label) = &workspace.workspace_label {
-                // Without its popup entry the label is read-only text.
-                let mut node = if let Some(tooltip) = &label.tooltip {
-                    let mut node = Node::new(Role::Button);
-                    node.set_label(label.accessible_label.as_str());
+                let mut node = Node::new(Role::Label);
+                node.set_value(label.accessible_label.as_str());
+                if let Some(tooltip) = &label.tooltip {
                     node.set_description(tooltip.as_str());
-                    node.add_action(Action::Click);
-                    node.add_action(Action::Focus);
-                    node
-                } else {
-                    let mut node = Node::new(Role::Label);
-                    node.set_value(label.accessible_label.as_str());
-                    node
-                };
+                }
                 node.set_bounds(rect(label.rect));
                 nodes.push((WORKSPACE_LABEL, node));
             }
@@ -1268,7 +1260,6 @@ pub enum AccessibilityTarget {
 fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
     match control {
         WorkspaceHeaderControl::WindowMenu => WINDOW_MENU,
-        WorkspaceHeaderControl::Workspaces => WORKSPACE_LABEL,
         WorkspaceHeaderControl::NewTab => NEW_TAB,
         WorkspaceHeaderControl::Shortcuts => SHORTCUTS,
         WorkspaceHeaderControl::CloseTab => CLOSE_TAB,
@@ -1278,7 +1269,6 @@ fn control_node_id(control: WorkspaceHeaderControl) -> NodeId {
 fn header_control_for_node(node: NodeId) -> Option<WorkspaceHeaderControl> {
     match node {
         WINDOW_MENU => Some(WorkspaceHeaderControl::WindowMenu),
-        WORKSPACE_LABEL => Some(WorkspaceHeaderControl::Workspaces),
         NEW_TAB => Some(WorkspaceHeaderControl::NewTab),
         SHORTCUTS => Some(WorkspaceHeaderControl::Shortcuts),
         CLOSE_TAB => Some(WorkspaceHeaderControl::CloseTab),
@@ -4825,7 +4815,7 @@ mod tests {
     }
 
     #[test]
-    fn workspace_label_leads_the_tabs_and_opens_the_picker() {
+    fn workspace_label_leads_the_tabs_as_read_only_text() {
         use crate::{HeaderText, WorkspaceHit};
 
         let metrics = CellMetrics::for_scale(1.0);
@@ -4905,11 +4895,10 @@ mod tests {
             let rect = scene.workspace_label.as_ref().unwrap().rect;
             scene.hit_test(rect.left + rect.width / 2.0, rect.top + rect.height / 2.0)
         }
-        let control = WorkspaceHeaderControl::Workspaces;
 
         // One unnamed workspace leaves the bar as it is without the label.
         let plain = project(&snapshot(&[None], "s1"), 1200, Some(picker), 0.0);
-        assert!(plain.workspace_label.is_none() && !plain.has_control(control));
+        assert!(plain.workspace_label.is_none());
         assert_eq!(plain, project(&snapshot(&[None], "s1"), 1200, None, 0.0));
         assert_eq!(plain.tab_viewport.left, 0.0);
         let mut accessible = Snapshot::new(PhysicalSize::new(1200, 600));
@@ -4918,7 +4907,7 @@ mod tests {
         assert_eq!(node(&tree, WINDOW).children()[0], TAB_LIST);
         assert!(tree.nodes.iter().all(|(id, _)| *id != WORKSPACE_LABEL));
 
-        // Two workspaces: the shown one's name and position lead the tabs and open the picker.
+        // Two workspaces: the shown one's name and position lead the tabs.
         let two = snapshot(&[None, Some("notes")], "s2");
         let scene = project(&two, 1200, Some(picker), 0.0);
         let label = scene.workspace_label.as_ref().unwrap();
@@ -4926,30 +4915,26 @@ mod tests {
         assert_eq!(label.rect.left, plain.tabs[0].rect.left);
         assert!(label.rect.right() < scene.tab_viewport.left);
         assert_eq!(scene.tabs[0].rect.left, scene.tab_viewport.left);
-        assert_eq!(label_hit(&scene), Some(WorkspaceHit::Control(control)));
+        assert_eq!(label_hit(&scene), Some(WorkspaceHit::WorkspaceLabel));
         accessible.set_workspace(Some(&scene));
         let tree = accessible.tree();
         assert_eq!(
             node(&tree, WINDOW).children()[..2],
             [WORKSPACE_LABEL, TAB_LIST]
         );
-        let button = node(&tree, WORKSPACE_LABEL);
-        assert_eq!(button.role(), Role::Button);
-        assert_eq!(button.label(), Some("Session notes, 2 of 2"));
-        assert_eq!(button.description(), Some(picker));
-        assert_eq!(button.bounds(), Some(rect(label.rect)));
-        for (action, activate) in [(Action::Focus, false), (Action::Click, true)] {
-            assert_eq!(
-                accessible.action_target(WORKSPACE_LABEL, action),
-                Some(AccessibilityTarget::HeaderControl { control, activate })
-            );
+        let text = node(&tree, WORKSPACE_LABEL);
+        assert_eq!(text.role(), Role::Label);
+        assert_eq!(text.value(), Some("Session notes, 2 of 2"));
+        assert_eq!(text.description(), Some(picker));
+        assert_eq!(text.bounds(), Some(rect(label.rect)));
+        for action in [Action::Focus, Action::Click] {
+            assert!(!text.supports_action(action));
+            assert_eq!(accessible.action_target(WORKSPACE_LABEL, action), None);
         }
-        accessible.workspace_focus = WorkspaceFocus::Header(control);
-        assert_eq!(accessible.tree().focus, WORKSPACE_LABEL);
         // Tabs scrolled to their end stay inside their viewport, after the label.
         let scrolled = project(&two, 500, Some(picker), f32::MAX);
         assert!(scrolled.tab_scroll() > 0.0);
-        assert_eq!(label_hit(&scrolled), Some(WorkspaceHit::Control(control)));
+        assert_eq!(label_hit(&scrolled), Some(WorkspaceHit::WorkspaceLabel));
 
         // Another workspace that needs input badges the label's corner, with the sidebar open,
         // and moves neither the label nor the tabs; the shown one's own attention badges nothing.
@@ -4972,7 +4957,7 @@ mod tests {
         assert_eq!(badged.tabs, scene.tabs);
         accessible.set_workspace(Some(&badged));
         assert_eq!(
-            node(&accessible.tree(), WORKSPACE_LABEL).label(),
+            node(&accessible.tree(), WORKSPACE_LABEL).value(),
             Some("Session notes, 2 of 2, another session needs input")
         );
 
@@ -5001,20 +4986,13 @@ mod tests {
             ("notes", "Session notes, 1 of 1")
         );
 
-        // Without the picker's entry the label is inert text.
+        // Without a tooltip the label has no hover target.
         let inert = project(&two, 1200, None, 0.0);
-        assert!(!inert.has_control(control));
         assert_eq!(label_hit(&inert), None);
         accessible.set_workspace(Some(&inert));
         let tree = accessible.tree();
         let text = node(&tree, WORKSPACE_LABEL);
-        assert_eq!(text.role(), Role::Label);
-        assert_eq!(text.value(), Some("Session notes, 2 of 2"));
-        assert!(!text.supports_action(Action::Click) && !text.supports_action(Action::Focus));
-        assert_eq!(
-            accessible.action_target(WORKSPACE_LABEL, Action::Click),
-            None
-        );
+        assert_eq!(text.description(), None);
 
         // Under width pressure quota chips yield first and the label next, before it would
         // shrink the tabs below their minimum; nothing overlaps.
@@ -5036,7 +5014,7 @@ mod tests {
             match &scene.workspace_label {
                 Some(label) => {
                     assert!(label.rect.right() < scene.tab_viewport.left, "{width}");
-                    assert_eq!(label_hit(&scene), Some(WorkspaceHit::Control(control)));
+                    assert_eq!(label_hit(&scene), Some(WorkspaceHit::WorkspaceLabel));
                     kept_over_quota |= scene.quotas.is_empty();
                 }
                 None => {

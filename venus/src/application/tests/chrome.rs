@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::shortcuts::ALT_SHIFT;
+use crate::application::shortcuts::{ALT_SHIFT, WORKSPACES_ENTRY};
 use eon_workspace_protocol::v51::{InvokeIntent, Pane, Tab};
 
 #[test]
@@ -546,32 +546,47 @@ fn output_keeps_presented_geometry_until_a_structural_transition() {
 }
 
 #[test]
-fn published_accessibility_focus_waits_for_eon_queue_admission() {
-    for (target, admitted, expected_focus, expected_action) in [
+fn accessibility_tab_click_reveals_the_pane_and_focus_selects_the_tab() {
+    let mut snapshot = stack_snapshot(&[&["p1", "p2"]]);
+    show_test_popup(&mut snapshot);
+    for (target, click, admitted, expected_focus, expected_action) in [
         (
-            AccessibilityTarget::Tab("t2".into()),
+            AccessibilityTarget::Tab("t1".into()),
+            true,
+            true,
+            Some(WorkspaceFocus::Terminal),
+            Some(CommonAction::FocusId("p1".into())),
+        ),
+        (
+            AccessibilityTarget::Tab("t1".into()),
+            false,
             true,
             Some(WorkspaceFocus::Tabs),
-            CommonAction::FocusId("t2".into()),
+            Some(CommonAction::FocusId("t1".into())),
         ),
         (
             AccessibilityTarget::Pane("pane-3".into()),
             false,
+            false,
             None,
-            CommonAction::FocusId("pane-3".into()),
+            Some(CommonAction::FocusId("pane-3".into())),
+        ),
+        (
+            AccessibilityTarget::Terminal,
+            false,
+            true,
+            Some(WorkspaceFocus::Terminal),
+            None,
         ),
     ] {
+        let request = accessibility_workspace_request(target, click, Some(&snapshot));
         let mut queued = None;
-        let focus = accessibility_workspace_focus(target, |action| {
+        let focus = accessibility_workspace_focus(request, |action| {
             queued = Some(action);
             admitted
         });
-        assert_eq!((focus, queued), (expected_focus, Some(expected_action)));
+        assert_eq!((focus, queued), (expected_focus, expected_action));
     }
-    assert_eq!(
-        accessibility_workspace_focus(AccessibilityTarget::Terminal, |_| unreachable!()),
-        Some(WorkspaceFocus::Terminal)
-    );
 }
 
 #[test]
@@ -736,6 +751,35 @@ pub(super) fn stack_snapshot(columns: &[&[&str]]) -> Snapshot {
             .collect(),
     }];
     snapshot
+}
+
+#[test]
+fn activating_a_tab_returns_to_its_panes_only_when_it_is_already_shown() {
+    let uncovered = stack_snapshot(&[&["p1", "p2"]]);
+    let mut snapshot = uncovered.clone();
+    show_test_popup(&mut snapshot);
+    let mut other = stack_snapshot(&[&["p3"]]).tabs.remove(0);
+    other.id = "t2".into();
+    let focus = |id: &str| Some(CommonAction::FocusId(id.into()));
+    assert_eq!(tab_activation(&snapshot, "t1"), focus("p1"));
+
+    snapshot.tabs.push(other);
+    for (active, target, expected) in [
+        ("t1", "t2", focus("t2")),
+        ("t2", "t1", focus("t1")),
+        ("t2", "t2", focus("t2")),
+        ("t1", "t1", focus("p1")),
+    ] {
+        snapshot.active_tab = active.into();
+        assert_eq!(tab_activation(&snapshot, target), expected);
+    }
+    snapshot.tabs[0].columns.clear();
+    snapshot.tabs[0].selected_pane = None;
+    for pending in [false, true] {
+        snapshot.tabs[0].pending = pending;
+        assert_eq!(tab_activation(&snapshot, "t1"), None);
+    }
+    assert_eq!(tab_activation(&uncovered, "t1"), focus("t1"));
 }
 
 /// Runtime's answer to a column close naming `pane`: one idle pane terminal.
@@ -1069,11 +1113,6 @@ fn sidebar_rows_take_f6_focus_step_by_arrow_and_follow_their_jump() {
 
 #[test]
 fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
-    // The workspace label opens the picker as its key does, from the snapshot's entry.
-    assert_eq!(
-        workspace_header_action(WorkspaceHeaderControl::Workspaces, "t7"),
-        WorkspaceHeaderAction::PickWorkspace
-    );
     let mut snapshot = Snapshot {
         focus: None,
         released_shortcuts: Default::default(),
@@ -1113,7 +1152,6 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         attention_queue: Vec::new(),
     };
     assert_eq!(workspace_picker_tooltip(&snapshot.entries, false), None);
-    assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), None);
     snapshot.entries.push(PopupEntry {
         id: WORKSPACES_ENTRY.into(),
         label: "Sessions".into(),
@@ -1139,13 +1177,25 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
             intent: InvokeIntent::Toggle,
         })
     );
-    assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), key);
+    assert_eq!(
+        workspace_picker_tooltip(&snapshot.entries, true).as_deref(),
+        Some("Sessions")
+    );
+    if let PopupKey::Bound(shortcut) = &mut snapshot.entries[0].shortcut {
+        shortcut.key = "KeyB".into();
+    }
+    assert_eq!(
+        workspace_picker_tooltip(&snapshot.entries, false).as_deref(),
+        Some(match NATIVE_PLATFORM {
+            NativePlatform::Linux => "Sessions — Alt+Shift+B",
+            NativePlatform::Macos => "Sessions — Option+Shift+B",
+        })
+    );
     snapshot.entries.last_mut().unwrap().shortcut = PopupKey::Unbound;
     assert_eq!(
         workspace_picker_tooltip(&snapshot.entries, false).as_deref(),
         Some("Sessions")
     );
-    assert_eq!(invoke_popup(&snapshot, WORKSPACES_ENTRY, true), key);
     assert_eq!(
         workspace_header_action(WorkspaceHeaderControl::NewTab, "t7"),
         WorkspaceHeaderAction::Workspace(CommonAction::CreateTab)
@@ -1159,27 +1209,25 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
         WorkspaceHeaderAction::Workspace(CommonAction::CloseTab { tab: "t7".into() })
     );
     assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Tabs, false, false, true, false),
+        cycle_header_focus(WorkspaceFocus::Tabs, false, true, false),
         Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
     );
     assert_eq!(
         cycle_header_focus(
             WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
             true,
-            false,
             true,
             false
         ),
         Some(WorkspaceFocus::Tabs)
     );
     assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Panes, false, false, true, false),
+        cycle_header_focus(WorkspaceFocus::Panes, false, true, false),
         None
     );
     assert_eq!(
         cycle_header_focus(
             WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
-            false,
             false,
             false,
             false
@@ -1191,34 +1239,9 @@ fn eon_bar_controls_reuse_existing_actions_and_local_viewer() {
             WorkspaceFocus::Header(WorkspaceHeaderControl::CloseTab),
             true,
             false,
-            false,
             false
         ),
         Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
-    );
-    // A workspace label that opens the picker is the first header control.
-    let label = WorkspaceFocus::Header(WorkspaceHeaderControl::Workspaces);
-    assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Tabs, false, true, true, false),
-        Some(label)
-    );
-    assert_eq!(
-        cycle_header_focus(label, false, true, true, false),
-        Some(WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab))
-    );
-    assert_eq!(
-        cycle_header_focus(
-            WorkspaceFocus::Header(WorkspaceHeaderControl::NewTab),
-            true,
-            true,
-            true,
-            false
-        ),
-        Some(label)
-    );
-    assert_eq!(
-        cycle_header_focus(label, true, true, true, false),
-        Some(WorkspaceFocus::Tabs)
     );
 }
 
@@ -1282,11 +1305,11 @@ fn window_menu_navigation_keeps_peer_identity_and_rejects_ended_targets() {
     );
     let focus = WorkspaceFocus::Header(control);
     assert_eq!(
-        cycle_header_focus(WorkspaceFocus::Tabs, false, true, true, true),
+        cycle_header_focus(WorkspaceFocus::Tabs, false, true, true),
         Some(focus)
     );
     assert_eq!(
-        cycle_header_focus(focus, true, true, true, true),
+        cycle_header_focus(focus, true, true, true),
         Some(WorkspaceFocus::Tabs)
     );
     let mut snapshot = quit_snapshot();

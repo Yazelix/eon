@@ -35,8 +35,9 @@ and directory-based `tab create`.
 Never run `eon focus PANE|POPUP`, `eon tab switch TAB`, `eon session switch SESSION`,
 `eon tab close TAB`, `eon pane close PANE` or `eon column close PANE` on things you did not
 open unless the person asks. When the person asks to see a tab, run
-`eon tab switch tN --json`: it selects that tab as a click does and leaves
-desktop focus alone. If asked to clean up, close what you opened with
+`eon tab switch tN --json`: it selects that tab with its remembered pane
+and popup state and leaves desktop focus alone. Selecting the active tab
+preserves its shown popup. If asked to clean up, close what you opened with
 `eon tab close tN --json` or `eon pane close pN --json`: they close targets in
 any tab of your session without moving focus. If an affected terminal is still
 running a command, or Eon cannot tell (always so in an eonbase window), `--json`

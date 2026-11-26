@@ -862,8 +862,8 @@ and then the clock once the keycaps no longer fit beside them. The version
 belongs to its running supervisor; updating the installation does not change it.
 
 Header widgets use the unselected tab's filled capsule with a neutral outline
-and a small status dot at the right. The session label uses the same fill without
-a resting outline. CPU, RAM, disk and GPU percentages share the interface font
+and a small status dot at the right. The read-only session label uses the same
+idle fill without an outline. CPU, RAM, disk and GPU percentages share the interface font
 with tab labels and quota chips; each reserves its widest value through 99%.
 Only 100% widens a chip by the extra digit and reflows it and the chips to its
 left. Each icon keeps its left inset. The percentage aligns before the dot's
@@ -1647,8 +1647,9 @@ lists it under its default key as overridden by the popup that holds it.
 `eon popup show ENTRY [--tab TAB]` starts an enabled entry without requiring
 a keybinding, using the same configured command and lifetime. Existing
 instances use `eon focus uN`; Project and Files share one instance. The
-window still opens a new tab on quick search, and the Eon Bar's session
-label opens Sessions.
+window still opens a new tab on quick search. When Sessions has no binding,
+open it with Commands > Switch session or `eon popup show sessions`. Use
+`eon session switch SESSION` to select a session directly.
 Two configured popups on one key fail at load, except on a key reserved for
 moving focus, where both load without a key. A popup shortcut on the key of a
 built-in Eon shortcut takes that key, and Alt+/ lists the built-in one as

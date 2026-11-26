@@ -1776,6 +1776,10 @@ names its socket. CLI JSON names a session `session` and a terminal
   Amended on 2026-11-10 (approved plan v5, relayed by eon-overseer) by
   `eon-cq38r`: `eon column close` and Runtime-owned sidebar show/hide on EONW v39.
   The `eon keys [--json]` keymap inspection clause is Candidate (`eon-configurability-qkq8.4`).
+  Amended on 2026-11-26 by `eon-u788h`, approved by eon-desk:
+  tab activation to reveal panes follows VEN-C18. The isolated installed
+  x86_64 Linux run at `492127bd08e2ad47e9565443d9ee23c218b8b6c1` checked
+  tab switching and popup dismissal through the CLI. See `eon-u788h`.
 - **Consumer:** One local CLI or approved composition controlling a live Eon
   supervisor.
 - **Trigger:** The client submits one versioned session or supervisor-lifecycle
@@ -2143,10 +2147,12 @@ names its socket. CLI JSON names a session `session` and a terminal
   - `eon tab directory TAB [--json] -- DIRECTORY` on a pending tab is a pick:
     it commits exactly as a pair pick does (EON-C18).
   - `eon tab switch TAB [--json]` makes live tab TAB the active tab of the
-    addressed session, as clicking it in the tab bar does: it sends the same
-    EONW `FocusId` action, so TAB shows the pane and popup it last selected and
-    every other tab keeps its selection. Run from an Eon terminal it addresses
-    the caller's session, whichever tab the caller is in; when that session is
+    addressed session. It sends the EONW `FocusId` action for TAB, so TAB shows
+    the pane and popup it last selected and every other tab keeps its selection.
+    This is the selection performed when a person clicks a different tab.
+    Activating the already-shown tab to reveal its panes follows VEN-C18.
+    Run from an Eon terminal it addresses the caller's session, whichever tab
+    the caller is in; when that session is
     hidden its active tab changes and it stays hidden. It never moves desktop
     focus or shows another session. Switching to the active tab returns the
     unchanged snapshot. A TAB that is not a `tN` identity is a usage error
@@ -6283,6 +6289,9 @@ A missing or nonexecutable agy is `start`; an invalid reset timestamp is
   that recovered work. No replacement terminal starts to compensate for a
   registry failure. This neither infers old groups/layouts nor expands EON-C15
   recovery guarantees.
+  Amended on 2026-11-26 by `eon-u788h`, approved by eon-desk:
+  the session label is read-only and previews the picker shortcut. See
+  VEN-C21 and `eon-u788h` for the installed hover, click and capture evidence.
 - **Consumer:** One full-Eon user, or an agent working for them, who keeps
   several separate sets of work in one Eon window.
 - **Trigger:** Alt+Shift+S or Commands > Switch session; Alt+Shift+1
@@ -6389,15 +6398,16 @@ A missing or nonexecutable agy is `start`; an invalid reset timestamp is
     rows (`eon-workspace-switching-shn4.6` and
     `eon-workspace-switching-shn4.8`, as EON-C10 describes).
   - **Eon Bar.** While the window holds two or more sessions, or its one
-    session has a name, the Eon Bar shows a leading label before the tabs:
-    the shown session's name or `sN`, followed by `N/M` when there are
-    several. Its accessible name reads "Session NAME, N of M", clicking it
-    opens the picker, and it shows a badge while a hidden session needs
-    input. The badge is the EON-C31 needs-input tab marker at the label's
-    corner; it moves neither the label nor the tabs, and the accessible name
-    then ends with ", another session needs input"
-    (`eon-workspace-switching-shn4.7` and `eon-workspace-switching-shn4.8`,
-    as VEN-C21 describes).
+    session has a name, the Eon Bar shows a leading read-only label before the
+    tabs. It shows the session's name or `sN` and, with several sessions, its
+    `N/M` position. Hover names the Sessions picker and its currently available
+    shortcut, Alt+Shift+S by default. The picker is available through its
+    configured shortcut and Commands > Switch session. The label has no button
+    outline, activation or keyboard focus. Its accessible name reads
+    “Session NAME, N of M”. The EON-C31 needs-input marker appears at the
+    label's corner while a hidden session needs input, without moving the
+    label or tabs. The accessible name then ends with “, another session needs
+    input” (VEN-C21).
   - **Attention.** Each session carries the most urgent normalized EON-C31
     state of its terminals. The Alt+G queue (EON-C31) spans every session of
     the window, and a jump to a terminal in a hidden session shows that

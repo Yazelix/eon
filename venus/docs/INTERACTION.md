@@ -129,14 +129,18 @@ Click the Shortcuts control to see the accepted unlock chord while locked.
 ### Workspace controls
 
 Click a tab or pane header to select it, or click another column's terminal
-to select that column's expanded pane. The fixed controls in the Eon Bar are
-`+` for a tab, `?` for Shortcuts, and `×` to close the exact active tab. Only
-the empty region between tabs and controls drags an undecorated window.
-While the snapshot lists two or more sessions, or its one session has a
-name, an outlined label leads the tabs with the shown session's name or `sN`
-and, with several, its `N/M` position. A click, or Enter or Space when it has
-focus, invokes Eon's `sessions` popup entry as that entry's key does; without
-that entry the label is inert text. A final close shows the close prompt
+to select that column's expanded pane. To return to the panes under a popup,
+click the shown tab. Transient popups close. Keep-alive popups keep running
+out of view, including one that was underneath a transient popup. The Project
+chooser stays open on a pending tab. Clicking a different tab shows it with
+its last popup selection, and switching back restores the selection you left.
+The fixed controls in the Eon Bar are `+` for a tab, `?` for Shortcuts, and
+`×` to close the exact active tab. Only the empty region between tabs and
+controls drags an undecorated window. With multiple sessions or one named
+session, a read-only label leads the tabs with the shown session's name or
+`sN` and, with several, its `N/M` position. Hover it for the Sessions
+shortcut. Open Sessions with that shortcut or Commands > Switch session.
+A final close shows the close prompt
 whatever the session count; while other sessions remain, it says it closes
 the session, by name or `sN`, and its footer reads `Enter Close`.
 
@@ -205,8 +209,8 @@ the terminal. With keyboard activation, focus stays on the row during the
 jump and on rejection while the row remains. On success, focus moves to the
 target terminal or the terminal still visible if a popup covers the target.
 Arrow keys traverse focused tabs or panes, and Left/Right with tabs focused
-walks columns before tabs like Alt+H/L. Tab and Shift+Tab traverse header
-controls, starting with the session label while it opens the picker. Enter
+walks columns before tabs like Alt+H/L. Tab and Shift+Tab traverse the header
+controls and skip the read-only session label. Enter
 or Space activates one. Escape and the disappearance of the focused interface
 item return focus to the terminal. Focus may rest on a tab with no attached
 terminal and returns to the terminal when one attaches in that same tab.

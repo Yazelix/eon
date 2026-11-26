@@ -395,6 +395,7 @@ const ANTIGRAVITY_RGBA_256: &[u8; 256 * 256 * 4] =
 pub(super) struct HeaderInteraction {
     hovered_header: Option<(WorkspaceFocus, String)>,
     quota_hovered: Option<usize>,
+    workspace_label_hovered: bool,
     version_hovered: bool,
     hint_group_hovered: Option<usize>,
     hint_popup: bool,
@@ -1709,28 +1710,6 @@ fn chip_outline_color(critical: bool) -> SceneColor {
     }
 }
 
-fn push_session_label_surface(
-    rectangles: &mut RectangleBatch,
-    visual: SceneRect,
-    state: HeaderButtonState,
-) {
-    let radius = tokens::capsule_radius(visual.height);
-    rectangles.push_rounded(visual, radius, session_label_fill(state));
-    if state.enabled && state.focused {
-        rectangles.push_rounded_outline(visual, radius, palette::DARK.accent);
-    }
-}
-
-fn session_label_fill(state: HeaderButtonState) -> SceneColor {
-    if state.enabled && state.pressed {
-        palette::DARK.session_pressed
-    } else if state.enabled && state.hovered {
-        palette::DARK.tab_hover
-    } else {
-        palette::DARK.tab_idle
-    }
-}
-
 fn tab_fill(selected: bool, hovered: bool) -> SceneColor {
     if selected {
         palette::DARK.tab_selected
@@ -1821,6 +1800,10 @@ impl Renderer {
 
     pub fn set_version_hovered(&mut self, hovered: bool) {
         self.header.version_hovered = hovered;
+    }
+
+    pub fn set_workspace_label_hovered(&mut self, hovered: bool) {
+        self.header.workspace_label_hovered = hovered;
     }
 
     /// The shortcut hints keycap under the pointer, or whose popup it is over; whether that
@@ -2185,12 +2168,7 @@ impl Renderer {
             .workspace_label
             .as_ref()
             .and_then(|label| Some((label, label.tooltip.as_deref()?)))
-            .filter(|_| {
-                self.header.hovers(
-                    WorkspaceFocus::Header(WorkspaceHeaderControl::Workspaces),
-                    "",
-                )
-            })
+            .filter(|_| self.header.workspace_label_hovered)
         {
             (tooltip, label.rect)
         } else if let Some(control) = workspace
@@ -2950,18 +2928,9 @@ impl Renderer {
                 None,
             ));
         }
-        // The session label shares the tab fills for hover and press, with the header controls'
-        // keyboard focus and Tab order while it opens the picker.
         if let Some(label) = &workspace.workspace_label {
-            let control = WorkspaceHeaderControl::Workspaces;
             let visual = workspace.bar_pill_rect(label.rect, self.metrics);
-            let state = HeaderButtonState {
-                hovered: self.header.hovers(WorkspaceFocus::Header(control), ""),
-                pressed: self.header.pressed_header == Some(control),
-                focused: focus == WorkspaceFocus::Header(control),
-                enabled: workspace.has_control(control),
-            };
-            push_session_label_surface(rectangles, visual, state);
+            push_bar_widget(rectangles, visual);
             self.push_chip_label(
                 &label.label,
                 chip_label_box(workspace, label.rect, self.metrics),
@@ -2975,7 +2944,7 @@ impl Renderer {
             if let Some(badge) = label.badge {
                 self.spinners.push_badge(
                     badge,
-                    Backing::BarPill(session_label_fill(state)),
+                    Backing::BarPill(palette::DARK.tab_idle),
                     rectangles,
                 );
             }
@@ -5223,9 +5192,7 @@ mod tests {
     }
 
     #[test]
-    fn bar_surfaces_keep_distinct_session_hover_press_and_mint_focus() {
-        assert_ne!(palette::DARK.tab_idle, palette::DARK.tab_hover);
-        type Surface = fn(&mut RectangleBatch, SceneRect, HeaderButtonState);
+    fn bar_controls_keep_distinct_hover_press_and_mint_focus() {
         for scale in [1.0, 1.125, 1.25, 1.5, 2.0] {
             let visual = SceneRect {
                 left: 8.0 * scale,
@@ -5233,109 +5200,45 @@ mod tests {
                 width: 40.0 * scale,
                 height: 16.0 * scale,
             };
-            let state = HeaderButtonState {
-                hovered: false,
-                pressed: false,
-                focused: false,
-                enabled: true,
-            };
-            let bytes = |draw: fn(&mut RectangleBatch, SceneRect, HeaderButtonState), state| {
-                let mut batch = RectangleBatch::new(128, 128);
-                draw(&mut batch, visual, state);
-                batch.bytes
-            };
-            let idle = bytes(push_session_label_surface, state);
-            let hover = bytes(
-                push_session_label_surface,
-                HeaderButtonState {
-                    hovered: true,
-                    ..state
-                },
-            );
-            let press = bytes(
-                push_session_label_surface,
-                HeaderButtonState {
-                    pressed: true,
-                    ..state
-                },
-            );
-            assert_ne!(idle, hover);
-            assert_ne!(hover, press);
-            for (draw, fills) in [
-                (
-                    push_session_label_surface as Surface,
-                    [
-                        palette::DARK.tab_idle,
-                        palette::DARK.tab_hover,
-                        palette::DARK.session_pressed,
-                    ],
-                ),
-                (
-                    push_bar_control_surface as Surface,
-                    [
-                        palette::DARK.bar_background,
-                        palette::DARK.control_hover,
-                        palette::DARK.chrome_highlight,
-                    ],
-                ),
+            for (hovered, pressed, fill) in [
+                (false, false, palette::DARK.bar_background),
+                (true, false, palette::DARK.control_hover),
+                (true, true, palette::DARK.chrome_highlight),
             ] {
-                for (state, fill) in [
-                    (state, fills[0]),
-                    (
-                        HeaderButtonState {
-                            hovered: true,
-                            ..state
-                        },
-                        fills[1],
-                    ),
-                    (
-                        HeaderButtonState {
-                            hovered: true,
-                            pressed: true,
-                            ..state
-                        },
-                        fills[2],
-                    ),
-                ] {
-                    let surface = bytes(draw, state);
-                    let expected = [fill.r, fill.g, fill.b].map(|v| f32::from(v) / 255.0);
-                    let last = vertex_chunks(&surface).last().unwrap();
-                    for (i, value) in expected.into_iter().enumerate() {
-                        let offset = (i + 2) * 4;
-                        assert_eq!(
-                            f32::from_ne_bytes(last[offset..offset + 4].try_into().unwrap()),
-                            value
-                        );
-                    }
-                    let focused = bytes(
-                        draw,
-                        HeaderButtonState {
-                            focused: true,
-                            ..state
-                        },
+                let state = HeaderButtonState {
+                    hovered,
+                    pressed,
+                    focused: false,
+                    enabled: true,
+                };
+                let mut surface = RectangleBatch::new(128, 128);
+                push_bar_control_surface(&mut surface, visual, state);
+                let last = vertex_chunks(&surface.bytes).last().unwrap();
+                for (i, component) in [fill.r, fill.g, fill.b].into_iter().enumerate() {
+                    let offset = (i + 2) * 4;
+                    assert_eq!(
+                        f32::from_ne_bytes(last[offset..offset + 4].try_into().unwrap()),
+                        f32::from(component) / 255.0
                     );
-                    let mut outline = RectangleBatch::new(128, 128);
-                    outline.push_rounded_outline(
-                        visual,
-                        tokens::capsule_radius(visual.height),
-                        palette::DARK.accent,
-                    );
-                    assert!(focused.starts_with(&surface));
-                    assert!(focused.ends_with(&outline.bytes));
                 }
-            }
-            assert_eq!(
-                idle,
-                bytes(
-                    push_session_label_surface,
+                let mut focused = RectangleBatch::new(128, 128);
+                push_bar_control_surface(
+                    &mut focused,
+                    visual,
                     HeaderButtonState {
-                        hovered: true,
-                        pressed: true,
                         focused: true,
-                        enabled: false,
-                    }
-                )
-            );
+                        ..state
+                    },
+                );
+                let mut outline = RectangleBatch::new(128, 128);
+                outline.push_rounded_outline(
+                    visual,
+                    tokens::capsule_radius(visual.height),
+                    palette::DARK.accent,
+                );
+                assert!(focused.bytes.starts_with(&surface.bytes));
+                assert!(focused.bytes.ends_with(&outline.bytes));
+            }
         }
     }
 
@@ -6654,7 +6557,6 @@ mod tests {
                     palette::DARK.bar_background,
                     palette::DARK.tab_idle,
                     palette::DARK.tab_hover,
-                    palette::DARK.session_pressed,
                     palette::DARK.tab_selected,
                     SceneColor {
                         r: 119,
@@ -7203,7 +7105,6 @@ mod tests {
                 palette::DARK.tab_idle,
                 palette::DARK.tab_hover,
                 palette::DARK.tab_selected,
-                palette::DARK.session_pressed,
             ] {
                 for state in [
                     AttentionState::NeedsInput,

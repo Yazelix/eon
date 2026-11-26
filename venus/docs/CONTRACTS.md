@@ -1671,14 +1671,29 @@ re-proved when that platform or feature is next touched.
   Amended on 2026-11-11 by `eon-t5boa`, approved by eon-overseer under Lucca's
   standing rule (plan v5, overseer decisions of 2026-11-10): Stack headings
   carry the right action notch too, holding VEN-C8's Close button.
+  Amended on 2026-11-26 by `eon-u788h`, approved by eon-desk:
+  activating the shown tab returns to its panes. The isolated installed
+  x86_64 Linux run at `492127bd08e2ad47e9565443d9ee23c218b8b6c1` covered
+  pointer activation. Venus tests cover AccessKit Click and Focus routing.
+  Native assistive-technology activation remains Candidate. See `eon-u788h`.
 - **Consumer:** One person using a Venus workspace supplied through EONW v5.
 - **Trigger:** The active tab selects a popup, its selection changes, or the
   person invokes an Eon-supplied catalog shortcut.
+  The person also clicks or accessibly activates the shown tab to return
+  to its panes.
 - **Result:** Workspace-only startup waits for a canonical snapshot before
   attaching its sole terminal endpoint. A selected popup replaces the entire
   pane stack while tabs remain visible and actionable. Each inactive tab's
-  selection and hidden popup instances remain Eon-owned. A popup-only tab may
-  have an empty body: no placeholder pane, attachment, resize failure, or alert.
+  selection and hidden popup instances remain Eon-owned. Clicking or
+  accessibly activating the shown tab while a popup covers its panes reveals
+  the tab's selected pane. A transient popup stops. A keep-alive popup is
+  hidden and keeps running. A keep-alive popup previously covered by a
+  transient also stays alive and hidden. On a tab without panes, including a
+  pending tab's Project chooser (EON-C18), activation leaves the popup in
+  place. Selecting a different tab shows the pane or popup that tab last
+  selected. Each tab keeps its popup selection across switches.
+  A popup-only tab may have an empty body: no placeholder pane, attachment,
+  resize failure, or alert.
   While there is no attached terminal, focus may rest on the selected tab.
   A terminal attaching in that tab returns keyboard focus to the terminal.
   A catalog shortcut names the exact tab, entry and current instance, with
@@ -1972,10 +1987,16 @@ re-proved when that platform or feature is next touched.
   relayed by eon-desk on 2026-11-14. Proved with the isolated installed 1x/2x
   x86_64 Linux Wayland candidate from render source
   `a967a13555383e110b3a1fc7c78ae3a6065d63b1` (`eon-wuau8.9`).
+  Amended on 2026-11-26 by `eon-u788h`, approved by eon-desk:
+  the session label is read-only with passive hover. See `eon-u788h` for
+  the 1280×800 installed x86_64 Linux capture and pointer observation at
+  `492127bd08e2ad47e9565443d9ee23c218b8b6c1`, and the Venus tests for its
+  static AccessKit node and keyboard traversal.
 - **Consumer:** One person using a Venus surface controlled by a full Eon
   workspace.
 - **Trigger:** The person points at, focuses, or activates the session header;
-  uses the Eon icon, session label, New tab, Keyboard shortcuts, or active-tab Close;
+  hovers the session label or uses the Eon icon, New tab, Keyboard shortcuts,
+  or active-tab Close;
   scrolls the tab region; or left-presses its empty drag region.
 - **Result:** The existing session tab strip remains one row at its existing
   height. Tabs keep their filled pills. Tab pills and the quota, CPU, RAM and disk widgets share
@@ -2038,19 +2059,14 @@ re-proved when that platform or feature is next touched.
   it. It reads the shown session's name, or its `sN` when unnamed, then
   ` N/M` when M ≥ 2, where N is its 1-based position in window order and M
   the count. The name is fitted to a tab's widest text, and ` N/M` stays
-  whole. It draws like the widgets, a filled capsule with primary text. Its
-  leading position, session name and count, and session-picker action
-  distinguish it from the tabs. Hover uses the tab hover fill; press uses a
-  separately owned quieter fill. Keyboard focus adds the mint outline.
-  A left press and release on it while the
-  presentation is current, or Enter or Space after Tab focuses it, invokes the
-  snapshot's `sessions` popup entry as that entry's key does. Its tooltip is
-  that entry's label and any chord, such as `Sessions — Alt+Shift+S`; it shares
-  the header controls' keyboard-focus behavior and precedes the tab pills in
-  Tab order. Without that entry it is inert text with no hover,
-  focus, tooltip or action. Its AccessKit node is a button, or a label while
-  inert, named `Session NAME, N of M` with the scene's rectangle. While
-  another session's `attention` is needs input, the needs-input badge (◆)
+  whole. It draws as a read-only filled capsule with primary text and no button
+  outline. Hover shows the configured `sessions` entry's label and available
+  shortcut, for example `Sessions — Alt+Shift+S`. With the shortcut unbound or
+  input locked, hover shows the entry's label alone. With the entry disabled,
+  there is no tooltip. The AccessKit node is static text with the scene's
+  rectangle and the existing accessible name, such as `Session NAME, N of M`.
+  The label has no Click or Focus actions and is skipped by Tab and Shift+Tab.
+  While another session's `attention` is needs input, the needs-input badge (◆)
   sits at the label's corner as on a tab, also while the agent sidebar is
   visible, without moving the label or the tabs, and the accessible name ends
   with `, another session needs input`; a change only to another

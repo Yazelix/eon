@@ -77,12 +77,10 @@ palette_fields! {
     scrollbar_track: ScrollbarTrack = ScrollbarTrack;
     /// Resting tab and bar-widget capsule fill.
     tab_idle: TabIdle = ControlHover;
-    /// Hovered tab or session-label capsule fill.
+    /// Hovered tab capsule fill.
     tab_hover: TabHover = ChromeHighlight;
     /// Selected tab capsule fill.
     tab_selected: TabSelected = TabSelected;
-    /// Pressed session-label capsule fill.
-    session_pressed: SessionPressed = TooltipBackground;
     /// Full-emphasis titles and labels in panes, tabs, sidebar, popups and dialogs.
     primary_text: PrimaryText = PrimaryText;
     /// Other pane titles, bar readings, hints, sidebar details and dialog metadata.
@@ -245,7 +243,7 @@ macro_rules! pairs {
 }
 // Badge rows measure the existing adapter, not the unadapted source token.
 const PAIRS: &[Pair] = pairs! {
-    Raw, 4.5, PrimaryText => [BarBackground, TerminalFallback, TabIdle, TabHover, TabSelected, SessionPressed, ChromeHighlight, ControlHover, TooltipBackground, DialogBackground];
+    Raw, 4.5, PrimaryText => [BarBackground, TerminalFallback, TabIdle, TabHover, TabSelected, ChromeHighlight, ControlHover, TooltipBackground, DialogBackground];
     Raw, 4.5, SecondaryText => [BarBackground, TerminalFallback, TabIdle, ChromeHighlight, ControlHover, DialogBackground];
     Raw, 4.5, TertiaryText => [TerminalFallback, ChromeHighlight, DialogBackground];
     Raw, 4.5, PaneId => [BarBackground, TerminalFallback, TabIdle, TabHover];
@@ -261,20 +259,20 @@ const PAIRS: &[Pair] = pairs! {
     Raw, 4.5, ScrollbackText => [ScrollbackPillHeader, ScrollbackPillOverlay];
     Raw, 4.5, NoticeText => [NoticeBackground];
     Raw, 3.0, CardOutline => [BarBackground, TabIdle, TerminalFallback, DialogBackground];
-    Raw, 3.0, Accent => [BarBackground, TerminalFallback, TabIdle, TabHover, TabSelected, SessionPressed, ChromeHighlight, ControlHover, DialogBackground];
+    Raw, 3.0, Accent => [BarBackground, TerminalFallback, TabIdle, TabHover, TabSelected, ChromeHighlight, ControlHover, DialogBackground];
     Raw, 3.0, DialogScrollThumb => [ScrollbarTrack, DialogBackground, TerminalFallback];
     Raw, 3.0, HyperlinkOutline => [TerminalFallback];
     Raw, 3.0, QuotaIconCodex => [TabIdle];
     Raw, 3.0, QuotaIconClaude => [TabIdle];
     Raw, 3.0, QuotaIconGoogle => [TabIdle];
     Raw, 3.0, TabSelected => [BarBackground];
-    BarPill, 3.0, AttentionNeedsInput => [BarBackground, TabIdle, TabHover, TabSelected, SessionPressed];
+    BarPill, 3.0, AttentionNeedsInput => [BarBackground, TabIdle, TabHover, TabSelected];
     Surface, 3.0, AttentionNeedsInput => [TerminalFallback, ChromeHighlight, DialogBackground];
-    BarPill, 3.0, AttentionError => [BarBackground, TabIdle, TabHover, TabSelected, SessionPressed];
+    BarPill, 3.0, AttentionError => [BarBackground, TabIdle, TabHover, TabSelected];
     Surface, 3.0, AttentionError => [TerminalFallback, ChromeHighlight, DialogBackground];
-    BarPill, 3.0, AttentionFinished => [BarBackground, TabIdle, TabHover, TabSelected, SessionPressed];
+    BarPill, 3.0, AttentionFinished => [BarBackground, TabIdle, TabHover, TabSelected];
     Surface, 3.0, AttentionFinished => [TerminalFallback, ChromeHighlight, DialogBackground];
-    BarPill, 3.0, AttentionIdle => [BarBackground, TabIdle, TabHover, TabSelected, SessionPressed];
+    BarPill, 3.0, AttentionIdle => [BarBackground, TabIdle, TabHover, TabSelected];
     Surface, 3.0, AttentionIdle => [TerminalFallback, ChromeHighlight, DialogBackground];
     Raw, 4.5, LoadNotice => [TabIdle];
     Raw, 4.5, LoadHigh => [TabIdle];
@@ -786,7 +784,6 @@ mod generated_tests {
             ("tab_idle", (30, 40, 54)),
             ("tab_hover", (40, 54, 70)),
             ("tab_selected", (79, 96, 114)),
-            ("session_pressed", (52, 72, 92)),
             ("primary_text", (239, 244, 248)),
             ("secondary_text", (162, 174, 190)),
             ("tertiary_text", (150, 160, 176)),

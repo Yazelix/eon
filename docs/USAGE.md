@@ -429,8 +429,9 @@ focus in the bar (F6), Tab reaches the icon and Enter opens it. Use arrows or
 Tab to choose, Enter to activate, and Escape to close; pressing outside also
 closes it. This window's Quit asks while a terminal is busy; another window's
 Quit always asks first. The icon keeps working with hints and the sidebar off,
-and stays reachable while tabs overflow; only a tiny width hides it. The session pill opens
-the Sessions picker, and the bottom version label names the supervising build.
+and stays reachable while tabs overflow; only a tiny width hides it. Hover the
+session label for the Sessions shortcut. The bottom version label names the
+supervising build.
 
 To inspect or stop work explicitly:
 
@@ -672,13 +673,13 @@ Configure shortcut releases in `config.toml`
   also accept `enabled = false`; `project` and `files` stay enabled and accept
   `keybinding = ""` or another `keybinding`. Unbound popups remain reachable
   through `eon popup show ENTRY` (and `eon focus uN` once open); new tabs still
-  open on quick search, and the Eon Bar session label still opens Sessions.
+  open on quick search.
   See [Popups](CONFIGURATION.md#popups) for physical-key syntax and reserved
   keys.
 - **Session number keys (`[session] number_keys`).** Set
   `number_keys = false` to pass `Alt+Shift+1` … `Alt+Shift+9` and `Alt+Shift+0`
-  to the terminal. Use `Alt+Shift+S`, the Eon Bar session label or
-  `eon session switch` to switch sessions.
+  to the terminal. Use the configured Sessions shortcut, Commands > Switch
+  session, or `eon session switch` to switch sessions.
 - **Agent sidebar toggle (`[sidebar] enabled`).** Set `enabled = false` to
   turn off the agent sidebar and pass `Alt+Shift+H` to the terminal.
   `Alt+Shift+G` keeps its usual behavior. Use `[keys] release` for
@@ -746,12 +747,11 @@ tabs, controls, pane headers, and terminal content remain ordinary targets.
 A zoomed tab shows `▣` after its name, the same Restore mark as the pane
 header button. Its accessible name says `, zoomed`.
 While the window holds two or more sessions, or its one session has a name,
-an outlined label before the tabs names the shown session, or gives its ID
-such as `s2`, followed, when there are several, by its position and the
-count, as in `notes 2/3`.
-Clicking it, or Enter after Tab focuses it, opens the Sessions picker as
-Alt+Shift+S does, and its tooltip names that key. With the Sessions popup
-turned off the label is plain text. While another session has an agent that
+a read-only label before the tabs shows the session's name or ID, such as
+`s2`. With several sessions it also shows the position and count, as in
+`notes 2/3`. Hover the label to see the configured Sessions shortcut
+(Alt+Shift+S by default). Open the picker with that shortcut or
+Commands > Switch session. While another session has an agent that
 needs input, a ◆ badge sits on the label's corner, also while the sidebar is
 shown, and its accessible name adds `, another session needs input`. A long
 name is shortened while the position stays whole; quota chips hide before the
@@ -970,6 +970,14 @@ stop there and Alt+Shift+H hides it. The popup's button has no keyboard stop.
 Most popups still hide on their own shortcut; Sessions' key confirms its
 selection instead, and quick search and Files switch to each other. Screen
 readers list `Hide popup <name>` and `Hide agent sidebar` as buttons.
+
+Click the shown tab to return to its panes while a popup is open. Transient
+popups such as Sessions, Commands and Anima close. Keep-alive popups such as
+Agent, Files and Git keep running out of view. The Project chooser stays
+open on a pending tab until you choose or dismiss it. Switching to another
+tab and back preserves each tab's popup selection. From the CLI, use
+`eon popup hide POPUP` to dismiss a specific popup. If it is covering
+another popup, use `eon focus PANE` to return directly to a pane.
 
 Each Stack tab has one Close button (`×`), in the same right notch when
 `heading = "notch"`; the label fits to its left. Every Stack shows it unless a
@@ -1277,7 +1285,7 @@ line points agents to `eon --skill`.
 | `eon tab create [--json] [--no-focus] --dir DIR [-- COMMAND [ARGS...]]` | Create a tab at DIR without quick search, optionally running an exact command from a calling terminal; `--no-focus` preserves the active tab, selection and popup. The JSON reply names the new tab and its pane in `created`, as `{"tab": "tN", "pane": "pN"}` |
 | `eon tab close TAB [--yes] [--json]` | Close any tab of the addressed session without changing the active tab, selection or shown popup; busy closes ask first, as described after this table. The final tab quits the window, or closes the session while others remain, asking first from a terminal |
 | `eon tab directory TAB [--json] -- DIRECTORY` | Set a tab's directory for future terminals; on a pending tab, use DIRECTORY as quick search would: start its first terminal there and hide its Files |
-| `eon tab switch TAB [--json]` | Make tab TAB the active tab of the session, as clicking it does; from an Eon terminal in a hidden session, its active tab changes and it stays hidden. Desktop focus stays where it is. A TAB that is not live exits 3 (`unknown-tab`) |
+| `eon tab switch TAB [--json]` | Make tab TAB active in the addressed session and restore its selection. Selecting the active tab preserves its shown popup. From an Eon terminal in a hidden session, the session stays hidden. Desktop focus stays where it is. A TAB that is no longer live exits 3 (`unknown-tab`) |
 | `eon tab move left\|right [--json]` | Move the active tab, or the calling terminal's tab, one position |
 | `eon pane create [--json] [--no-focus] [--tab TAB]` | Create a pane in the active tab's selected column, or in the calling pane's column; with `--no-focus`, the tab's selected pane and any shown popup stay as they are. With `--tab TAB`, the pane goes to tab TAB of the same session instead, and the active tab stays as it is. The JSON reply names the new pane and its tab in `created`, as `{"tab": "tN", "pane": "pN"}` |
 | `eon pane create [--json] [--no-focus] [--tab TAB] -- COMMAND...` | From an Eon terminal, run COMMAND exactly as given (no shell) in a new pane of the caller's column, or of tab TAB, at that tab's directory, with `--no-focus` and `created` as above; refused with exit 1 outside an Eon terminal |

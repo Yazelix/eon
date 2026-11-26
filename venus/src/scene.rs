@@ -405,12 +405,10 @@ fn tab_labels(index: usize, tab_count: usize, directory: &[u8]) -> (String, Stri
     )
 }
 
-/// One action in the native Eon workspace header: the workspace label, while it opens the
-/// workspace picker, or a fixed control.
+/// One action in the native Eon workspace header.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceHeaderControl {
     WindowMenu,
-    Workspaces,
     NewTab,
     Shortcuts,
     CloseTab,
@@ -423,8 +421,6 @@ impl WorkspaceHeaderControl {
         use eon_workspace_protocol::shortcuts::{Action, Platform, PopupPolicy, shortcut};
         let (label, action) = match self {
             Self::WindowMenu => return "Window menu".into(),
-            // The workspace label names itself from its popup entry.
-            Self::Workspaces => return String::new(),
             Self::NewTab => ("New tab", Action::CreateTab),
             Self::Shortcuts => ("Keyboard shortcuts", Action::ToggleViewer),
             Self::CloseTab => ("Close tab", Action::CloseTab),
@@ -448,7 +444,6 @@ impl WorkspaceHeaderControl {
     pub(crate) fn glyph(self) -> &'static str {
         match self {
             Self::WindowMenu => "",
-            Self::Workspaces => "",
             Self::NewTab => "+",
             Self::Shortcuts => "?",
             Self::CloseTab => "×",
@@ -556,8 +551,7 @@ pub(crate) struct WorkspaceNameLabel {
     pub(crate) rect: SceneRect,
     pub(crate) label: String,
     pub(crate) accessible_label: String,
-    /// The `workspaces` popup entry's label and chord, while that entry makes the label open
-    /// the workspace picker; without it the label is inert.
+    /// The enabled `sessions` popup entry's label and any available chord, shown on hover.
     pub(crate) tooltip: Option<String>,
     /// The needs-input badge while another workspace needs input.
     pub(crate) badge: Option<TabBadge>,
@@ -711,8 +705,7 @@ pub struct EonBar<'a> {
     pub now: Option<&'a jiff::Zoned>,
     /// Per-window quota reset history used to drop carried usage after mid-window reset moves.
     pub quota_pace: Option<&'a QuotaPaceHistory>,
-    /// The `workspaces` popup entry's label and chord, while Eon configures that entry; the
-    /// workspace label then opens it.
+    /// Hover text for the read-only session label when the `sessions` popup is enabled.
     pub workspace_picker: Option<&'a str>,
 }
 
@@ -764,6 +757,7 @@ impl LocalClock {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WorkspaceHit<'a> {
     Tab(&'a str),
+    WorkspaceLabel,
     Quota(usize),
     Version,
     Cpu,
@@ -5101,14 +5095,12 @@ impl WorkspaceScene {
                 return Some(WorkspaceHit::Tab(&tab.id));
             }
         }
-        // An inert workspace label is no target.
-        if self.has_control(WorkspaceHeaderControl::Workspaces)
-            && self
-                .workspace_label
-                .as_ref()
-                .is_some_and(|label| label.rect.contains(x, y))
+        if self
+            .workspace_label
+            .as_ref()
+            .is_some_and(|label| label.tooltip.is_some() && label.rect.contains(x, y))
         {
-            return Some(WorkspaceHit::Control(WorkspaceHeaderControl::Workspaces));
+            return Some(WorkspaceHit::WorkspaceLabel);
         }
         for control in &self.controls {
             if control.rect.contains(x, y) {
@@ -5211,18 +5203,11 @@ impl WorkspaceScene {
             .map(|_| WorkspaceHit::Terminal)
     }
 
-    /// Whether `kind` shows and takes input; the workspace label does only while its popup
-    /// entry exists.
+    /// Whether `kind` shows and takes input.
     #[must_use]
     pub fn has_control(&self, kind: WorkspaceHeaderControl) -> bool {
         if kind == WorkspaceHeaderControl::WindowMenu {
             return self.window_menu.is_some();
-        }
-        if kind == WorkspaceHeaderControl::Workspaces {
-            return self
-                .workspace_label
-                .as_ref()
-                .is_some_and(|label| label.tooltip.is_some());
         }
         self.controls
             .iter()
