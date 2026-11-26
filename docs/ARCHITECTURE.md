@@ -27,6 +27,13 @@ seam.
 | Eon | Eon orchestrator | Eon and eonbase assembly, version, defaults, component selection, updates, integration checks, distribution | In-tree subsystems, exact external revisions, and their declared artifacts |
 | Eon (`runtime/`) | Runtime library and EONW | Invocation, terminal lifecycle, session topology, strict configuration parsing, generation identity and canonical EONW codecs | In-tree runtime and canonical codec packages |
 
+Venus's UI host is moving from its native host to Eon's Rune fork
+(`Yazelix/eon-rune`, epic `eon-yp6vg`). Today Rune ships behind the non-default
+`candidate-rune` feature and the Linux `eon window new --rune-preview` window;
+the single switch onto Rune and removal of the native host is `eon-yp6vg.54`.
+See [Rune candidate dependency](../venus/docs/CRATES.md#rune-candidate-dependency)
+for pin, feature, and dependency details.
+
 Nova stays independent. Eon may reuse proven ideas from Nova through explicit
 contracts, but the repositories do not share release identity or require each
 other at runtime.
@@ -389,6 +396,18 @@ directory; different `XDG_STATE_HOME` values select different registries.
   with a reason. See
   [Configurability](AGENT-RULES.md#configurability). Open gaps:
   `eon-configurability-qkq8`.
+
+### Remote build execution (`eon-boat`)
+
+- **Owning surfaces:** `eon/crates/eon-boat` (Linux-only, opt-in)
+- **Owns:** `[slots.boat]` configuration validation, command-shape routing
+  (`NixGate`, `CargoBuild`, `CargoClippy`, `EonTest`, `EonDarwinClippy`),
+  remote Boat VM provisioning, up to three parallel remote leases, run
+  receipts, log and result collection, budget/teardown bounds, and VM
+  retirement
+- **Does not own:** Slot admission, local queueing, or quiet-window policy
+  (the local slot scheduler in `rota` remains the admission owner), macOS
+  execution, or product runtime state
 
 ### Nix composition
 
