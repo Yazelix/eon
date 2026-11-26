@@ -193,10 +193,18 @@ impl MetadataObserver {
 
 impl Client {
     fn attach(socket: &Path) -> TestResult<Self> {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        Self::attach_with_bounds(socket, Duration::from_secs(5), STREAM_READ_BOUND)
+    }
+
+    fn attach_with_bounds(
+        socket: &Path,
+        bound: Duration,
+        read_bound: Duration,
+    ) -> TestResult<Self> {
+        let deadline = Instant::now() + bound;
         let hello = encode_client_message(&ClientMessage::Hello)?;
         loop {
-            let stream = connect_with_timeouts(socket, deadline)?;
+            let stream = connect_with_read_bound(socket, deadline, read_bound)?;
             let mut reader = BufReader::new(stream);
             if let Err(error) = reader.get_mut().write_all(&hello) {
                 if Instant::now() >= deadline {
@@ -419,7 +427,9 @@ impl Client {
                 )
                 .into());
             }
-            match read_message(&mut self.reader)? {
+            let message = read_message(&mut self.reader)
+                .map_err(|error| format!("read while waiting for title {expected:?}: {error}"))?;
+            match message {
                 ServerMessage::Frame(frame) => {
                     self.frame = *frame;
                     frames += 1;
@@ -559,10 +569,18 @@ fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
 const STREAM_READ_BOUND: Duration = Duration::from_secs(2);
 
 fn connect_with_timeouts(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
+    connect_with_read_bound(socket, deadline, STREAM_READ_BOUND)
+}
+
+fn connect_with_read_bound(
+    socket: &Path,
+    deadline: Instant,
+    read_bound: Duration,
+) -> TestResult<UnixStream> {
     loop {
         let stream = connect_bounded(socket, deadline)?;
         match stream
-            .set_read_timeout(Some(STREAM_READ_BOUND))
+            .set_read_timeout(Some(read_bound))
             .and_then(|()| stream.set_write_timeout(Some(Duration::from_secs(2))))
         {
             Ok(()) => return Ok(stream),
@@ -1534,14 +1552,24 @@ fn conformance_c9_selection_copy_is_authoritative_bounded_and_client_scoped() ->
 
 #[test]
 fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResult {
+    const PRUNE_LINES: u32 = 1100;
+    const READ_BOUND: Duration = Duration::from_secs(10);
+
     let dir = TestDir::new("viewport")?;
     let socket = dir.0.join("orbit.sock");
+    let attach = || Client::attach_with_bounds(&socket, READ_BOUND, READ_BOUND);
     let preview = dir.0.join("preview");
     let commit = dir.0.join("commit");
     let release = dir.0.join("release");
     let clear = dir.0.join("clear");
     let pressure = dir.0.join("pressure");
     let stop = dir.0.join("stop");
+    let prune_history = dir.0.join("prune-history");
+    let row_text = "abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789";
+    let history: String = (0..PRUNE_LINES)
+        .map(|line| format!("prune-{line:04}-{row_text}\n"))
+        .collect();
+    fs::write(&prune_history, history)?;
     let script = format!(
         "stty -echo; \
          i=0; while [ \"$i\" -lt 48 ]; do printf 'history-%02d\\n' \"$i\"; i=$((i + 1)); done; \
@@ -1560,7 +1588,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
          while [ ! -e '{clear}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
          [ -e '{stop}' ] && exit; \
          printf '\\033[3J'; \
-         i=0; while [ \"$i\" -lt 1100 ]; do printf 'prune-%04d-abcdefghijklmnopqrstuvwxyz-ABCDEFGHIJKLMNOPQRSTUVWXYZ-0123456789\\n' \"$i\"; i=$((i + 1)); done; \
+         cat '{prune_history}' || exit; \
          printf '\\033]2;pruned\\033\\\\'; \
          while [ ! -e '{pressure}' ] && [ ! -e '{stop}' ]; do sleep 0.01; done; \
          [ -e '{stop}' ] && exit; \
@@ -1570,6 +1598,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
         commit = commit.display(),
         release = release.display(),
         clear = clear.display(),
+        prune_history = prune_history.display(),
         pressure = pressure.display(),
         stop = stop.display(),
     );
@@ -1583,7 +1612,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
             .spawn()?,
     );
 
-    let mut first = Client::attach(&socket)?;
+    let mut first = attach()?;
     first.wait_title("history-ready")?;
     let presented_revision = first.frame.revision;
     fs::write(&preview, b"preview")?;
@@ -1631,7 +1660,7 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     let detached = first.frame.clone();
     drop(first);
 
-    let mut second = Client::attach(&socket)?;
+    let mut second = attach()?;
     assert_eq!(second.frame, detached);
     second.request_frame(&ClientMessage::Key(KeyEvent {
         action: KeyAction::Press,
@@ -1645,7 +1674,8 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
     assert!(frame_text(&second.frame).contains("tail-after-pin"));
 
     fs::write(&clear, b"clear")?;
-    second.wait_title("pruned")?;
+    // The prune phase's hang bound scales with its PTY workload.
+    second.wait_title_within("pruned", Duration::from_millis(30) * PRUNE_LINES)?;
     second.request_frame(&ClientMessage::Resize(SurfaceSize {
         cols: 40,
         rows: 12,
@@ -1700,14 +1730,22 @@ fn authoritative_viewport_survives_detach_and_slow_reader_pressure() -> TestResu
         x: 1.0,
         y: 1.0,
     }))?;
-    let _ = second.reader.get_mut().write_all(&wheel.repeat(4096));
+    let slow = second.reader.get_mut();
+    slow.write_all(&wheel)
+        .map_err(|error| format!("start slow-reader pressure: {error}"))?;
+    slow.set_nonblocking(true)?;
+    match slow.write_all(&wheel.repeat(4095)) {
+        Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+        result => result?,
+    }
     fs::write(&pressure, b"pressure")?;
-    let mut busy = connect_with_timeouts(&socket, Instant::now() + Duration::from_secs(5))?;
+    let mut busy = connect_with_read_bound(&socket, Instant::now() + READ_BOUND, READ_BOUND)?;
     write_message(&mut busy, &ClientMessage::Hello)?;
-    assert_eq!(read_message(&mut busy)?, ServerMessage::Busy);
+    let reply = read_message(&mut busy).map_err(|error| format!("pressure contender: {error}"))?;
+    assert_eq!(reply, ServerMessage::Busy);
     drop(busy);
     drop(second);
-    let mut third = Client::attach(&socket)?;
+    let mut third = attach().map_err(|error| format!("reattach after pressure: {error}"))?;
     third.wait_title("pressure-complete")?;
 
     fs::write(&stop, b"stop")?;
