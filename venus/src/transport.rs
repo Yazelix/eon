@@ -73,6 +73,8 @@ pub enum WorkspaceEvent {
     Answered {
         ticket: u64,
         accepted: bool,
+        /// The selected popup in this invocation's delivered reply, with its session.
+        popup: Option<(String, workspace::PopupTarget)>,
     },
     /// A helper thread did not start. The workspace keeps working without it; `detail` says
     /// what is lost and goes only to Venus's diagnostics.
@@ -212,7 +214,7 @@ impl WorkspaceTransport {
 
     /// The transport refreshing every `refresh`, for tests that are not about slow answers.
     #[cfg(test)]
-    fn start_with_refresh(
+    pub(crate) fn start_with_refresh(
         socket: PathBuf,
         refresh: Duration,
         wake: impl Fn() + Send + Sync + 'static,
@@ -459,12 +461,7 @@ fn exchange_until_dropped(
         // Ended before the answer is delivered, so a slow report always precedes it.
         watch.end();
         let event = result.map_or_else(ExchangeError::into_event, WorkspaceEvent::Response);
-        let accepted = matches!(
-            event,
-            WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
-        );
-        let answered = ticket.map(|ticket| WorkspaceEvent::Answered { ticket, accepted });
-        subscription.deliver(event, answered, begun, notify);
+        subscription.deliver(event, ticket, begun, notify);
         counter = counter.wrapping_add(1);
         (action, ticket) = match receiver.recv_timeout(waits.refresh) {
             Ok((action, ticket)) => {
@@ -639,13 +636,7 @@ impl Subscription {
     /// `answered`. Eon wrote those hides before it read the exchange, so the answer holds them;
     /// one read since may have come after the answer was written, so its popup is hidden here
     /// too.
-    fn deliver(
-        &self,
-        mut event: WorkspaceEvent,
-        answered: Option<WorkspaceEvent>,
-        begun: u64,
-        notify: &Notify,
-    ) {
+    fn deliver(&self, mut event: WorkspaceEvent, ticket: Option<u64>, begun: u64, notify: &Notify) {
         // Eon writes an action's events before its reply, so applying those already readable
         // first keeps a late hide from undoing what this answer shows.
         let link = &mut self.link();
@@ -670,16 +661,35 @@ impl Subscription {
             _ => presented.snapshot = None,
         }
         // Under the lock, so a hide read meanwhile follows this answer.
-        if !(stale
-            && matches!(
-                event,
-                WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
-            ))
+        let accepted = matches!(
+            event,
+            WorkspaceEvent::Response(WorkspaceResponse::Snapshot(_))
+        );
+        let popup = if ticket.is_some()
+            && !stale
+            && let WorkspaceEvent::Response(WorkspaceResponse::Snapshot(snapshot)) = &event
         {
+            crate::model::active_popup(snapshot).map(|popup| {
+                (
+                    snapshot.workspace.clone(),
+                    workspace::PopupTarget {
+                        tab: snapshot.active_tab.clone(),
+                        instance: popup.id.clone(),
+                    },
+                )
+            })
+        } else {
+            None
+        };
+        if !(stale && accepted) {
             notify(event);
         }
-        if let Some(answered) = answered {
-            notify(answered);
+        if let Some(ticket) = ticket {
+            notify(WorkspaceEvent::Answered {
+                ticket,
+                accepted,
+                popup,
+            });
         }
     }
 
@@ -1568,7 +1578,7 @@ pub fn frame_elapsed(start: Option<u64>) -> u64 {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use eon_workspace_protocol::v51::{
         InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, Tab,
@@ -2118,6 +2128,11 @@ mod tests {
         );
         // Each action's answer is followed by its ticket; the refresh above carried none.
         for (ticket, (action, expected)) in (0..).zip(exchanges) {
+            let popup = matches!(
+                action,
+                WorkspaceAction::InvokePopup { .. } | Workspace(Focus(Left))
+            )
+            .then(shown_popup_target);
             assert_eq!(transport.send(action).unwrap(), ticket);
             // A drain between the two pushes sees only the response; the answer then wakes
             // the queue again.
@@ -2133,6 +2148,7 @@ mod tests {
                     WorkspaceEvent::Answered {
                         ticket,
                         accepted: true,
+                        popup,
                     },
                 ]
             );
@@ -2339,6 +2355,7 @@ mod tests {
                 WorkspaceEvent::Answered {
                     ticket,
                     accepted: true,
+                    popup: None,
                 },
             ]
         );
@@ -2396,6 +2413,7 @@ mod tests {
             WorkspaceEvent::Answered {
                 ticket,
                 accepted: false,
+                popup: None,
             }
         );
     }
@@ -2756,7 +2774,8 @@ mod tests {
                 snapshot_event(&workspace_snapshot()),
                 WorkspaceEvent::Answered {
                     ticket,
-                    accepted: true
+                    accepted: true,
+                    popup: None,
                 }
             ]
         );
@@ -2785,7 +2804,8 @@ mod tests {
                 WorkspaceEvent::Response(WorkspaceResponse::Failure(failure)),
                 WorkspaceEvent::Answered {
                     ticket,
-                    accepted: false
+                    accepted: false,
+                    popup: None,
                 }
             ]
         );
@@ -2825,7 +2845,8 @@ mod tests {
                 snapshot_event(&workspace_snapshot()),
                 WorkspaceEvent::Answered {
                     ticket,
-                    accepted: true
+                    accepted: true,
+                    popup: None,
                 }
             ]
         );
@@ -2855,7 +2876,8 @@ mod tests {
                 snapshot_event(&shown_popup()),
                 WorkspaceEvent::Answered {
                     ticket,
-                    accepted: true
+                    accepted: true,
+                    popup: Some(shown_popup_target()),
                 }
             ]
         );
@@ -2886,7 +2908,8 @@ mod tests {
             take(&transport, &receiver, 1),
             [WorkspaceEvent::Answered {
                 ticket,
-                accepted: true
+                accepted: true,
+                popup: None,
             }]
         );
         let (_, refresh) = eon.exchange();
@@ -2973,7 +2996,8 @@ mod tests {
                 snapshot_event(&shown_popup()),
                 WorkspaceEvent::Answered {
                     ticket,
-                    accepted: true
+                    accepted: true,
+                    popup: Some(shown_popup_target()),
                 }
             ]
         );
@@ -3053,6 +3077,7 @@ mod tests {
         let answered = WorkspaceEvent::Answered {
             ticket: 0,
             accepted: true,
+            popup: None,
         };
         assert!(events.push(first.clone()));
         for _ in 0..200 {
@@ -3128,6 +3153,16 @@ mod tests {
             events.extend(transport.drain_events());
         }
         events
+    }
+
+    fn shown_popup_target() -> (String, workspace::PopupTarget) {
+        (
+            "s1".into(),
+            workspace::PopupTarget {
+                tab: "t1".into(),
+                instance: "u1".into(),
+            },
+        )
     }
 
     fn shown_popup() -> Snapshot {
@@ -3256,14 +3291,14 @@ mod tests {
     }
 
     /// A fake Eon that sorts its clients into exchanges and subscriptions.
-    struct FakeEon {
+    pub(crate) struct FakeEon {
         listener: UnixListener,
         exchanges: VecDeque<(UnixStream, WorkspaceAction)>,
         subscriptions: VecDeque<UnixStream>,
     }
 
     impl FakeEon {
-        fn new(listener: UnixListener) -> Self {
+        pub(crate) fn new(listener: UnixListener) -> Self {
             listener.set_nonblocking(true).unwrap();
             Self {
                 listener,
@@ -3307,7 +3342,7 @@ mod tests {
             }
         }
 
-        fn exchange(&mut self) -> (UnixStream, WorkspaceAction) {
+        pub(crate) fn exchange(&mut self) -> (UnixStream, WorkspaceAction) {
             self.until(|eon| eon.exchanges.pop_front())
         }
 
@@ -3315,7 +3350,7 @@ mod tests {
             self.until(|eon| eon.subscriptions.pop_front())
         }
 
-        fn answer_refresh(&mut self, snapshot: &Snapshot) {
+        pub(crate) fn answer_refresh(&mut self, snapshot: &Snapshot) {
             let (mut stream, action) = self.exchange();
             assert_eq!(
                 action,
@@ -3478,7 +3513,7 @@ mod tests {
         Ok(())
     }
 
-    fn workspace_snapshot() -> Snapshot {
+    pub(crate) fn workspace_snapshot() -> Snapshot {
         Snapshot {
             focus: None,
             released_shortcuts: Default::default(),
@@ -3640,13 +3675,13 @@ mod tests {
         }
     }
 
-    struct TestSocket {
+    pub(crate) struct TestSocket {
         directory: PathBuf,
-        path: PathBuf,
+        pub(crate) path: PathBuf,
     }
 
     impl TestSocket {
-        fn new() -> Self {
+        pub(crate) fn new() -> Self {
             let nonce = SystemTime::now()
                 .duration_since(SystemTime::UNIX_EPOCH)
                 .unwrap()

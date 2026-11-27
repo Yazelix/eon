@@ -1508,6 +1508,7 @@ fn quit_progress_follows_workspace_events() {
     let answered = |ticket| WorkspaceEvent::Answered {
         ticket,
         accepted: false,
+        popup: None,
     };
     assert_eq!(quit.on_workspace(Some(&idle), &answered(4)), None);
     assert_eq!(quit, QuitProgress::Stopping(5));
@@ -1566,6 +1567,7 @@ fn a_stack_close_answer_is_the_confirm_before_its_ticket() {
     let answered = |ticket| WorkspaceEvent::Answered {
         ticket,
         accepted: false,
+        popup: None,
     };
     let pending = |consented| {
         Some(PendingClose {
@@ -1636,7 +1638,8 @@ fn a_stack_close_answer_is_the_confirm_before_its_ticket() {
                     answer,
                     WorkspaceEvent::Answered {
                         ticket: 7,
-                        accepted: true
+                        accepted: true,
+                        popup: None,
                     }
                 ]
             ),
@@ -1697,6 +1700,7 @@ fn a_window_focus_change_forgets_a_pending_stack_close() {
             &WorkspaceEvent::Answered {
                 ticket: 7,
                 accepted: false,
+                popup: None,
             },
         );
         (forgotten, ask)
@@ -2019,6 +2023,7 @@ fn a_degraded_report_reaches_the_diagnostics_and_nothing_else() {
         WorkspaceEvent::Answered {
             ticket: 1,
             accepted: true,
+            popup: None,
         },
         WorkspaceEvent::Unavailable {
             notice: "Cannot reach Eon.".into(),

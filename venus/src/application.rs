@@ -17,8 +17,8 @@ use crate::{Result, launch::LaunchArguments};
 use crate::{WindowCommand, external_command};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v51::{
-    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, FocusReport, PopupEntry,
-    Sidebar, Snapshot, WorkspaceAction as CommonAction,
+    Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, FocusReport, InvokeIntent,
+    PopupEntry, PopupTarget, Sidebar, Snapshot, WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
     PlacementState,
@@ -111,19 +111,7 @@ impl BenchInput {
         }
         match event {
             WindowEvent::KeyboardInput { event, .. } => {
-                let class = if matches!(
-                    event.physical_key,
-                    PhysicalKey::Code(
-                        KeyCode::ControlLeft
-                            | KeyCode::ControlRight
-                            | KeyCode::ShiftLeft
-                            | KeyCode::ShiftRight
-                            | KeyCode::AltLeft
-                            | KeyCode::AltRight
-                            | KeyCode::SuperLeft
-                            | KeyCode::SuperRight
-                    )
-                ) {
+                let class = if modifier_key(event.physical_key) {
                     "modifier"
                 } else {
                     "key"
@@ -142,6 +130,22 @@ impl Drop for BenchInput {
     fn drop(&mut self) {
         bench_trace("input_end", "");
     }
+}
+
+fn modifier_key(key: PhysicalKey) -> bool {
+    matches!(
+        key,
+        PhysicalKey::Code(
+            KeyCode::ControlLeft
+                | KeyCode::ControlRight
+                | KeyCode::ShiftLeft
+                | KeyCode::ShiftRight
+                | KeyCode::AltLeft
+                | KeyCode::AltRight
+                | KeyCode::SuperLeft
+                | KeyCode::SuperRight
+        )
+    )
 }
 
 use eon_workspace_protocol::shortcuts::{Platform as NativePlatform, ReleasedShortcuts};
@@ -1140,6 +1144,28 @@ impl PendingPaneAction {
     }
 }
 
+/// A Sessions key's opening request, then its exact reply until the next key.
+struct PendingPicker {
+    workspace: String,
+    tab: String,
+    ticket: Option<u64>,
+    // The selected instance that Toggle addressed while waiting, then the reply's selection.
+    instance: Option<String>,
+    confirm: bool,
+}
+
+impl PendingPicker {
+    fn in_scope(&self, snapshot: &Snapshot) -> bool {
+        !snapshot.input_locked
+            && snapshot.workspace == self.workspace
+            && snapshot.active_workspace == self.workspace
+            && snapshot.active_tab == self.tab
+            && (self.ticket.is_some()
+                || active_popup(snapshot)
+                    .is_some_and(|popup| self.instance.as_ref() == Some(&popup.id)))
+    }
+}
+
 /// A Stack close between its request and Runtime's answer (VEN-C8).
 #[derive(Debug, PartialEq)]
 struct PendingClose {
@@ -1828,6 +1854,7 @@ struct Application {
     pending_pane: Option<PendingPaneAction>,
     /// A Stack's Close awaiting Runtime's answer, which opens its prompt (VEN-C8).
     pending_close: Option<PendingClose>,
+    pending_picker: Option<PendingPicker>,
     /// Finished event-loop turns, which the Stack close prompt's confirmation delay counts.
     turns: u64,
     /// The next sidebar label change.
@@ -1990,6 +2017,7 @@ impl Application {
             attention_jump: None,
             pending_pane: None,
             pending_close: None,
+            pending_picker: None,
             turns: 0,
             next_age: None,
             next_dialog_age: None,
@@ -2812,10 +2840,11 @@ impl Application {
         true
     }
 
-    /// Local input retires a pane action and a Stack close that still await their answers.
+    /// An intervening interaction retires actions waiting on Runtime.
     fn forget_pending(&mut self) {
         self.pending_pane = None;
         self.pending_close = None;
+        self.pending_picker = None;
     }
 
     /// Opens or closes a dialog, reporting the terminal's focus change with it.
@@ -3060,9 +3089,18 @@ impl Application {
     /// Offers a key to Venus's own shortcuts in precedence order; true when one took it, so
     /// it reaches no terminal.
     fn handle_shortcut_key(&mut self, event: &ShortcutKey) -> bool {
-        if event.state == ElementState::Pressed {
+        let pending_picker = if event.state == ElementState::Pressed {
+            let pending = self.pending_picker.take();
             self.forget_pending();
-        }
+            if event.repeat || modifier_key(event.physical_key) {
+                self.pending_picker = pending;
+                None
+            } else {
+                pending
+            }
+        } else {
+            None
+        };
         let locked = self.input_locked();
         self.input
             .suppresses_retired_key(event.physical_key, event.state, event.repeat)
@@ -3076,7 +3114,7 @@ impl Application {
             || self.handle_shortcut_viewer_key(event)
             || (locked && self.dialog_open())
             || (!locked && self.handle_link_copy(event.physical_key, event.state, event.repeat))
-            || self.handle_workspace_key(event)
+            || self.handle_workspace_key(event, pending_picker)
     }
 
     /// Runtime toggles the current value, which may have changed since Venus last read it.
@@ -4498,7 +4536,13 @@ impl Application {
         let quit = self
             .quit
             .on_workspace(self.workspace_model.snapshot(), &event);
-        if let WorkspaceEvent::Answered { ticket, accepted } = event {
+        if let WorkspaceEvent::Answered {
+            ticket,
+            accepted,
+            popup,
+        } = event
+        {
+            self.answer_picker(ticket, popup);
             self.settle_pane_action(Some((ticket, accepted)));
             // A refused action's notice is new even when it repeats a poll's or an earlier one.
             // Runtime's question about a Stack close refuses nothing: it opens the prompt.
@@ -4521,6 +4565,12 @@ impl Application {
             }
             _ => None,
         };
+        if self.pending_picker.as_ref().is_some_and(|pending| {
+            next.is_some_and(|snapshot| !pending.in_scope(snapshot))
+                || matches!(event, WorkspaceEvent::Unavailable { .. })
+        }) {
+            self.pending_picker = None;
+        }
         let received_snapshot = next.is_some();
         let snapshot_changed = received_snapshot && current != next;
         let changes = current.zip(next).filter(|(before, after)| before != after);
@@ -4911,7 +4961,92 @@ impl Application {
         }
     }
 
-    fn handle_workspace_key(&mut self, event: &ShortcutKey) -> bool {
+    fn picker_key(&mut self, action: WorkspaceAction, pending: Option<PendingPicker>) {
+        let Some(snapshot) = self.workspace_model.snapshot() else {
+            return;
+        };
+        let WorkspaceAction::InvokePopup { tab, intent, .. } = &action else {
+            return;
+        };
+        let selected =
+            active_popup(snapshot).filter(|popup| popup.entry == shortcuts::WORKSPACES_ENTRY);
+        if let Some(mut pending) = pending
+            && pending.in_scope(snapshot)
+            && terminal_focused(self.window_focused, self.workspace_focus)
+        {
+            if pending.ticket.is_some() {
+                pending.confirm = true;
+                self.pending_picker = Some(pending);
+                return;
+            }
+            if *intent == InvokeIntent::Toggle {
+                // The opening reply supplied this target even if its first frame is pending.
+                self.queue_workspace(action);
+                return;
+            }
+        }
+        if !self.presentation.has_presented_geometry() {
+            return;
+        }
+        let mut pending = PendingPicker {
+            workspace: snapshot.workspace.clone(),
+            tab: tab.clone(),
+            ticket: None,
+            instance: selected
+                .filter(|_| *intent == InvokeIntent::Toggle)
+                .map(|popup| popup.id.clone()),
+            confirm: false,
+        };
+        if let Some(ticket) = self.queue_workspace_ticket(action) {
+            self.set_workspace_focus(WorkspaceFocus::Terminal);
+            pending.ticket = Some(ticket);
+            self.pending_picker = Some(pending);
+        }
+    }
+
+    fn answer_picker(&mut self, ticket: u64, popup: Option<(String, PopupTarget)>) {
+        let Some(mut pending) = self
+            .pending_picker
+            .take_if(|pending| pending.ticket == Some(ticket))
+        else {
+            return;
+        };
+        let Some((workspace, target)) = popup else {
+            return;
+        };
+        if pending.workspace != workspace
+            || pending.tab != target.tab
+            || pending.instance.as_ref() == Some(&target.instance)
+            || !terminal_focused(self.window_focused, self.workspace_focus)
+            || self.dialog_open()
+            || !self.workspace_model.snapshot().is_some_and(|snapshot| {
+                pending.in_scope(snapshot)
+                    && active_popup(snapshot).is_some_and(|popup| {
+                        popup.entry == shortcuts::WORKSPACES_ENTRY && popup.id == target.instance
+                    })
+            })
+        {
+            return;
+        }
+        if pending.confirm {
+            self.queue_workspace(WorkspaceAction::InvokePopup {
+                tab: target.tab,
+                entry: shortcuts::WORKSPACES_ENTRY.into(),
+                expected_instance: Some(target.instance),
+                intent: InvokeIntent::Toggle,
+            });
+        } else {
+            pending.ticket = None;
+            pending.instance = Some(target.instance);
+            self.pending_picker = Some(pending);
+        }
+    }
+
+    fn handle_workspace_key(
+        &mut self,
+        event: &ShortcutKey,
+        pending_picker: Option<PendingPicker>,
+    ) -> bool {
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return false;
         };
@@ -5001,7 +5136,6 @@ impl Application {
                         || action.is_some()),
         ) {
             if event.state == ElementState::Pressed {
-                self.forget_pending();
                 if opens_window && !event.repeat {
                     self.open_new_window();
                 } else if quits && !event.repeat {
@@ -5030,8 +5164,16 @@ impl Application {
                     self.set_workspace_focus(WorkspaceFocus::Terminal);
                 } else if let Some(action) = action
                     .filter(|action| sends_workspace_shortcut(action, event.state, event.repeat))
-                    && self.presentation.has_presented_geometry()
                 {
+                    if matches!(&action, WorkspaceAction::InvokePopup { entry, .. }
+                        if entry == shortcuts::WORKSPACES_ENTRY)
+                    {
+                        self.picker_key(action, pending_picker);
+                        return true;
+                    }
+                    if !self.presentation.has_presented_geometry() {
+                        return true;
+                    }
                     if opens_column && !self.fits_another_column() {
                         if self.workspace_model.reject_action(format!(
                             "No room for another column: each needs at least \
@@ -6689,6 +6831,9 @@ impl Application {
         if local_input(&event) {
             self.pending_pane = None;
         }
+        if local_input(&event) || matches!(event, WindowEvent::Focused(_)) {
+            self.pending_picker = None;
+        }
         PendingClose::on_window(&mut self.pending_close, &event);
         let hosted = self
             .window
@@ -7473,6 +7618,7 @@ impl Application {
                         // As `forget_pending`, by field: `state` borrows the window.
                         self.pending_pane = None;
                         self.pending_close = None;
+                        self.pending_picker = None;
                         let target = state.native.accessibility().and_then(|(accessibility, _)| {
                             accessibility.action_target(request.target_node, request.action)
                         });

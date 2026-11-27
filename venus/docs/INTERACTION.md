@@ -140,6 +140,10 @@ controls drags an undecorated window. With multiple sessions or one named
 session, a read-only label leads the tabs with the shown session's name or
 `sN` and, with several, its `N/M` position. Hover it for the Sessions
 shortcut. Open Sessions with that shortcut or Commands > Switch session.
+For the configured Sessions key, Venus uses the opening request's ticket and
+its delivered snapshot to bind one early confirmation to the selected popup
+instance. That exact key target also works before the next redraw. Runtime
+checks the instance and decides how the popup handles the key.
 A final close shows the close prompt
 whatever the session count; while other sessions remain, it says it closes
 the session, by name or `sN`, and its footer reads `Enter Close`.

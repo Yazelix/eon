@@ -7,6 +7,138 @@ use eon_workspace_protocol::shortcuts::PAIRED_ROWS;
 use eon_workspace_protocol::v51::{InvokeIntent, Side, Tab};
 
 #[test]
+fn rapid_sessions_key_confirms_the_exact_picker_before_its_first_paint() {
+    use crate::transport::tests::{FakeEon, TestSocket, workspace_snapshot};
+    use eon_workspace_protocol::v51 as workspace;
+    use std::{os::unix::net::UnixListener, sync::mpsc};
+    use winit::keyboard::ModifiersState;
+
+    for (early, opens, already_shown, between) in [
+        (true, true, false, None),
+        (false, true, false, None),
+        (true, false, false, None),
+        (true, true, true, None),
+        (true, true, false, Some(KeyCode::AltLeft)),
+        (true, true, false, Some(KeyCode::KeyU)),
+    ] {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let (wake, waits) = mpsc::channel();
+        let mut app = Application::new(
+            crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
+                .unwrap(),
+            EventSink::Host(Arc::new(|_| true)),
+        );
+        app.workspace_transport = Some(WorkspaceTransport::start_with_refresh(
+            socket.path.clone(),
+            Duration::from_secs(30),
+            move || {
+                let _ = wake.send(());
+            },
+        ));
+        app.window_focused = true;
+        app.input
+            .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
+        let mut empty = workspace_snapshot();
+        let mut popup = empty.tabs[0].popups.pop().unwrap();
+        empty.entries[0].id = "sessions".into();
+        empty.entries[0].shortcut = PopupKey::Bound(Shortcut {
+            modifiers: workspace::ALT | workspace::SHIFT,
+            key: "KeyS".into(),
+        });
+        popup.entry = "sessions".into();
+        let tab = empty.active_tab.clone();
+        let instance = popup.id.clone();
+        let mut opened = empty.clone();
+        opened.tabs[0].selected_popup = Some(instance.clone());
+        opened.tabs[0].popups.push(popup);
+        let initial = if already_shown { &opened } else { &empty };
+        app.workspace_model
+            .apply(workspace::Response::Snapshot(initial.clone()));
+        app.presentation.publish(app.presentation.candidate(None));
+
+        let reply = |stream: &mut UnixStream, response| {
+            stream
+                .write_all(&workspace::encode_response(&response).unwrap())
+                .unwrap();
+        };
+        eon.answer_refresh(initial);
+        let press = |app: &mut Application| {
+            for state in [ElementState::Pressed, ElementState::Released] {
+                assert!(app.handle_shortcut_key(&ShortcutKey {
+                    physical_key: PhysicalKey::Code(KeyCode::KeyS),
+                    state,
+                    repeat: false,
+                }));
+            }
+        };
+        let invoke = |expected_instance| WorkspaceAction::InvokePopup {
+            tab: tab.clone(),
+            entry: "sessions".into(),
+            expected_instance,
+            intent: InvokeIntent::Toggle,
+        };
+        press(&mut app);
+        let (mut opening, action) = eon.exchange();
+        assert_eq!(action, invoke(already_shown.then(|| instance.clone())));
+        if early {
+            if let Some(code) = between {
+                assert!(!app.handle_shortcut_key(&ShortcutKey {
+                    physical_key: PhysicalKey::Code(code),
+                    state: ElementState::Pressed,
+                    repeat: false,
+                }));
+                // A fresh invocation needs geometry, while a retained follow-up can wait.
+                app.presentation.invalidate();
+            }
+            press(&mut app);
+            if !already_shown && between.is_none() {
+                press(&mut app);
+            }
+        }
+        reply(
+            &mut opening,
+            if opens {
+                workspace::Response::Snapshot(opened.clone())
+            } else {
+                workspace::Response::Failure(workspace::Failure {
+                    code: "popup-start".into(),
+                    detail: "test refused the opening".into(),
+                })
+            },
+        );
+        loop {
+            waits.recv_timeout(super::PEER_TIMEOUT).unwrap();
+            let events = app.drain_workspace_events();
+            let answered = events
+                .iter()
+                .any(|event| matches!(event, WorkspaceEvent::Answered { ticket: 0, .. }));
+            app.apply_workspace_events(events);
+            if answered {
+                break;
+            }
+        }
+        if !early {
+            app.presentation.invalidate();
+            press(&mut app);
+        }
+        let sentinel = WorkspaceAction::Workspace(CommonAction::FocusId("pane-1".into()));
+        assert!(app.queue_workspace(sentinel.clone()));
+        if opens && !already_shown && between != Some(KeyCode::KeyU) {
+            let (mut confirmation, action) = eon.exchange();
+            assert_eq!(action, invoke(Some(instance)));
+            reply(
+                &mut confirmation,
+                workspace::Response::Snapshot(empty.clone()),
+            );
+        }
+        let (mut last, action) = eon.exchange();
+        assert_eq!(action, sentinel);
+        reply(&mut last, workspace::Response::Snapshot(empty));
+    }
+}
+
+#[test]
 fn new_window_shortcut_invokes_the_supplied_eon_command() {
     let native = |path: &Path| WindowCommand::new(path.into(), []);
     use std::{fs, os::unix::fs::PermissionsExt, time::SystemTime};

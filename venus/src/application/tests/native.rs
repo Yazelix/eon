@@ -3021,6 +3021,7 @@ fn a_close_request_quits_as_alt_shift_q_does() {
         app.handle_workspace(WorkspaceEvent::Answered {
             ticket,
             accepted: false,
+            popup: None,
         });
         let mut eonbase = idle;
         eonbase.running = None;
@@ -3222,6 +3223,7 @@ fn a_close_request_detaches_after_a_failed_stop() {
         app.handle_workspace(WorkspaceEvent::Answered {
             ticket,
             accepted: false,
+            popup: None,
         });
         show(
             app,
@@ -4038,6 +4040,7 @@ fn pane_actions_wait_for_selection_and_cancel_on_local_input() {
                 app.handle_workspace(WorkspaceEvent::Answered {
                     ticket,
                     accepted: true,
+                    popup: None,
                 });
                 assert_eq!(
                     app.zoomed(),

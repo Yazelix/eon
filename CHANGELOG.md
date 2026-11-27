@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Pressing the Sessions shortcut twice confirms the picker even when the
+  second key arrives before the opening reply or its first redraw
+  (`eon-qx62f`).
 - Orbit rejects incomplete launch options before starting a terminal, even
   when another launch flag follows the missing value (`eon-k77x4`).
 - When a fresh window's first tab cannot start its Files popup, so it opens a
