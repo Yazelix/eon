@@ -5,7 +5,7 @@ use crate::{
 };
 use std::{
     fs,
-    os::unix::fs::{PermissionsExt, symlink},
+    os::unix::fs::{MetadataExt, PermissionsExt, symlink},
     time::{Duration, Instant},
 };
 
@@ -92,6 +92,83 @@ fn hold(runtime: &Runtime, at: Stage) -> (Worker, Receiver<()>, mpsc::Sender<()>
     })
     .unwrap();
     (worker, waiting, release)
+}
+
+#[test]
+fn temporary_popup_ids_are_persisted_without_replay_slots() {
+    let source = crate::workspace::checkpoint::tests::source_a();
+    let snapshots = source.set.snapshots();
+    let popup_terminal = |pending, entry: &str| {
+        snapshots
+            .iter()
+            .flat_map(|snapshot| &snapshot.tabs)
+            .filter(|tab| tab.pending == pending)
+            .flat_map(|tab| &tab.popups)
+            .find(|popup| popup.entry == entry)
+            .unwrap()
+            .session
+            .as_str()
+    };
+    let picker = popup_terminal(true, "files");
+    let transient = popup_terminal(false, "commands");
+    let persistent = popup_terminal(false, "agent");
+    assert_ne!(picker, transient);
+
+    let runtime = Runtime::new();
+    let (core, _) = source.capture().unwrap();
+    submit_and_wait(&mut runtime.worker(), core).unwrap();
+    let saved = read(&runtime.path, &runtime.original.header)
+        .unwrap()
+        .unwrap();
+    let tabs = saved.core.sessions.iter().flat_map(|session| &session.tabs);
+    assert!(
+        tabs.clone()
+            .flat_map(|tab| &tab.popups)
+            .any(|popup| { popup.entry == "agent" && popup.run.terminal_id == persistent })
+    );
+    for terminal in [picker, transient] {
+        let number = crate::checkpoint::number(terminal, "terminal-", "terminal").unwrap();
+        assert!(saved.core.terminal_id_high_water >= number, "{terminal}");
+        for tab in tabs.clone() {
+            assert!(
+                tab.popups
+                    .iter()
+                    .all(|popup| popup.run.terminal_id != terminal)
+            );
+            assert!(
+                tab.columns
+                    .iter()
+                    .flat_map(|column| &column.panes)
+                    .all(|pane| pane.run.terminal_id != terminal)
+            );
+        }
+    }
+    fs::remove_dir_all(source.root).unwrap();
+}
+
+#[test]
+fn replacing_checkpoint_preserves_existing_archive_inode_and_bytes() {
+    let runtime = Runtime::new();
+    let old_bytes = runtime.seed();
+    let old = fs::metadata(&runtime.path).unwrap();
+    let archive = runtime
+        .path
+        .with_file_name("recovery.checkpoint.preserved.1");
+    fs::hard_link(&runtime.path, &archive).unwrap();
+
+    let mut next = runtime.next_core();
+    next.terminal_id_high_water += 1;
+    submit_and_wait(&mut runtime.worker(), next.clone()).unwrap();
+
+    let preserved = fs::metadata(&archive).unwrap();
+    assert_eq!((preserved.dev(), preserved.ino()), (old.dev(), old.ino()));
+    assert_eq!(fs::read(&archive).unwrap(), old_bytes);
+    let current = fs::metadata(&runtime.path).unwrap();
+    assert_ne!(current.ino(), old.ino());
+    let saved = read(&runtime.path, &runtime.original.header)
+        .unwrap()
+        .unwrap();
+    assert_eq!(saved.core, next);
 }
 
 #[test]
