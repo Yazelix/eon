@@ -134,51 +134,62 @@ fn should_retry_connect(
     kind: ListenerKind,
     error: &io::Error,
 ) -> Result<bool, Failure> {
-    match error.kind() {
-        io::ErrorKind::NotFound => Ok(listener_kind(endpoint)? == Some(kind)),
-        // Between bind(2) and listen(2) (and on macOS with a full backlog),
-        // stream connect returns ECONNREFUSED while a datagram probe still
-        // sees the live stream socket (EPROTOTYPE) or a concurrent unlink.
-        io::ErrorKind::ConnectionRefused => Ok(listener_kind(endpoint)? == Some(kind)
-            && matches!(
-                control::probe_stream_socket(socket),
-                Ok(StreamSocketProbe::LiveStream | StreamSocketProbe::Missing)
-            )),
-        _ => Ok(false),
+    if error.kind() == io::ErrorKind::NotFound {
+        return Ok(listener_kind(endpoint)? == Some(kind));
     }
+    // Retry starting (bind before listen: ECONNREFUSED on Linux and macOS) and
+    // full-backlog stream listeners via control::probe_stream_socket: macOS
+    // returns ECONNREFUSED; on Linux, initial connect(2) reports EAGAIN as
+    // WouldBlock, which socket2::connect_timeout consumes into polling that
+    // yields Other (POLLHUP) or TimedOut (WouldBlock is retried defensively).
+    let retryable = matches!(
+        error.kind(),
+        io::ErrorKind::ConnectionRefused
+            | io::ErrorKind::WouldBlock
+            | io::ErrorKind::TimedOut
+            | io::ErrorKind::Other
+    );
+    Ok(retryable
+        && listener_kind(endpoint)? == Some(kind)
+        && matches!(
+            control::probe_stream_socket(socket),
+            Ok(StreamSocketProbe::LiveStream | StreamSocketProbe::Missing)
+        ))
 }
 
 fn connect_listener(
     endpoint: &Path,
     socket: &Path,
     kind: ListenerKind,
-    mut on_retry: impl FnMut(&io::Error),
 ) -> Result<std::os::unix::net::UnixStream, Failure> {
-    let deadline = Instant::now() + CONNECT_TIMEOUT;
-    let mut waiting_for_bind = false;
+    connect_listener_with(endpoint, socket, kind, Instant::now, |_, delay| {
+        std::thread::sleep(delay);
+    })
+}
+
+fn connect_listener_with(
+    endpoint: &Path,
+    socket: &Path,
+    kind: ListenerKind,
+    mut now: impl FnMut() -> Instant,
+    mut wait: impl FnMut(&io::Error, Duration),
+) -> Result<std::os::unix::net::UnixStream, Failure> {
+    let deadline = now() + CONNECT_TIMEOUT;
     loop {
-        let remaining = deadline.saturating_duration_since(Instant::now());
-        if remaining.is_zero() {
-            return Err(failure(
-                if waiting_for_bind {
-                    "editor-unavailable"
-                } else {
-                    "editor-unresponsive"
-                },
-                "Editor connect exceeded 100 ms; no request sent",
-            ));
-        }
+        let remaining = deadline.saturating_duration_since(now());
         match sessions::unix_connect_with_timeout(socket, remaining) {
             Ok(stream) => return Ok(stream),
             Err(error) if should_retry_connect(endpoint, socket, kind, &error)? => {
-                waiting_for_bind = true;
-                on_retry(&error);
-                let delay = deadline
-                    .saturating_duration_since(Instant::now())
-                    .min(Duration::from_millis(5));
-                if !delay.is_zero() {
-                    std::thread::sleep(delay);
-                }
+                let Some(left) = deadline
+                    .checked_duration_since(now())
+                    .filter(|duration| !duration.is_zero())
+                else {
+                    return Err(failure(
+                        "editor-unavailable",
+                        "Editor connect exceeded 100 ms; no request sent",
+                    ));
+                };
+                wait(&error, left.min(Duration::from_millis(5)));
             }
             Err(error) => {
                 let detail = format!("Editor connection failed: {error}; no request sent");
@@ -201,7 +212,7 @@ fn exchange(
         return Err(failure("editor-rejected", "Editor request exceeds 64 KiB"));
     }
     let socket = socket_path(endpoint);
-    let mut stream = connect_listener(endpoint, &socket, kind, |_| {})?;
+    let mut stream = connect_listener(endpoint, &socket, kind)?;
     answer(&mut stream, &request, kind, id).map_err(|mut error| {
         if error.code == "editor-unresponsive"
             && let Some(key) = key
@@ -1407,7 +1418,7 @@ mod tests {
             .prepare(&endpoint, &[], ListenerKind::Neovim)
             .unwrap();
         let count = neovim_request(Path::new("/a")).unwrap().len();
-        let (accepted, waiting) = std::sync::mpsc::channel();
+        let (release, held) = std::sync::mpsc::channel();
         let listener = UnixListener::bind(socket).unwrap();
         let server = std::thread::spawn(move || {
             let (mut stream, _) = listener.accept().unwrap();
@@ -1415,8 +1426,7 @@ mod tests {
                 .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
             stream.read_exact(&mut vec![0; count]).unwrap();
-            std::thread::sleep(Duration::from_millis(1200));
-            accepted.send("executed late").unwrap();
+            held.recv_timeout(Duration::from_secs(5)).unwrap();
             let _ = stream.write_all(b"\x94\x01\x01\xc0\xc3");
             listener.set_nonblocking(true).unwrap();
             assert!(listener.accept().is_err());
@@ -1436,10 +1446,7 @@ mod tests {
                 && error.detail.contains("[popups.editor] keybinding"),
             "{error:?}"
         );
-        assert_eq!(
-            waiting.recv_timeout(Duration::from_secs(3)).unwrap(),
-            "executed late"
-        );
+        release.send(()).unwrap();
         server.join().unwrap();
         fs::remove_dir_all(root).unwrap();
     }
@@ -1855,84 +1862,157 @@ mod tests {
             .unwrap();
         assert_eq!(listener_kind(&endpoint).unwrap(), Some(ListenerKind::Helix));
 
-        // Phase 1: retry NotFound until the listener binds synchronously in the
-        // retry hook, then accept and reply outside the 100 ms connect window
-        // for both the retried stream and a full `open` call.
+        let clock = std::cell::Cell::new(Instant::now());
+        let step = Duration::from_millis(5);
+        let overrun = CONNECT_TIMEOUT + Duration::from_millis(1);
+        let connect = |kind, wait: &mut dyn FnMut(&io::Error, Duration)| {
+            connect_listener_with(&endpoint, &socket, kind, || clock.get(), wait)
+        };
+        let assert_failed_now = |error: Failure, allow_unresponsive: bool| {
+            assert!(
+                error.code == "editor-unavailable"
+                    || (allow_unresponsive && error.code == "editor-unresponsive"),
+                "{error:?}"
+            );
+            assert!(
+                error.detail.contains("Editor connection failed:")
+                    && error.detail.contains("no request sent"),
+                "{error:?}"
+            );
+        };
+        let assert_timed_out = |error: Failure| {
+            assert_eq!(error.code, "editor-unavailable", "{error:?}");
+            assert_eq!(
+                error.detail,
+                "Editor connect exceeded 100 ms; no request sent"
+            );
+        };
+        let assert_mismatched_fails = |allow_unresponsive: bool| {
+            let err = connect(ListenerKind::Neovim, &mut |_, _| {
+                panic!("must not retry for a mismatched listener kind");
+            })
+            .unwrap_err();
+            assert_failed_now(err, allow_unresponsive);
+        };
+        let serve_once = |listener, stream, ids: &'static [&'static str]| {
+            let server = spawn_helix_ok_server(listener, ids);
+            answer_helix_open(stream, ids[0]);
+            server.join().unwrap();
+        };
+
+        // Phase 1: retry NotFound even if wait overshoots CONNECT_TIMEOUT, and verify
+        // a clock expiring between deadline construction and Attempt 1 still connects.
         let mut listener = None;
-        let mut saw_not_found = false;
-        let stream = connect_listener(&endpoint, &socket, ListenerKind::Helix, |error| {
-            assert_eq!(error.kind(), io::ErrorKind::NotFound);
-            saw_not_found = true;
-            if listener.is_none() {
-                listener = Some(UnixListener::bind(&socket).unwrap());
-            }
+        let stream = connect(ListenerKind::Helix, &mut |error, delay| {
+            assert_eq!((error.kind(), delay), (io::ErrorKind::NotFound, step));
+            assert!(listener.is_none());
+            listener = Some(UnixListener::bind(&socket).unwrap());
+            clock.set(clock.get() + overrun);
         })
         .unwrap();
-        assert!(
-            saw_not_found,
-            "unbound socket did not produce an initial NotFound"
-        );
-        let server = spawn_helix_ok_server(listener.unwrap(), &["r1-retry", "r1"]);
+        let server = spawn_helix_ok_server(listener.unwrap(), &["r1-retry", "r1-late", "r1"]);
         answer_helix_open(stream, "r1-retry");
+        let (base, mut ticks) = (Instant::now(), 0);
+        let late = connect_listener_with(
+            &endpoint,
+            &socket,
+            ListenerKind::Helix,
+            || {
+                ticks += 1;
+                if ticks == 1 { base } else { base + overrun }
+            },
+            |_, _| panic!("ready listener must connect on the first attempt"),
+        )
+        .unwrap();
+        assert_eq!(ticks, 2);
+        answer_helix_open(late, "r1-late");
         open(&endpoint, Path::new("/a"), "r1").unwrap();
         server.join().unwrap();
 
         // Phase 2: a closed listener fails immediately without spinning the 100 ms deadline.
         wait_for_dead_socket(&socket);
-        let refused = open(&endpoint, Path::new("/a"), "r2").unwrap_err();
-        assert_eq!(refused.code, "editor-unavailable");
-        assert!(
-            refused.detail.contains("Editor connection failed:")
-                && refused.detail.contains("no request sent"),
-            "{refused:?}"
-        );
+        assert_failed_now(open(&endpoint, Path::new("/a"), "r2").unwrap_err(), false);
 
-        // Phase 3: a socket bound before listen(2) refuses stream connect with ECONNREFUSED
-        // while the datagram probe reports LiveStream; retry only for the matching marker kind.
+        // Phase 3: bound before listen(2) gets ECONNREFUSED while probe sees LiveStream;
+        // retry only for the matching marker kind.
         fs::remove_file(&socket).unwrap();
-        let bound_listener =
+        let bound =
             socket2::Socket::new(socket2::Domain::UNIX, socket2::Type::STREAM, None).unwrap();
-        bound_listener
+        bound
             .bind(&socket2::SockAddr::unix(&socket).unwrap())
             .unwrap();
-        let mismatched = connect_listener(&endpoint, &socket, ListenerKind::Neovim, |_| {
-            panic!("must not retry ConnectionRefused for a mismatched listener kind");
-        })
-        .unwrap_err();
-        assert_eq!(mismatched.code, "editor-unavailable");
-        assert!(
-            mismatched.detail.contains("Editor connection failed:")
-                && mismatched.detail.contains("no request sent"),
-            "{mismatched:?}"
-        );
-        let mut bound_listener = Some(bound_listener);
-        let mut listener = None;
-        let mut saw_refused = false;
-        let stream = connect_listener(&endpoint, &socket, ListenerKind::Helix, |error| {
-            assert_eq!(error.kind(), io::ErrorKind::ConnectionRefused);
-            saw_refused = true;
-            if let Some(bound) = bound_listener.take() {
-                bound.listen(1).unwrap();
-                listener = Some(UnixListener::from(std::os::fd::OwnedFd::from(bound)));
-            }
+        assert_mismatched_fails(false);
+        let (mut bound, mut listener) = (Some(bound), None);
+        let stream = connect(ListenerKind::Helix, &mut |error, delay| {
+            assert_eq!(
+                (error.kind(), delay),
+                (io::ErrorKind::ConnectionRefused, step)
+            );
+            let socket = bound.take().unwrap();
+            socket.listen(1).unwrap();
+            listener = Some(UnixListener::from(std::os::fd::OwnedFd::from(socket)));
+            clock.set(clock.get() + delay);
         })
         .unwrap();
-        assert!(
-            saw_refused,
-            "bound socket did not produce an initial ConnectionRefused"
-        );
-        let server = spawn_helix_ok_server(listener.unwrap(), &["r3"]);
-        answer_helix_open(stream, "r3");
-        server.join().unwrap();
+        serve_once(listener.unwrap(), stream, &["r3"]);
 
-        // Phase 4: a saturated listener fails cleanly without sending a request.
+        // Phase 4a: transient full backlog retries for the matching kind on Linux and macOS,
+        // never for a mismatched kind, and recovers once the listener drains its queue.
+        fs::remove_file(&socket).unwrap();
+        let (busy, mut queued) = crate::fixtures::busy_listener(&socket);
+        assert_mismatched_fails(true);
+        let stream = connect(ListenerKind::Helix, &mut |error, delay| {
+            assert!(
+                matches!(
+                    error.kind(),
+                    io::ErrorKind::ConnectionRefused
+                        | io::ErrorKind::WouldBlock
+                        | io::ErrorKind::TimedOut
+                        | io::ErrorKind::Other
+                ),
+                "unexpected full-backlog error: {error:?}"
+            );
+            assert_eq!(delay, step);
+            for _ in 0..queued.len() {
+                let _ = busy.accept().unwrap();
+            }
+            queued.clear();
+            clock.set(clock.get() + delay);
+        })
+        .unwrap();
+        assert!(queued.is_empty(), "full backlog did not trigger a retry");
+        serve_once(
+            UnixListener::from(std::os::fd::OwnedFd::from(busy)),
+            stream,
+            &["r4-retry"],
+        );
+
+        // Phase 4b: a permanently saturated listener fails after the 100 ms connect window.
         fs::remove_file(&socket).unwrap();
         let (listener, queued) = crate::fixtures::busy_listener(&socket);
-        let full = open(&endpoint, Path::new("/a"), "r4").unwrap_err();
-        assert_eq!(full.code, "editor-unavailable", "{full:?}");
-        assert!(full.detail.contains("no request sent"), "{full:?}");
+        assert_timed_out(open(&endpoint, Path::new("/a"), "r4").unwrap_err());
         drop(queued);
         drop(listener);
+
+        // Phase 5: an unbound socket caps each wait at 5 ms, clamps the final
+        // wait to the remaining < 5 ms budget, and stops at the deadline.
+        fs::remove_file(&socket).unwrap();
+        let tail = Duration::from_millis(2);
+        let mut waits = 0usize;
+        let timeout = connect(ListenerKind::Helix, &mut |error, delay| {
+            assert_eq!(error.kind(), io::ErrorKind::NotFound);
+            waits += 1;
+            let (expected, advance) = match waits {
+                1 => (step, CONNECT_TIMEOUT - tail),
+                2 => (tail, tail),
+                _ => panic!("unexpected wait #{waits} after deadline: {delay:?}"),
+            };
+            assert_eq!(delay, expected);
+            clock.set(clock.get() + advance);
+        })
+        .unwrap_err();
+        assert_eq!(waits, 2);
+        assert_timed_out(timeout);
         fs::remove_dir_all(root).unwrap();
     }
 

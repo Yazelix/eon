@@ -18,6 +18,9 @@ installation, and proven contract changes.
   holds its output. At the limit, Eon stops the processes left in the
   helper's process group and reports the time limit; a process that left
   that group is not signalled (`eon-ifnv0`).
+- Editor popup reuse makes a final connect attempt after waiting and, on Linux,
+  retries a transiently full listener accept queue within its 100 ms connect
+  window (matching macOS) (`eon-5wu6m`).
 - Claude quota keeps updating when CodexBar reports a Sonnet or Opus weekly
   lane, and a model-only weekly lane is no longer shown as the all-models
   Claude week (`eon-kgmlz`, EON-C27).
