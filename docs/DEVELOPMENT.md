@@ -95,11 +95,12 @@ the canonical EONW package. `eon/crates/eon/tests/workspace_control.rs`
 exercises the real Eon binary, aliases and self-launches.
 
 The package's wrapper supplies each component's path in an `EON_*` variable.
-On Linux, `EON_VENUS_RUNE_PREVIEW` names the `venus-rune-preview` client that
-`eon window new --rune-preview` and the "Eon (Rune preview)" desktop entry
-open (eon-yp6vg.7.4). The `accelerando` package check proves that wrapper value,
-both desktop entries, and that the preview's wrapper sets shipping Venus's
-environment.
+`EON_VENUS_RUNE_PREVIEW` names the `venus-rune-preview` client that
+`eon window new --rune-preview` opens on Linux and Apple Silicon macOS
+(eon-yp6vg.7.4, eon-yp6vg.71); Linux also installs the "Eon (Rune preview)"
+desktop entry. The `accelerando` package check proves that wrapper value and
+that the preview's wrapper sets shipping Venus's environment on both platforms
+(plus both desktop entries on Linux).
 Full-Eon and no-Helix wrappers record their environment changes in
 `share/eon/launch-environment` and pass original values through private
 `EON_LAUNCH_*` entries. Eon consumes these at single-threaded process entry,
@@ -349,7 +350,12 @@ Orbit's refusal of an attaching client that is not Eon, `eon pane read` and
 Accessibility and Screen Recording, captures of Venus's window also check its
 background translucency over the backdrop, a Kitty image, zoom and the
 Shortcuts dialog. Granting either permission takes a click in System
-Settings. A step that lacks what it
+Settings. `rune-preview`'s `1280×800` resize also uses System Events
+Automation (Apple Events), which cannot be pre-added in System Settings: macOS
+prompts on the first Apple Event (`mac-proof final` triggers this at start;
+System Settings lists the app only afterwards), and over SSH macOS refuses
+immediately with `-1743` so `rune-preview` skips resize, records
+`resize_error`, and is left for Yu. A step that lacks what it
 needs is skipped and listed for Yu in `summary.txt`. A run whose only non-passing
 steps are these skips passes and reports how many steps were left for Yu; each
 step's status stays skipped. Command+C on a pointer selection, the Eon Bar's chips
@@ -370,9 +376,13 @@ command and the candidate's packaged `eon` and `hx`; the step then types
 private workspace. When the step fails while its window still runs, its log
 ends with the session, each pane's text, the step's processes and, when
 permitted, a capture; a personal Mac's pane text and screen stay out. The main
-CLI/driver scenario runs separately. Linux's
-`macos-app` Nix check builds the icon/resources and tests the native launcher's
-bounded PATH import; it proves no LaunchServices behavior.
+CLI/driver scenario runs separately, and `rune-preview` checks packaged
+`eon window new --no-anima --rune-preview` launch, `client: "rune-preview"`,
+live scale-1 window capture (`capture-geometry.json`, requesting `1280×800`),
+kill + `attach` and `reload` with terminal liveness, and clean stop (native
+proof pending the post-landing `mac-proof` run). Linux's `macos-app` Nix check builds the
+icon/resources and tests the native launcher's bounded PATH import; it proves
+no LaunchServices behavior.
 
 The current automatic step and private guided test app supply `run` arguments;
 neither proves the product bundle's no-argument Finder/Dock launch or a click
@@ -387,7 +397,12 @@ Run `nix run github:Yazelix/eon/<rev>#mac-proof -- final` on the Apple Silicon
 Mac. Grant the terminal app Screen Recording (window captures) and
 Accessibility (automatic keys) in System Settings > Privacy & Security;
 the command opens missing grants' panes and asks you to quit and reopen the
-terminal app before rerunning.
+terminal app before rerunning. Automation for System Events (Apple Events
+window resize in `rune-preview`) cannot be pre-added in System Settings: macOS
+prompts on the first Apple Event and lists the app only afterwards (over SSH,
+macOS refuses immediately with `-1743` so `rune-preview` skips resize and
+records `resize_error`). `mac-proof final` sends one harmless System Events
+query at start so you can choose Allow while present.
 
 On macOS 27 or later, macOS asks once whether your terminal app may "bypass the
 system private window picker and directly access your screen and audio". The

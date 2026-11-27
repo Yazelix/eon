@@ -5,11 +5,13 @@
 
 #[cfg(not(target_os = "macos"))]
 pub use elsewhere::{
-    backdrop, displays, grants, in_mirror_set, mirror, press, switch, virtual_display, windows,
+    Switched, activate, backdrop, displays, grants, in_mirror_set, mirror, press, switch,
+    virtual_display, windows,
 };
 #[cfg(target_os = "macos")]
 pub use native::{
-    backdrop, displays, grants, in_mirror_set, mirror, press, switch, virtual_display, windows,
+    Switched, activate, backdrop, displays, grants, in_mirror_set, mirror, press, switch,
+    virtual_display, windows,
 };
 
 pub const VIRTUAL_DISPLAY_NAME: &str = "mac-proof HiDPI";
@@ -323,9 +325,8 @@ mod native {
         ))
     }
 
-    /// Brings process `pid` to the front, then posts it each key, as a
-    /// virtual key code and modifier flags, pressed and released.
-    pub fn press(pid: u32, keys: &[(u16, u64)]) -> Result<(), String> {
+    /// Brings process `pid` to the front.
+    pub fn activate(pid: u32) -> Result<(), String> {
         let pid = i32::try_from(pid).map_err(|error| format!("pid {pid}: {error}"))?;
         let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
             .ok_or_else(|| format!("no application with pid {pid}"))?;
@@ -339,6 +340,14 @@ mod native {
             ));
         }
         thread::sleep(Duration::from_millis(500));
+        Ok(())
+    }
+
+    /// Brings process `pid` to the front, then posts it each key, as a
+    /// virtual key code and modifier flags, pressed and released.
+    pub fn press(pid: u32, keys: &[(u16, u64)]) -> Result<(), String> {
+        activate(pid)?;
+        let pid = i32::try_from(pid).map_err(|error| format!("pid {pid}: {error}"))?;
         for &(code, flags) in keys {
             for down in [true, false] {
                 let event = CGEvent::new_keyboard_event(None, code, down)
@@ -663,6 +672,10 @@ mod elsewhere {
     }
 
     pub fn grants() -> Result<(bool, bool), String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub fn activate(_pid: u32) -> Result<(), String> {
         Err(MACOS.to_owned())
     }
 

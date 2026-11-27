@@ -101,6 +101,11 @@ mac-proof final: Yu's automatic run and guided final check, in one evidence arch
 Requires Apple Silicon macOS, Screen Recording (window captures) and Accessibility (automatic
 keys), granted to your terminal app in System Settings > Privacy & Security. Missing grants
 open their settings panes; grant them, quit and reopen the terminal app, then rerun.
+Automation for System Events (Apple Events window resize in rune-preview) cannot be pre-added
+in System Settings: macOS prompts on the first Apple Event and lists the app in System Settings
+only afterwards (over SSH, macOS refuses immediately with -1743 so rune-preview skips resize
+and records resize_error). At the start, the check sends one harmless System Events query so
+you can choose Allow while present.
 On macOS 27 or later, macOS asks once whether your terminal app may \"bypass the system private
 window picker and directly access your screen and audio\". The check takes one throwaway screen
 capture at the start so the dialog comes then; choose Allow. Screen Recording does not answer
@@ -1191,6 +1196,23 @@ pub fn final_check(options: Options) -> Result<bool, String> {
         log.line(&format!(
             "screen-access capture: {result}; file present: {present}; cleanup: {cleanup:?}"
         ));
+        progress(
+            "If macOS asks whether your terminal app may control System Events, choose Allow so rune-preview can resize its window.",
+        );
+        let automation = match execute(
+            &mut log,
+            Command::new("osascript").args([
+                "-e",
+                "tell application \"System Events\" to count processes",
+            ]),
+            Instant::now() + MINUTE,
+            false,
+            true,
+        ) {
+            Ok((status, _)) => status.to_string(),
+            Err(error) => failure(error),
+        };
+        log.line(&format!("system-events automation probe: {automation}"));
         line(
             &mut input,
             "Hide desktop widgets (System Settings > Desktop & Dock) and turn on Do Not Disturb (Control Center > Focus): whole-screen captures include them. Press Enter to continue.",

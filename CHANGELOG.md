@@ -44,12 +44,12 @@ installation, and proven contract changes.
   and H goes back to where you were. Alt+Shift+Y from quick search keeps
   Files where it is (`eon-dm8m6`, EON-C10).
 - `eon window new --rune-preview` opens a window on the Rune preview client,
-  beside the shipping client, which stays the default. On Linux the profile
-  ships the client and an "Eon (Rune preview)" desktop entry that runs it.
-  On macOS the flag exits 1 until it ships there (`eon-yp6vg.71`).
+  beside the shipping client, which stays the default. Both Linux and Apple
+  Silicon macOS profiles ship the preview client; Linux also installs an
+  "Eon (Rune preview)" desktop entry that runs it.
   `eon session --json` names each running window's `client` (`shipping` or
   `rune-preview`). The preview is temporary: `eon-yp6vg.54` removes the flag
-  and the entry when Rune becomes the client (`eon-yp6vg.7.4`).
+  and the entry when Rune becomes the client (`eon-yp6vg.7.4`, `eon-yp6vg.71`).
 - Touchpad scrolling in the Rune preview moves the terminal between Orbit's
   whole-row updates (`eon-yp6vg.69`).
 - The packaged Rune preview uses the rebased Rune engine at `7d7bd5e4`, including

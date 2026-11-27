@@ -373,11 +373,13 @@ dependency decision does not establish public-distribution proof.
   non-default `candidate-rune` feature (`eon-yp6vg.7.6`), with
   `default-features = false` and `features = ["accessibility"]`. The
   shipping `yazelix-venus` package, ordinary tests and the other archive
-  producers use the feature-off graph. On Linux, the `venus-rune-preview`
-  package builds the candidate entry with the feature for
-  `eon window new --rune-preview` (eon-yp6vg.7.4). The feature-on Darwin
-  build compiles (eon-yp6vg.57); the Darwin package and entry are
-  eon-yp6vg.71. The Nix graph check resolves the candidate separately. Its first user is the
+  producers use the feature-off graph. On Linux and Apple Silicon macOS,
+  `venus-rune-preview` builds the candidate entry for `eon window new
+  --rune-preview` (eon-yp6vg.7.4, eon-yp6vg.71), retiring eon-yp6vg.7.4's
+  Rule 12 exception pending the post-landing `mac-proof` run; macOS stays
+  CLI-only (`Eon.app` remains shipping Venus) and `mac-proof`'s `rune-preview`
+  step verifies packaged lifecycle and capture once executed natively.
+  The Nix graph check resolves the candidate separately. Its first user is the
   private entry from eon-yp6vg.7.7: the `rune_candidate` module and the
   `venus-rune-candidate` binary and test, each behind the feature
   (`required-features` for the binary and test). The single switch

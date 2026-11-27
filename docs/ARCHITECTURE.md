@@ -29,7 +29,7 @@ seam.
 
 Venus's UI host is moving from its native host to Eon's Rune fork
 (`Yazelix/eon-rune`, epic `eon-yp6vg`). Today Rune ships behind the non-default
-`candidate-rune` feature and the Linux `eon window new --rune-preview` window;
+`candidate-rune` feature and the `eon window new --rune-preview` window;
 the single switch onto Rune and removal of the native host is `eon-yp6vg.54`.
 See [Rune candidate dependency](../venus/docs/CRATES.md#rune-candidate-dependency)
 for pin, feature, and dependency details.

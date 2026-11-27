@@ -93,6 +93,7 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "workspace=planned",
             "session=planned",
             "app-bundle=planned",
+            "rune-preview=planned",
             "launch=planned",
             "identity=planned",
             "retina=planned",

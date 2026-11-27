@@ -73,6 +73,17 @@ impl Mode {
             width => f64::from(self.pixel_width) / f64::from(width),
         }
     }
+
+    /// Whether this mode has positive 1x pixel dimensions on both axes.
+    pub fn is_1x(&self) -> bool {
+        let same = (self.pixel_width, self.pixel_height) == (self.width, self.height);
+        self.width > 0 && self.height > 0 && same
+    }
+
+    /// Whether this desktop mode is scale 1 and at least `w`x`h` points.
+    pub fn fits_1x(&self, w: u32, h: u32) -> bool {
+        self.desktop && self.is_1x() && self.width >= w && self.height >= h
+    }
 }
 
 impl fmt::Display for Mode {
@@ -148,6 +159,15 @@ pub fn hidpi(current: &Mode, modes: &[Mode]) -> Option<Mode> {
                 mode.refresh == current.refresh,
             )
         })
+        .copied()
+}
+
+/// Smallest 1x desktop mode of at least `w`x`h` points.
+pub fn desktop_at_least(modes: &[Mode], w: u32, h: u32) -> Option<Mode> {
+    modes
+        .iter()
+        .filter(|m| m.fits_1x(w, h))
+        .min_by_key(|m| (u64::from(m.width) * u64::from(m.height), m.width))
         .copied()
 }
 
@@ -276,6 +296,18 @@ mod tests {
         );
         assert_eq!(hidpi(&current, &[current, larger, hidden]), Some(larger));
         assert_eq!(hidpi(&current, &[current, hidden]), None);
+        let s = mode(1024, 768, 1024, 768);
+        let e1 = mode(1280, 800, 1280, 800);
+        let w2 = mode(1440, 900, 2880, 1800);
+        let w1 = mode(1440, 900, 1440, 900);
+        assert_eq!(desktop_at_least(&[s, e1, w2, hidden], 1280, 840), None);
+        assert_eq!(
+            desktop_at_least(&[s, e1, w2, current, w1], 1280, 840),
+            Some(w1)
+        );
+        assert_eq!(desktop_at_least(&[s, e1, w2], 1280, 800), Some(e1));
+        assert!(e1.is_1x() && !w2.is_1x() && !mode(0, 0, 0, 0).is_1x());
+        assert!(e1.fits_1x(1280, 800) && !w2.fits_1x(1280, 800));
         assert_eq!(
             native.to_string(),
             "960x540 points at 1920x1080 pixels (scale 2, 60 Hz)"

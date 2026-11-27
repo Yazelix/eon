@@ -717,9 +717,9 @@
                 ln -s ${lib.concatStringsSep " " venusFonts} "$HOME/Library/Fonts/"
               '';
             });
-          # The Rune candidate behind `eon window new --rune-preview` (eon-yp6vg.7.4), with
-          # shipping Venus's libraries and fonts. Linux only until eon-yp6vg.71; eon-yp6vg.54
-          # removes it. Shipping Venus keeps the feature off.
+          # The Rune candidate behind `eon window new --rune-preview` (eon-yp6vg.7.4, eon-yp6vg.71),
+          # with shipping Venus's libraries and fonts; eon-yp6vg.54 removes it. Shipping Venus keeps
+          # the feature off.
           venusRunePreviewPackage = buildWorkspacePackage {
             pname = "venus-rune-preview";
             inherit (venusIdentity) version;
@@ -832,7 +832,7 @@
               exec = "eon window new";
             };
           });
-          # Linux only, with the preview client (eon-yp6vg.7.4). No StartupWMClass: windows
+          # Linux desktop entry for the preview client (eon-yp6vg.7.4). No StartupWMClass: windows
           # of both clients share one app ID, so shells keep grouping them under eon.desktop.
           runePreviewDesktopItem = pkgs.makeDesktopItem (desktopEntry // {
             name = "eon-rune-preview";
@@ -1287,7 +1287,6 @@
               EON_FILES_CONFIG = "${filesPopupConfig}";
               EON_YA = "${yaziPackage}/bin/ya";
               EON_LAZYGIT = "${lazygitPackage}/bin/lazygit";
-            } // lib.optionalAttrs pkgs.stdenv.isLinux {
               EON_VENUS_RUNE_PREVIEW = "${venusRunePreviewPackage}/bin/venus-rune-candidate";
             };
             terminfo = "${orbitPackage}/share/terminfo";
@@ -1495,6 +1494,12 @@
                 ${venusPackage}/bin/yazelix-venus || fail "Venus does not use the checked fonts"
               ${package}/libexec/eon/bin/anima --help | grep -qxE '[[:space:]]*accelerando' \
                 || fail "anima --help lists no accelerando style"
+              preview=$(sed -n "s/^export EON_VENUS_RUNE_PREVIEW='\(.*\)'$/\1/p" ${package}/bin/eon)
+              test "$preview" = ${venusRunePreviewPackage}/bin/venus-rune-candidate && test -x "$preview" \
+                || fail "eon does not launch the checked Rune preview"
+              # The preview's wrapper sets exactly shipping Venus's environment.
+              cmp <(grep -v '^exec ' ${venusPackage}/bin/yazelix-venus) <(grep -v '^exec ' "$preview") \
+                || fail "the Rune preview does not use Venus's libraries and fonts"
             '' + lib.optionalString pkgs.stdenv.isLinux ''
               # Each entry is its desktop item with only Exec pointed at this eon.
               for entry in ${desktopItem} ${runePreviewDesktopItem}; do
@@ -1511,12 +1516,6 @@
               grep -qxF 'Exec=${package}/bin/eon window new --rune-preview' \
                 ${package}/share/applications/eon-rune-preview.desktop \
                 || fail "eon-rune-preview.desktop does not open the Rune preview"
-              preview=$(sed -n "s/^export EON_VENUS_RUNE_PREVIEW='\(.*\)'$/\1/p" ${package}/bin/eon)
-              test "$preview" = ${venusRunePreviewPackage}/bin/venus-rune-candidate && test -x "$preview" \
-                || fail "eon does not launch the checked Rune preview"
-              # The preview's wrapper sets exactly shipping Venus's environment.
-              cmp <(grep -v '^exec ' ${venusPackage}/bin/yazelix-venus) <(grep -v '^exec ' "$preview") \
-                || fail "the Rune preview does not use Venus's libraries and fonts"
             '' + lib.optionalString pkgs.stdenv.isDarwin ''
               test "$(cat ${package}/Applications/Eon.app/Contents/Resources/eon-command)" \
                 = ${package}/bin/eon || fail "Eon.app does not launch the checked eon"
@@ -1622,7 +1621,7 @@
               ${nushellPackage} ${bashPackage} \
               ${starshipPackage} ${zoxidePackage} ${atuinPackage} ${carapacePackage} \
               ${fzfPackage} ${helixPackage} ${yaziPackage} ${lazygitPackage} \
-              ${lib.optionalString pkgs.stdenv.isLinux "${venusRunePreviewPackage}"}; do
+              ${venusRunePreviewPackage}; do
               if ${pkgs.gnugrep}/bin/grep -Fx "$forbidden" ${eonbaseClosure}/store-paths; then
                 exit 1
               elif test $? != 1; then

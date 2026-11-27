@@ -102,11 +102,11 @@ device and frame pass. Without arguments it shows fixed fixture frames. Given
 `yazelix-venus`'s launch arguments (eon-yp6vg.7.9), it runs Venus's own
 application with Rune as the native host. Building the entry requires the
 non-default `candidate-rune` feature. The shipping `yazelix-venus` package
-leaves the feature off, and the Nix graph check resolves it separately. On
-Linux, Eon's package also ships the entry as the separate
+leaves the feature off, and the Nix graph check resolves it separately. Eon's
+package also ships the entry on Linux and Apple Silicon macOS as the separate
 `venus-rune-preview` package, which `eon window new --rune-preview` opens
-(eon-yp6vg.7.4). The Darwin package and entry are eon-yp6vg.71.
-eon-yp6vg.54 removes the entry.
+(eon-yp6vg.7.4, eon-yp6vg.71; Linux also installs an "Eon (Rune preview)"
+desktop entry). eon-yp6vg.54 removes the entry.
 
 The candidate uses Rune's upstream `App::on_close_request` from anomalyco/rune#2024.
 Venus defers native close requests to its workspace lifecycle policy. The
@@ -122,8 +122,9 @@ pass. On Linux the candidate pass and focused invocations use the dev shell's
 pinned Zig for `cc` build scripts such as `blake3` and `psm` (which assembles
 `src/arch/aarch_aapcs64.s` with `-xassembler-with-cpp`). A non-empty
 `CC_aarch64_apple_darwin` or `AR_aarch64_apple_darwin` overrides that tool's
-default. On Apple Silicon the command uses the native C tools. The native
-Darwin preview package and entry are tracked in eon-yp6vg.71.
+default. On Apple Silicon the command uses the native C tools. The candidate
+ships in the Darwin package with a `mac-proof` `rune-preview` lifecycle and
+capture step (eon-yp6vg.71, native run pending post-landing `mac-proof`).
 
 Each line on stdin advances one fixture step. After the last step, the first
 step comes back as a fresh attachment. After a step's first presentation, the

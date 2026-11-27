@@ -3,14 +3,14 @@
 
 use crate::{
     mac,
-    picture::{Picture, Region, backdrop_shares, blend, check_blend, check_shares},
+    picture::{Picture, Region, backdrop_shares, blend, check_blend, check_shares, png_dimensions},
     retina,
     step::{Failure, Log, Outcome, Runner, capture_stdout, check, execute, probe, succeed},
 };
 use orbit_protocol::session::{
     self as orbs, ClientMessage, KeyAction, KeyEvent, Modifiers, PhysicalKey, ServerMessage,
 };
-use serde_json::Value;
+use serde_json::{Value, json};
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs::{self, File},
@@ -34,6 +34,9 @@ const LIGHT: [u8; 3] = [224; 3];
 const OPACITY: f64 = 0.8;
 /// The share of Venus's window that must differ from the desktop behind it.
 const SHOWN: f64 = 0.05;
+/// Rule 11 small-screen baseline in logical points and menu-bar headroom.
+const SMALL_SCREEN: (u32, u32) = (1280, 800);
+const MENU_BAR: u32 = 40;
 /// The share of Venus's window that a key's view must change, and that
 /// pressing it again must restore to within; also the share that the Kitty
 /// image's magenta must gain.
@@ -112,6 +115,19 @@ const STEPS: &[Spec] = &[
         body: app_bundle,
     },
     Spec {
+        name: "rune-preview",
+        needs: GUI,
+        requires: &["session"],
+        proves: "`eon window new --no-anima --rune-preview` launches venus-rune-candidate \
+                 (client `rune-preview`), captures a scale-1 PNG + capture-geometry.json \
+                 (skipped for Yu without Screen Recording or on an immediate System Events \
+                 Automation -1743 refusal, recording resize_error), survives kill+attach and \
+                 reload with live terminal round trips, and stops cleanly",
+        window: false,
+        timeout: Duration::from_secs(3 * 60),
+        body: rune_preview,
+    },
+    Spec {
         name: "launch",
         needs: GUI,
         requires: &["session"],
@@ -125,8 +141,9 @@ const STEPS: &[Spec] = &[
         name: "identity",
         needs: GUI,
         requires: &["launch"],
-        proves: "`eon versions` names aarch64-darwin for Eon and every component, and \
-                 `eon config dir` is the private configuration root",
+        proves: "`eon versions` names aarch64-darwin for Eon and every component, \
+                 `eon config dir` is the private configuration root, and `running.this.client` \
+                 is `shipping`",
         window: true,
         timeout: MINUTE,
         body: identity,
@@ -323,15 +340,19 @@ mac-proof scenario: launch full Eon on this Mac's screen and drive it, mostly th
   --dry-run       run nothing, on any system, and plan every step
 
 `run` ends with the same steps, on the package it built. Run it over SSH while the tool's user
-is logged in to the Mac's screen. Accessibility, which lets the tool post key events, and
-Screen Recording must be granted once, by a click in System Settings > Privacy & Security, to
-the program that runs the tool (for SSH, the SSH server); nothing grants them silently. Without
-Accessibility only launch, identity, retina and stop run, since the first tab's Files pair takes
-a key. The key steps bring Eon's window to the front, then post US-layout key codes to Venus's
-process: posting alone would leave the desktop's focus alone, but whether Venus takes Option and
-Command chords while inactive is unproven on a Mac. A step whose need is missing is skipped
-and listed for Yu in summary.txt, as are steps whose missing prerequisites are all left for
-Yu. These skips do not fail the run.
+is logged in to the Mac's screen. Accessibility (key events) and Screen Recording (captures) must
+be granted once in System Settings > Privacy & Security to the program that runs the tool (for
+SSH, the SSH server); nothing grants them silently. Automation for System Events (Apple Events
+window resize in rune-preview) cannot be pre-added in System Settings: macOS prompts on the first
+Apple Event (`mac-proof final` triggers this at start; System Settings lists the app only
+afterwards), and over SSH macOS refuses immediately with -1743 so rune-preview skips resize,
+records resize_error, and is left for Yu. Without Accessibility only rune-preview, launch,
+identity, retina and stop run, since the first tab's Files pair takes a key. The key steps
+bring Eon's window to the front, then post US-layout key codes to Venus's process: posting
+alone would leave the desktop's focus alone, but whether Venus takes Option and Command chords
+while inactive is unproven on a Mac. A step whose need is missing is skipped and listed for Yu
+in summary.txt, as are steps whose missing prerequisites are all left for Yu. These skips do
+not fail the run.
 
 Steps, in order:
 "
@@ -662,6 +683,10 @@ pub struct Scenario {
     root: PathBuf,
     /// EON_RUNTIME_DIR, short enough for socket paths (103 bytes on macOS).
     runtime: PathBuf,
+    /// True once `prepare` created `runtime`; prevents cleaning another run's root.
+    runtime_owned: bool,
+    /// Independent window ID for targeted diagnostics and launch.log retention.
+    window: Option<String>,
     gui: Availability,
     screen: Availability,
     keys: Availability,
@@ -701,6 +726,8 @@ impl Scenario {
             },
             root: std::env::temp_dir().join(format!("mac-proof-scenario-{id}")),
             runtime: PathBuf::from(format!("/tmp/es-{id}")),
+            runtime_owned: false,
+            window: None,
             gui: unprobed(),
             screen: unprobed(),
             keys: unprobed(),
@@ -748,32 +775,42 @@ impl Scenario {
         if !spec.window || self.screen.is_err() {
             return Ok(());
         }
-        self.shown(spec.name, log, deadline)
+        self.shown(None, spec.name, log, deadline).map(drop)
     }
 
-    /// Captures the screen until Venus's window shows in it.
-    fn shown(&mut self, label: &str, log: &mut Log, deadline: Instant) -> Outcome {
-        // A window may still be drawing after its process starts.
-        let shown = deadline.min(Instant::now() + Duration::from_secs(30));
+    /// Captures the screen until `pid`'s (or Venus's) largest window shows in it.
+    fn shown(
+        &mut self,
+        pid: Option<u32>,
+        label: &str,
+        log: &mut Log,
+        end: Instant,
+    ) -> Result<(u32, [f64; 4], [f64; 2]), Failure> {
+        let pid = match pid {
+            Some(pid) => pid,
+            None => self
+                .venus(log, end)?
+                .ok_or_else(|| Failure::Check("no Venus under the supervisor".into()))?,
+        };
+        let shown = end.min(Instant::now() + Duration::from_secs(30));
         loop {
-            let (picture, region) = self.window_capture(label, log, deadline)?;
-            let desktop = self
-                .desktop
-                .as_ref()
-                .map(|desktop| desktop.crop(region))
-                .transpose()
-                .map_err(Failure::Check)?;
-            let changed = desktop.map_or(1.0, |desktop| picture.changed(&desktop));
-            if !picture.blank() && changed >= SHOWN {
-                return Ok(());
+            let (id, bounds, disp, reg) = window_info(pid).map_err(Failure::Check)?;
+            log.line(&format!("mac-proof: window {id} of {pid} at {reg:?}"));
+            let pic = self.capture(label, log, end)?;
+            let pic = pic.crop(reg).map_err(Failure::Check)?;
+            let changed = match &self.desktop {
+                Some(d) => pic.changed(&d.crop(reg).map_err(Failure::Check)?),
+                None => 1.0,
+            };
+            if !pic.blank() && changed >= SHOWN {
+                return Ok((id, bounds, disp));
             }
             if Instant::now() >= shown {
                 return Err(Failure::Check(format!(
-                    "Venus's window is blank or differs from the desktop before launch in only {:.1}% of it",
+                    "window of {pid} is blank or differs from desktop by {:.1}%",
                     changed * 100.0
                 )));
             }
-            // The next capture replaces this one.
             self.captures -= 1;
             thread::sleep(Duration::from_secs(1));
         }
@@ -853,7 +890,9 @@ impl Scenario {
         // A runtime root that exists may belong to another run.
         std::os::unix::fs::DirBuilderExt::mode(&mut fs::DirBuilder::new(), 0o700)
             .create(&self.runtime)
-            .map_err(failed)
+            .map_err(failed)?;
+        self.runtime_owned = true;
+        Ok(())
     }
 
     /// Starts a supervisor in its own process group, its output in eon.log.
@@ -936,7 +975,10 @@ impl Scenario {
 
     /// `eon session --json`, which answers once the supervisor serves requests.
     fn workspace(&self, log: &mut Log, deadline: Instant) -> Result<Value, Failure> {
-        self.act(&["session"], log, deadline)
+        match self.window.as_deref() {
+            Some(id) => self.act(&["session", "--window", id], log, deadline),
+            None => self.act(&["session"], log, deadline),
+        }
     }
 
     /// Runs `eon ARGUMENTS --json` and returns its reply.
@@ -961,11 +1003,11 @@ impl Scenario {
     /// The scenario's processes in `listing`, which also joins them to `seen`.
     fn own(&mut self, listing: &[Process], log: &mut Log) -> Vec<Process> {
         // With the slash, the root of a run whose pid extends this one's
-        // does not match.
-        let markers = [
-            format!("{}/", self.runtime.display()),
-            format!("{}/", self.root.display()),
-        ];
+        // does not match. Only include `runtime` once `prepare` acquired it.
+        let mut markers = vec![format!("{}/", self.root.display())];
+        if self.runtime_owned {
+            markers.push(format!("{}/", self.runtime.display()));
+        }
         let mut roots: Vec<u32> = self.supervisor.iter().map(Child::id).collect();
         if self.app {
             // LaunchServices' supervisor is not a child of `open -W`. Its Venus
@@ -1014,20 +1056,44 @@ impl Scenario {
             .map(|process| process.pid))
     }
 
-    /// Venus under the supervisor once its window is on the screen, which
-    /// may be a while after its process starts.
-    pub(crate) fn wait_for_venus(
+    fn child(&self, name: &str, ext: &str, prefix: &str) -> Self {
+        let mut child = Self::new(
+            self.package.clone(),
+            self.evidence.join(name),
+            Environment::Private,
+            self.personal_mac,
+        );
+        (child.screen, child.keys) = (self.screen.clone(), self.keys.clone());
+        child.root = self.root.with_extension(ext);
+        child.runtime = PathBuf::from(format!("/tmp/{prefix}-{}", std::process::id()));
+        child
+    }
+
+    fn wait_for_window(
         &mut self,
         log: &mut Log,
-        deadline: Instant,
+        end: Instant,
+        mut find: impl FnMut(&mut Self, &mut Log) -> Result<Option<u32>, Failure>,
     ) -> Result<u32, Failure> {
-        log.line("mac-proof: waiting for Venus's window under the supervisor");
-        until(deadline, || match self.venus(log, deadline)? {
-            Some(venus) if mac::windows(venus).is_ok_and(|(windows, _)| !windows.is_empty()) => {
-                Ok(Some(venus))
-            }
-            _ => Ok(None),
+        until(end, || {
+            Ok(find(self, log)?.filter(|&pid| mac::windows(pid).is_ok_and(|(w, _)| !w.is_empty())))
         })
+    }
+
+    /// Venus under the supervisor once its window is on the screen, which
+    /// may be a while after its process starts.
+    pub(crate) fn wait_for_venus(&mut self, log: &mut Log, end: Instant) -> Result<u32, Failure> {
+        log.line("mac-proof: waiting for Venus's window under the supervisor");
+        self.wait_for_window(log, end, |s, log| s.venus(log, end))
+    }
+
+    fn preview(&mut self, skip: u32, log: &mut Log, end: Instant) -> Result<Option<u32>, Failure> {
+        if !self.runtime_owned {
+            return Ok(None);
+        }
+        let ps = self.processes(log, end)?;
+        let hit = |p: &&Process| p.pid != skip && p.name().contains("venus-rune-candidate");
+        Ok(ps.iter().find(hit).map(|p| p.pid))
     }
 
     pub(crate) fn wait_for_workspace(
@@ -1195,15 +1261,22 @@ impl Scenario {
         };
         const PERSONAL: &str = "left out on a personal Mac";
         log.line("mac-proof: failure evidence: the session, pane text, processes and a capture");
-        let session = run(log, &mut self.eon(&["session", "--json"]), true).and_then(|reply| {
+        let eon_json = |args: &[&str]| {
+            let mut a = args.to_vec();
+            if let Some(id) = self.window.as_deref() {
+                a.extend(["--window", id]);
+            }
+            a.push("--json");
+            self.eon(&a)
+        };
+        let session = run(log, &mut eon_json(&["session"]), true).and_then(|reply| {
             serde_json::from_slice::<Value>(&reply).map_err(|error| error.to_string())
         });
         match session {
             Ok(_) if self.personal_mac => missing(log, "pane text", PERSONAL),
             Ok(session) => {
                 for pane in panes(&session) {
-                    let mut read = self.eon(&["pane", "read", &pane.id, "--json"]);
-                    if let Err(why) = run(log, &mut read, true) {
+                    if let Err(why) = run(log, &mut eon_json(&["pane", "read", &pane.id]), true) {
                         missing(log, &format!("{}'s text", pane.id), &why);
                     }
                 }
@@ -1316,11 +1389,7 @@ impl Scenario {
     /// Every terminal of the workspace's panes; a terminal that ends takes
     /// its pane with it.
     fn terminals(&self, log: &mut Log, deadline: Instant) -> Result<BTreeSet<String>, Failure> {
-        let workspace = self.workspace(log, deadline)?;
-        Ok(panes(&workspace)
-            .into_iter()
-            .map(|pane| pane.terminal)
-            .collect())
+        Ok(terminal_ids(&self.workspace(log, deadline)?))
     }
 
     /// Ends `venus` by `end`, then checks that the terminals outlived it and
@@ -1384,23 +1453,44 @@ impl Scenario {
             "mac-proof: copying {} into the evidence: {copied:?}",
             logs.display()
         ));
-        let mut left = Vec::new();
-        match self.survivors(log, Instant::now() + MINUTE) {
-            Ok(processes) => {
-                for process in processes {
-                    let _ = Command::new("kill")
-                        .args(["-KILL", &process.pid.to_string()])
-                        .status();
-                    left.push(format!("{} {}", process.pid, process.command));
-                }
+        if self.runtime_owned {
+            let f = |p: &PathBuf| fs::symlink_metadata(p).is_ok_and(|m| m.is_file());
+            let log_of = |id: &str| owned_window(&self.runtime, id).map(|d| d.join("launch.log"));
+            let w_scan = || {
+                let it = fs::read_dir(self.runtime.join("w")).ok()?.flatten();
+                it.filter_map(|e| log_of(e.file_name().to_str()?))
+                    .filter(f)
+                    .min()
+            };
+            let pref = self.window.as_deref().and_then(log_of).filter(f);
+            if let Some(src) = pref.or_else(w_scan) {
+                let c = fs::copy(&src, self.evidence.join("launch.log"));
+                let p = src.display();
+                log.line(&format!("mac-proof: copying {p} -> launch.log: {c:?}"));
             }
-            Err(_) => left.push("unknown: listing processes failed".to_owned()),
+        }
+        let mut left = Vec::new();
+        if self.runtime_owned || self.supervisor.is_some() {
+            match self.survivors(log, Instant::now() + MINUTE) {
+                Ok(processes) => {
+                    for process in processes {
+                        let _ = Command::new("kill")
+                            .args(["-KILL", &process.pid.to_string()])
+                            .status();
+                        left.push(format!("{} {}", process.pid, process.command));
+                    }
+                }
+                Err(_) => left.push("unknown: listing processes failed".to_owned()),
+            }
         }
         if let Some(mut child) = self.supervisor.take() {
             let _ = child.kill();
             let _ = child.wait();
         }
-        let _ = fs::remove_dir_all(&self.runtime);
+        if self.runtime_owned {
+            let _ = fs::remove_dir_all(&self.runtime);
+            self.runtime_owned = false;
+        }
         let _ = fs::remove_dir_all(&self.root);
         left
     }
@@ -1482,12 +1572,17 @@ const SHELL_POPUP: Key = Key {
     flags: OPTION | SHIFT,
 };
 
-/// Where the largest on-screen window of process `venus` lies on the main
-/// display.
+/// Largest on-screen window of `pid`: `(window_id, bounds, display, region)`.
+fn window_info(pid: u32) -> Result<(u32, [f64; 4], [f64; 2], Region), String> {
+    let (ws, disp) = mac::windows(pid)?;
+    let bounds: Vec<_> = ws.iter().map(|w| w.bounds).collect();
+    let (i, reg) = largest_region(&bounds, disp)?;
+    Ok((ws[i].id, ws[i].bounds, disp, reg))
+}
+
+/// Where the largest on-screen window of process `venus` lies on the main display.
 fn window(venus: u32) -> Result<Region, String> {
-    let (windows, display) = mac::windows(venus)?;
-    let bounds: Vec<_> = windows.into_iter().map(|window| window.bounds).collect();
-    region(&bounds, display)
+    window_info(venus).map(|(_, _, _, region)| region)
 }
 
 /// Runs each command the harness drops into the exchange directory ($1), in
@@ -1765,23 +1860,26 @@ fn edit_observed(workspace: &Value, before: &BTreeSet<String>, read: &Value, tok
     })
 }
 
-/// Where the largest of `windows` (x, y, width and height) lies, in shares
-/// of a `display` of that width and height.
-fn region(windows: &[[f64; 4]], [across, down]: [f64; 2]) -> Result<Region, String> {
+/// Index and display-share region of the largest valid window in `windows`.
+fn largest_region(
+    windows: &[[f64; 4]],
+    [across, down]: [f64; 2],
+) -> Result<(usize, Region), String> {
     let largest = windows
         .iter()
-        .max_by(|a, b| (a[2] * a[3]).total_cmp(&(b[2] * b[3])));
+        .enumerate()
+        .filter(|(_, w)| w.iter().all(|n| n.is_finite()) && w[2] > 0.0 && w[3] > 0.0)
+        .max_by(|(_, a), (_, b)| (a[2] * a[3]).total_cmp(&(b[2] * b[3])));
     match largest {
-        Some(&[x, y, width, height])
-            if width > 0.0 && height > 0.0 && across > 0.0 && down > 0.0 =>
-        {
-            Ok(Region {
+        Some((i, &[x, y, width, height])) if across > 0.0 && down > 0.0 => Ok((
+            i,
+            Region {
                 x: x / across,
                 y: y / down,
                 width: width / across,
                 height: height / down,
-            })
-        }
+            },
+        )),
         _ => Err(format!(
             "no on-screen window with an area among {windows:?} on a {across}x{down} display"
         )),
@@ -1857,15 +1955,7 @@ fn session(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome
 }
 
 fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
-    let mut app = Scenario::new(
-        scenario.package.clone(),
-        scenario.evidence.join("app"),
-        Environment::Private,
-        scenario.personal_mac,
-    );
-    app.screen = scenario.screen.clone();
-    app.root = scenario.root.with_extension("app");
-    app.runtime = PathBuf::from(format!("/tmp/ea-{}", std::process::id()));
+    let mut app = scenario.child("app", "app", "ea");
     let result = (|| {
         app.prepare()?;
         let failed = |error: io::Error| Failure::Check(format!("app fixture: {error}"));
@@ -1991,6 +2081,323 @@ fn app_bundle(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outc
     result
 }
 
+fn terminal_ids(workspace: &Value) -> BTreeSet<String> {
+    panes(workspace).into_iter().map(|p| p.terminal).collect()
+}
+
+fn is_reload_focus_refusal(r: &Value) -> bool {
+    let e = &r["error"];
+    e["code"] == "reload-refused" && e["detail"].as_str().is_some_and(|d| d.contains("focus"))
+}
+
+fn owned_window(runtime: &Path, id: &str) -> Option<PathBuf> {
+    let hex = |b: u8| matches!(b, b'0'..=b'9' | b'a'..=b'f');
+    if id.len() != 8 || !id.bytes().all(hex) {
+        return None;
+    }
+    let dir = runtime.join("w").join(id);
+    fs::symlink_metadata(&dir).ok()?.is_dir().then_some(dir)
+}
+
+fn is_apple_events_denied(s: &str) -> bool {
+    let lo = s.to_ascii_lowercase();
+    s.contains("-1743") || lo.contains("not authorized to send apple events")
+}
+
+fn check_preview_reload(r: &Value, id: &str) -> Outcome {
+    let bin = r["venus"]
+        .as_str()
+        .is_some_and(|v| v.ends_with("/bin/venus-rune-candidate"));
+    let ok = r["window"] == id && r["accepted"] == true && bin;
+    check(ok, || format!("unexpected reload reply for {id}: {r}"))
+}
+
+fn check_stop_reply(reply: &Value, cmd: &str) -> Outcome {
+    fn a(v: &Value) -> &[Value] {
+        v.as_array().map(Vec::as_slice).unwrap_or_default()
+    }
+    let mut it = a(reply).iter().flat_map(|w| a(&w["results"])).peekable();
+    let ok = it.peek().is_some() && it.all(|r| r.get("stopped").is_some());
+    check(ok, || format!("{cmd} replied {reply}"))
+}
+
+#[derive(Clone, Default)]
+struct CaptureReport {
+    disp: Option<[f64; 2]>,
+    win: Option<[f64; 4]>,
+    px: Option<(u32, u32)>,
+    png_written: bool,
+    switched_to: Option<String>,
+    switch_err: Option<String>,
+    switch_skipped: bool,
+    resize_err: Option<String>,
+    cap_err: Option<String>,
+    denied: bool,
+    clamped: bool,
+}
+
+fn capture_gate(r: &CaptureReport, screen: bool) -> Result<Option<String>, Failure> {
+    let cap = r.cap_err.as_deref().filter(|_| screen);
+    let (re, sw) = (r.resize_err.as_deref(), r.switch_err.as_deref());
+    if let Some(e) = cap.or(sw).or(re.filter(|e| !is_apple_events_denied(e))) {
+        return Err(Failure::Check(e.to_owned()));
+    }
+    Ok(re.map(|e| format!("needs System Events Automation: {e}")))
+}
+
+fn geometry_json(r: &CaptureReport, ds: &[retina::Display]) -> Value {
+    let ((rw, rh), main) = (SMALL_SCREEN, ds.iter().find(|d| d.main));
+    let modes = |d: &retina::Display| d.modes.iter().map(ToString::to_string).collect::<Vec<_>>();
+    let ok_w = |w: [f64; 4]| w[2] == f64::from(rw) && w[3] == f64::from(rh);
+    let errs = [&r.cap_err, &r.resize_err, &r.switch_err];
+    let clean = !r.denied && errs.iter().all(|e| e.is_none());
+    let is1x = main.is_some_and(|d| d.current.is_1x());
+    let achieved = clean && is1x && r.win.is_some_and(ok_w) && r.px == Some((rw, rh));
+    json!({
+        "requested_logical": [rw, rh], "requested_scale": 1, "display_logical": r.disp,
+        "display_mode": main.map(|d| d.current.to_string()), "display_scale": main.map(|d| d.current.scale()),
+        "offered_modes": main.map(modes).unwrap_or_default(), "switched_to": r.switched_to,
+        "switch_skipped": r.switch_skipped, "switch_error": r.switch_err,
+        "resize_error": r.resize_err, "screen_recording_denied": r.denied,
+        "capture_png": r.png_written.then_some("captures/rune-preview-window.png"),
+        "capture_error": r.cap_err, "window_bounds": r.win, "capture_pixels": r.px.map(|(w, h)| [w, h]),
+        "achieved_1280x800": achieved, "runner_clamped": r.clamped,
+    })
+}
+
+fn rule11_mode(cur: retina::Mode, modes: &[retina::Mode]) -> (Option<retina::Mode>, bool) {
+    let (rw, rh) = SMALL_SCREEN;
+    let k = |m: retina::Mode| (m.width, m.height, m.pixel_width, m.pixel_height);
+    if let Some(t) = retina::desktop_at_least(modes, rw, rh + MENU_BAR) {
+        return ((k(t) != k(cur)).then_some(t), false);
+    }
+    if cur.fits_1x(rw, rh + MENU_BAR) {
+        return (None, false);
+    }
+    let fb = retina::desktop_at_least(modes, rw, rh).filter(|&m| k(m) != k(cur));
+    (fb, true)
+}
+
+fn switch_rule11(personal: bool, rep: &mut CaptureReport, log: &mut Log) -> Option<mac::Switched> {
+    let ds = mac::displays().map_err(|e| rep.switch_err = Some(e)).ok()?;
+    log_displays(log, &ds);
+    let Some(m) = ds.iter().find(|d| d.main) else {
+        rep.switch_err = Some("no main display".into());
+        return None;
+    };
+    let (mode, clamped) = rule11_mode(m.current, &m.modes);
+    if personal {
+        rep.switch_skipped = mode.is_some() || clamped;
+        return None;
+    }
+    rep.clamped = clamped;
+    let mode = mode?;
+    match mac::switch(m.id, mode) {
+        Ok(g) => {
+            rep.switched_to = Some(mode.to_string());
+            thread::sleep(Duration::from_millis(500));
+            Some(g)
+        }
+        Err(e) => {
+            (rep.clamped, rep.switch_err) = (false, Some(format!("switch {mode}: {e}")));
+            None
+        }
+    }
+}
+
+fn preview_live(p: &Scenario, pane: &str, tag: &str, log: &mut Log, end: Instant) -> Outcome {
+    let id = p.window.as_deref().unwrap_or_default();
+    let want = format!("mp_ok_{tag}");
+    let cmd = format!("/bin/sh -c 'printf %s%s mp_ok_ {tag}'");
+    let wait = end.min(Instant::now() + Duration::from_secs(30));
+    let a = [
+        "pane", "send", "--window", id, pane, "--enter", "--force", "--", &cmd,
+    ];
+    loop {
+        p.act(&a, log, wait)?;
+        let sl = wait.min(Instant::now() + Duration::from_secs(5));
+        match until(sl, || {
+            let mut c = p.eon(&["pane", "read", "--window", id, pane, "--json"]);
+            let out = capture_stdout(log, &mut c, sl)?;
+            let r: Value =
+                serde_json::from_slice(&out).map_err(|e| Failure::Check(e.to_string()))?;
+            Ok(r["text"]
+                .as_str()
+                .is_some_and(|t| t.contains(&want))
+                .then_some(()))
+        }) {
+            Err(Failure::Timeout) if Instant::now() < wait => {}
+            other => return other,
+        }
+    }
+}
+
+fn rune_preview_body(
+    p: &mut Scenario,
+    sw: &mut Option<mac::Switched>,
+    log: &mut Log,
+    end: Instant,
+) -> Outcome {
+    let failed = |e: io::Error| Failure::Check(format!("rune-preview io: {e}"));
+    let (rw, rh) = SMALL_SCREEN;
+    let mut rep = CaptureReport::default();
+    (rep.denied, rep.cap_err) = (p.screen.is_err(), p.screen.as_ref().err().cloned());
+    p.prepare()?;
+    if p.screen.is_ok() {
+        *sw = switch_rule11(p.personal_mac, &mut rep, log);
+        p.show_backdrop(LIGHT, log)?;
+        p.desktop = Some(p.capture("desktop", log, end)?);
+    }
+    let mut new = p.eon(&["window", "new", "--no-anima", "--rune-preview"]);
+    let out = succeed(log, new.arg("--dir").arg(p.work()), end, true)?;
+    let id = String::from_utf8_lossy(&out).trim().to_owned();
+    let id_ok = owned_window(&p.runtime, &id).is_some();
+    check(id_ok, || format!("bad window id {id:?}"))?;
+    p.window = Some(id.clone());
+    let terms = |p: &Scenario, log: &mut Log, want: &BTreeSet<String>, sub: bool| {
+        let got = p.terminals(log, end)?;
+        let ok = !got.is_empty() && ((sub && want.is_subset(&got)) || got == *want);
+        check(ok, || format!("terms {want:?} -> {got:?}")).map(|()| got)
+    };
+    let ws = until(end, || {
+        let r = p.workspace(log, end)?;
+        let ok = r["running"]["this"]["client"].is_string() && !panes(&r).is_empty();
+        Ok(ok.then_some(r))
+    })?;
+    let client = &ws["running"]["this"]["client"];
+    check(client == "rune-preview", || format!("bad client: {ws}"))?;
+    let (pane0, before) = (panes(&ws)[0].id.clone(), terminal_ids(&ws));
+    let non_empty = !before.is_empty() && before.iter().all(|t| !t.is_empty());
+    check(non_empty, || format!("no terms: {ws}"))?;
+    let pid1 = p.wait_for_window(log, end, |p, log| p.preview(0, log, end))?;
+    preview_live(p, &pane0, "init", log, end)?;
+    let cap_res = if p.screen.is_ok() {
+        mac::activate(pid1).map_err(Failure::Check)?;
+        if p.keys.is_ok() {
+            let s = format!(
+                "tell application \"System Events\" to tell (first process whose unix id is {pid1})\n\
+                 set position of window 1 to {{0, 0}}\nset size of window 1 to {{{rw}, {rh}}}\nend tell"
+            );
+            let t = end.min(Instant::now() + Duration::from_secs(10));
+            let pos = log.text().map_or(0, |s| s.len());
+            let mut osa = Command::new("osascript");
+            match execute(log, osa.args(["-e", &s]), t, false, true) {
+                Ok((st, _)) if st.success() => thread::sleep(Duration::from_millis(500)),
+                Ok((st, _)) => {
+                    let out = log.text().unwrap_or_default();
+                    let mut msg = format!("osascript {rw}x{rh} exited {st}");
+                    if is_apple_events_denied(out.get(pos..).unwrap_or("")) {
+                        msg += ": not authorized to send Apple events (-1743)";
+                    }
+                    rep.resize_err = Some(msg);
+                }
+                Err(e) => rep.resize_err = Some(format!("osascript {rw}x{rh}: {}", cause(&e))),
+            }
+            if let Some(e) = &rep.resize_err {
+                log.line(&format!("mac-proof: {e}"));
+            }
+        }
+        (|| -> Outcome {
+            let (wid, bounds, disp) = p.shown(Some(pid1), "rune-preview-screen", log, end)?;
+            (rep.disp, rep.win) = (Some(disp), Some(bounds));
+            let png = p.evidence.join("captures/rune-preview-window.png");
+            let mut sc = Command::new("screencapture");
+            sc.args(["-x", "-o", "-l", &wid.to_string()]).arg(&png);
+            succeed(log, &mut sc, end, false)?;
+            rep.png_written = png.is_file();
+            let bytes = fs::read(&png).map_err(failed)?;
+            rep.px = Some(png_dimensions(&bytes).map_err(Failure::Check)?);
+            Ok(())
+        })()
+        .inspect_err(|e| rep.cap_err = Some(cause(e).to_owned()))
+    } else {
+        Ok(())
+    };
+    let ds = mac::displays().unwrap_or_else(|e| {
+        if p.screen.is_ok() && rep.cap_err.is_none() {
+            rep.cap_err = Some(format!("displays: {e}"));
+        }
+        Vec::new()
+    });
+    let geom = geometry_json(&rep, &ds);
+    fs::write(p.evidence.join("capture-geometry.json"), geom.to_string()).map_err(failed)?;
+    log.line(&format!("mac-proof: preview capture {geom}"));
+    cap_res?;
+    let auto_skip = capture_gate(&rep, p.screen.is_ok())?;
+    let mut kill = Command::new("kill");
+    succeed(log, kill.args(["-KILL", &pid1.to_string()]), end, false)?;
+    until(end, || {
+        Ok((p.preview(0, log, end)? != Some(pid1)).then_some(()))
+    })?;
+    let detached = terms(p, log, &before, true)?;
+    let (a_end, mut attach_err) = (end.min(Instant::now() + Duration::from_secs(60)), None);
+    let pid2 = until(a_end, || {
+        if let Some(pid) = p.preview(pid1, log, a_end)? {
+            let ok = mac::windows(pid).is_ok_and(|(w, _)| !w.is_empty());
+            return Ok(ok.then_some(pid));
+        }
+        let mut att = p.eon(&["window", "attach", &id]);
+        match execute(log, &mut att, a_end, false, true) {
+            Ok((st, _)) if st.success() => attach_err = None,
+            Ok((st, _)) => attach_err = Some(format!("window attach {id} exited {st}")),
+            Err(Failure::Timeout) => return Err(Failure::Timeout),
+            Err(e) => attach_err = Some(format!("window attach {id}: {}", cause(&e))),
+        }
+        Ok(None)
+    })
+    .map_err(|e| match (e, attach_err) {
+        (Failure::Timeout, Some(why)) => Failure::Check(why),
+        (e, _) => e,
+    })?;
+    let reattached = terms(p, log, &detached, false)?;
+    preview_live(p, &pane0, "attach", log, end)?;
+    let r_end = end.min(Instant::now() + Duration::from_secs(30));
+    let reload = until(r_end, || {
+        mac::activate(pid2).map_err(Failure::Check)?;
+        let mut rel = p.eon(&["window", "reload", &id, "--json"]);
+        let (st, out) = execute(log, &mut rel, r_end, true, true)?;
+        let r: Value = serde_json::from_slice(&out).map_err(|e| Failure::Check(e.to_string()))?;
+        match st.success() {
+            true => Ok(Some(r)),
+            false if is_reload_focus_refusal(&r) => Ok(None),
+            false => Err(Failure::Check(format!("reload {id} exited {st}: {r}"))),
+        }
+    })?;
+    check_preview_reload(&reload, &id)?;
+    let pid3 = p.wait_for_window(log, end, |p, log| p.preview(pid2, log, end))?;
+    log.line(&format!("mac-proof: preview pids {pid1}->{pid2}->{pid3}"));
+    terms(p, log, &reattached, false)?;
+    preview_live(p, &pane0, "reload", log, end)?;
+    p.processes(log, end)?;
+    let sr = p.act(&["window", "stop", &id], log, end)?;
+    check_stop_reply(&sr, &format!("eon window stop {id}"))?;
+    let settled = end.min(Instant::now() + Duration::from_secs(15));
+    let _ = until(settled, || {
+        Ok(p.survivors(log, settled)?.is_empty().then_some(()))
+    });
+    let skip = match &p.screen {
+        Err(r) => Some(format!("needs {}: {r}", Need::Screen.as_str())),
+        Ok(()) => auto_skip,
+    };
+    skip.map_or(Ok(()), |why| Err(Failure::Unavailable(why)))
+}
+
+fn rune_preview(scenario: &mut Scenario, log: &mut Log, end: Instant) -> Outcome {
+    let (mut p, mut sw) = (scenario.child("rune-preview", "preview", "p"), None);
+    let result = rune_preview_body(&mut p, &mut sw, log, end);
+    let restore = sw.map_or(Ok(()), |mut g| g.restore().map_err(Failure::Check));
+    if !p.runtime_owned {
+        let _ = fs::remove_dir_all(&p.root);
+        return settle(result, restore);
+    }
+    if !matches!(result, Ok(()) | Err(Failure::Unavailable(_))) {
+        p.failure_evidence(log);
+    }
+    let left = p.clean(log);
+    let clean = check(left.is_empty(), || format!("rune-preview left: {left:?}"));
+    settle(settle(result, clean), restore)
+}
+
 fn launch(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome {
     let failed = |error: io::Error| Failure::Check(format!("preparing the scenario: {error}"));
     scenario.prepare()?;
@@ -2113,7 +2520,11 @@ fn identity(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcom
     check(
         fs::canonicalize(&path).ok() == fs::canonicalize(&expected).ok(),
         || format!("eon config dir printed {path}, not {}", expected.display()),
-    )
+    )?;
+    let client = &scenario.workspace(log, deadline)?["running"]["this"]["client"];
+    check(client == "shipping", || {
+        format!("running.this.client is {client}, not \"shipping\"")
+    })
 }
 
 fn log_displays(log: &mut Log, displays: &[retina::Display]) {
@@ -2258,7 +2669,7 @@ fn retina(scenario: &mut Scenario, log: &mut Log, deadline: Instant) -> Outcome 
             log,
             deadline.min(Instant::now() + Duration::from_secs(30)),
         )?;
-        scenario.shown("retina", log, deadline)?;
+        scenario.shown(None, "retina", log, deadline)?;
         log.line(&format!(
             "mac-proof: Retina proved remotely: Venus's window at scale {scale} on the main display, in a capture"
         ));
@@ -2899,16 +3310,7 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
     }
     let left = scenario.clean(log);
     let reply = reply?;
-    let results: Vec<Value> = reply
-        .as_array()
-        .into_iter()
-        .flatten()
-        .flat_map(|window| window["results"].as_array().cloned().unwrap_or_default())
-        .collect();
-    check(
-        !results.is_empty() && results.iter().all(|result| result.get("stopped").is_some()),
-        || format!("eon window stop all replied {reply}"),
-    )?;
+    check_stop_reply(&reply, "eon window stop all")?;
     exited?;
     check(left.is_empty(), || {
         format!("left behind, now killed: {left:?}")
@@ -2918,7 +3320,6 @@ pub(crate) fn stop(scenario: &mut Scenario, log: &mut Log, deadline: Instant) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
 
     #[test]
     fn edit_requires_the_file_in_the_selected_editor_and_preserves_panes() {
@@ -3382,20 +3783,23 @@ mod tests {
 
         // The largest window, in shares of the main display.
         assert_eq!(
-            region(
+            largest_region(
                 &[[0.0, 0.0, 100.0, 50.0], [400.0, 0.0, 800.0, 600.0]],
                 [1600.0, 800.0]
             ),
-            Ok(Region {
-                x: 0.25,
-                y: 0.0,
-                width: 0.5,
-                height: 0.75
-            })
+            Ok((
+                1,
+                Region {
+                    x: 0.25,
+                    y: 0.0,
+                    width: 0.5,
+                    height: 0.75
+                }
+            ))
         );
         assert!(
-            region(&[], [1600.0, 800.0]).is_err()
-                && region(&[[0.0, 0.0, 0.0, 600.0]], [1600.0, 800.0]).is_err()
+            largest_region(&[], [1600.0, 800.0]).is_err()
+                && largest_region(&[[0.0, 0.0, 0.0, 600.0]], [1600.0, 800.0]).is_err()
         );
         assert_eq!(console("yu", "yu"), Ok(()));
         assert!(
@@ -3403,5 +3807,190 @@ mod tests {
                 .unwrap_err()
                 .contains("sysadminctl -autologin")
         );
+    }
+
+    #[test]
+    fn rune_preview_helpers_validate_reload_focus_and_geometry() {
+        assert!(is_reload_focus_refusal(&json!({
+            "error": {"code": "reload-refused", "detail": "window is not focused"}
+        })));
+        for not_focus in [
+            json!({"error": {"code": "reload-refused", "detail": "cooldown active"}}),
+            json!({"error": {"code": "other", "detail": "focus"}}),
+            json!({"code": "reload-refused", "detail": "focus"}),
+        ] {
+            assert!(!is_reload_focus_refusal(&not_focus), "{not_focus}");
+        }
+        assert!(check_preview_reload(
+            &json!({"window": "0123abcd", "accepted": true, "venus": "/nix/store/x/bin/venus-rune-candidate"}),
+            "0123abcd"
+        ).is_ok());
+        for bad in [
+            json!({"window": "deadbeef", "accepted": true, "venus": "/nix/store/x/bin/venus-rune-candidate"}),
+            json!({"window": "0123abcd", "accepted": false, "venus": "/nix/store/x/bin/venus-rune-candidate"}),
+            json!({"window": "0123abcd", "accepted": true, "venus": "/nix/store/x/bin/yazelix-venus"}),
+        ] {
+            assert!(check_preview_reload(&bad, "0123abcd").is_err(), "{bad}");
+        }
+        for bad in [
+            "", "default", "w_1-a", ".", "..", "../x", "a/b", "-x", "a b",
+        ] {
+            assert!(
+                owned_window(Path::new("/nonexistent"), bad).is_none(),
+                "{bad:?}"
+            );
+        }
+        assert!(is_apple_events_denied(
+            "Not authorized to send Apple events (-1743)"
+        ));
+        assert!(is_apple_events_denied("err (-1743)") && !is_apple_events_denied("exited 1"));
+        let mk = |w, h, pw, ph, hz| retina::Mode {
+            width: w,
+            height: h,
+            pixel_width: pw,
+            pixel_height: ph,
+            refresh: hz,
+            desktop: true,
+        };
+        let (m1024, m1280, m1440, m1440_120, m1440_2x, m1920) = (
+            mk(1024, 768, 1024, 768, 60.0),
+            mk(1280, 800, 1280, 800, 60.0),
+            mk(1440, 900, 1440, 900, 60.0),
+            mk(1440, 900, 1440, 900, 120.0),
+            mk(1440, 900, 2880, 1800, 60.0),
+            mk(1920, 1080, 1920, 1080, 60.0),
+        );
+        for (cur, ms, want) in [
+            (m1280, vec![m1280, m1440], (Some(m1440), false)),
+            (m1440, vec![m1440, m1920], (None, false)),
+            (m1920, vec![m1440, m1920], (Some(m1440), false)),
+            (m1440_120, vec![m1440], (None, false)),
+            (m1024, vec![m1024, m1280], (Some(m1280), true)),
+            (m1280, vec![m1024, m1280], (None, true)),
+            (m1024, vec![m1024], (None, true)),
+            (m1440_2x, vec![m1440_2x, m1440], (Some(m1440), false)),
+            (m1920, vec![m1024], (None, false)),
+        ] {
+            assert_eq!(rule11_mode(cur, &ms), want, "{cur}");
+        }
+        let disp = |current| retina::Display {
+            id: 1,
+            main: true,
+            builtin: false,
+            current,
+            modes: vec![current],
+        };
+        let (d1, d2) = ([disp(m1440)], [disp(m1440_2x)]);
+        let base = CaptureReport {
+            win: Some([0.0, 25.0, 1280.0, 800.0]),
+            px: Some((1280, 800)),
+            png_written: true,
+            ..Default::default()
+        };
+        let (f, t) = (false, true);
+        let mk = |edit: fn(&mut CaptureReport)| {
+            let mut r = base.clone();
+            edit(&mut r);
+            r
+        };
+        let chk = |ds: &[retina::Display], r: CaptureReport, flags: [bool; 4]| {
+            let j = geometry_json(&r, ds);
+            let got = [
+                j["achieved_1280x800"] == t,
+                j["runner_clamped"] == t,
+                j["screen_recording_denied"] == t,
+                j["capture_png"].is_string(),
+            ];
+            assert_eq!(got, flags, "{j}");
+            j
+        };
+        chk(&d1, base.clone(), [t, f, f, t]);
+        chk(&[], base.clone(), [f, f, f, t]);
+        chk(&d2, base.clone(), [f, f, f, t]);
+        chk(
+            &d1,
+            mk(|r| r.win = Some([0.0, 25.0, 1280.4, 799.6])),
+            [f, f, f, t],
+        );
+        chk(&d1, mk(|r| r.px = Some((2560, 1600))), [f, f, f, t]);
+        let rj = chk(
+            &d1,
+            mk(|r| r.resize_err = Some("refused".into())),
+            [f, f, f, t],
+        );
+        assert_eq!(rj["resize_error"], "refused");
+        chk(
+            &d1,
+            mk(|r| r.cap_err = Some("displays: err".into())),
+            [f, f, f, t],
+        );
+        let sj = chk(&d2, mk(|r| r.switch_skipped = true), [f, f, f, t]);
+        assert!(sj["switch_skipped"] == t && sj["switch_error"].is_null());
+        chk(
+            &d1,
+            mk(|r| {
+                (r.win, r.px, r.clamped) =
+                    (Some([0.0, 25.0, 1024.0, 743.0]), Some((1024, 743)), true)
+            }),
+            [f, t, f, t],
+        );
+        chk(&d1, mk(|r| r.switch_err = Some("err".into())), [f, f, f, t]);
+        chk(
+            &d1,
+            mk(|r| (r.denied, r.png_written, r.cap_err) = (true, false, Some("no".into()))),
+            [f, f, t, f],
+        );
+        let gate = |e: fn(&mut CaptureReport)| capture_gate(&mk(e), true);
+        assert!(gate(|r| r.switch_err = Some("no main display".into())).is_err());
+        assert!(matches!(gate(|r| r.switch_skipped = true), Ok(None)));
+        assert!(gate(|r| r.resize_err = Some("osascript exited 1".into())).is_err());
+        const AE: &str = "osascript exited 1: not authorized to send Apple events (-1743)";
+        assert!(
+            matches!(gate(|r| r.resize_err = Some(AE.into())), Ok(Some(m)) if m.contains("Automation"))
+        );
+        assert!(
+            gate(|r| (r.resize_err, r.cap_err) = (Some(AE.into()), Some("err".into()))).is_err()
+        );
+        let tmp = std::env::temp_dir().join(format!("mac-proof-guard-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&tmp);
+        fs::create_dir_all(tmp.join("rt/w/default")).unwrap();
+        fs::write(tmp.join("rt/w/default/launch.log"), "wrong\n").unwrap();
+        fs::create_dir_all(tmp.join("rt/w/0123abcd")).unwrap();
+        fs::create_dir_all(tmp.join("rt/w/0123ABCD")).unwrap();
+        fs::create_dir_all(tmp.join("rt/w/deadbeef")).unwrap();
+        fs::write(tmp.join("rt/w/deadbeef/launch.log"), "boot fail\n").unwrap();
+        assert!(owned_window(&tmp.join("rt"), "0123abcd").is_some());
+        assert!(owned_window(&tmp.join("rt"), "0123ABCD").is_none());
+        assert!(owned_window(&tmp.join("rt"), "default").is_none());
+        assert!(owned_window(&tmp.join("rt"), "w_1-a").is_none());
+        let mut s = Scenario::new("/pkg".into(), tmp.join("ev"), Environment::Private, false);
+        (s.root, s.runtime, s.window) = (tmp.join("root"), tmp.join("rt"), Some("0123abcd".into()));
+        assert!(s.prepare().is_err() && !s.runtime_owned);
+        let mut log = Log::new(File::create(tmp.join("log")).unwrap());
+        let rt = s.runtime.display();
+        let ps = parse_processes(
+            &format!(
+                "501 20 1 /x/venus-rune-candidate {rt}/w/0123abcd/s\n501 21 1 /x/venus-rune-candidate /o/s\n"
+            ),
+            "501",
+        );
+        assert!(
+            s.own(&ps, &mut log).is_empty() && s.clean(&mut log).is_empty() && s.runtime.is_dir()
+        );
+        assert!(!s.evidence.join("launch.log").exists());
+        s.runtime_owned = true;
+        assert_eq!(s.own(&ps, &mut log).len(), 1);
+        s.failure_evidence(&mut log);
+        assert!(
+            fs::read_to_string(tmp.join("log"))
+                .unwrap()
+                .contains("\"--window\" \"0123abcd\"")
+        );
+        assert!(s.clean(&mut log).is_empty() && !s.runtime.exists());
+        assert_eq!(
+            fs::read_to_string(s.evidence.join("launch.log")).unwrap(),
+            "boot fail\n"
+        );
+        fs::remove_dir_all(tmp).unwrap();
     }
 }

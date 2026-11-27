@@ -97,6 +97,18 @@ fn u32_at(bytes: &[u8], at: usize) -> Option<u32> {
     Some(u32::from_le_bytes(bytes.get(at..at + 4)?.try_into().ok()?))
 }
 
+/// Reads the pixel width and height from a PNG file's IHDR chunk.
+pub fn png_dimensions(bytes: &[u8]) -> Result<(u32, u32), String> {
+    if bytes.len() < 24 || !bytes.starts_with(b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR") {
+        return Err("PNG signature or IHDR chunk missing/malformed".to_owned());
+    }
+    let w = u32::from_be_bytes(bytes[16..20].try_into().expect("4 bytes"));
+    let h = u32::from_be_bytes(bytes[20..24].try_into().expect("4 bytes"));
+    (w > 0 && h > 0)
+        .then_some((w, h))
+        .ok_or_else(|| format!("PNG of {w}x{h} pixels"))
+}
+
 impl Picture {
     /// Reads an uncompressed 24- or 32-bit BMP (BI_RGB, or BI_BITFIELDS with
     /// BGRA masks), bottom-up or top-down.
@@ -335,5 +347,15 @@ mod tests {
         cut.truncate(cut.len() - 1);
         assert_eq!(Picture::from_bmp(&cut).unwrap_err(), "BMP pixels cut short");
         assert!(Picture::from_bmp(b"\x89PNG").is_err());
+    }
+
+    #[test]
+    fn png_dimensions_reads_ihdr_and_rejects_malformed_headers() {
+        let mut png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\x0dIHDR".to_vec();
+        png.extend([1280u32.to_be_bytes(), 800u32.to_be_bytes()].concat());
+        assert_eq!(png_dimensions(&png), Ok((1280, 800)));
+        assert!(png_dimensions(b"not a png").is_err() && png_dimensions(&png[..20]).is_err());
+        png[16..20].copy_from_slice(&0u32.to_be_bytes());
+        assert!(png_dimensions(&png).is_err());
     }
 }

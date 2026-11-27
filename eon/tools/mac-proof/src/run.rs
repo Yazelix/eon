@@ -33,6 +33,8 @@ const EON_PROCESSES: &[&str] = &[
     "yazelix-orbit-worker",
     "yazelix-venus",
     ".yazelix-venus-wrapped",
+    "venus-rune-candidate",
+    ".venus-rune-candidate-wrapped",
 ];
 
 pub struct Options {
