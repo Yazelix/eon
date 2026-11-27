@@ -24620,8 +24620,11 @@ fn pane_send_keys_deliver_in_order_and_say_what_was_sent() {
 #[test]
 fn pane_send_pastes_then_waits_for_enter_and_exits_by_failure() {
     let root = temporary_directory();
-    let (mut supervisor, generation, _) =
-        terminal_access_workspace(&root, "\n[agents]\nsend_enter_delay_ms = 400\n");
+    // No quota chips, so no quota read lands between the two session snapshots.
+    let (mut supervisor, generation, _) = terminal_access_workspace(
+        &root,
+        "\n[agents]\nsend_enter_delay_ms = 400\n\n[bar]\nwidgets = []\n",
+    );
     let eon = |root: &Path| {
         let mut command = eon_command(Path::new(env!("CARGO_BIN_EXE_eon")));
         command
