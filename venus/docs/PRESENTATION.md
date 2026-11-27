@@ -406,6 +406,9 @@ Popup and Agents headings have a Hide button of their own, and each Stack tab
 a Close button; both are described below.
 Hover and press highlight the individual button. A one-pane tab keeps a dimmed,
 disabled Zoom button in its slot.
+Pane IDs and names adapt to the column's terminal background and opacity. A
+bottom-edge title uses the opaque frame colour when its text needs one backing.
+Hover uses the title pill's opaque fill for text contrast.
 
 F6 cycles to pane chrome. Tab and Shift+Tab cycle the selected pane's title, Zoom
 and Close, skipping disabled Zoom, then the selected Stack's Close while it

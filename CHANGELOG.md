@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Venus pane labels adapt to light and dark terminal backgrounds set with
+  OSC 11 (`eon-4vtmu`).
 - Venus stops sending typing, input-method commits and keyboard paste to
   Orbit after GPU device loss. To keep an Eon workspace's terminals running,
   turn off input lock if active, then detach with Alt+Shift+D

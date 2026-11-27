@@ -244,17 +244,6 @@ fn scroll_thumb(track: SceneRect, viewport: f32, scroll: f32, max_scroll: f32) -
     }
 }
 
-/// `fill` at `opacity` over a white desktop: a translucent card's lightest case, the one that
-/// bounds light text on it.
-fn over_bright_desktop(fill: SceneColor, opacity: f32) -> SceneColor {
-    let resolved = |value: u8| (f32::from(value) * opacity + 255.0 * (1.0 - opacity)).round() as u8;
-    SceneColor {
-        r: resolved(fill.r),
-        g: resolved(fill.g),
-        b: resolved(fill.b),
-    }
-}
-
 /// A Stack label's colour on its column's terminal background `fill`: primary text, blended
 /// toward black only as far as 4.5:1 needs when that background is itself light. Like the
 /// terminal's own text, it is judged against the terminal's colour, not the translucent result:
@@ -268,8 +257,7 @@ fn pane_id_color(
     name: SceneColor,
     selected: bool,
     live: bool,
-    fill: SceneColor,
-    opacity: f32,
+    surfaces: [SceneColor; 2],
 ) -> SceneColor {
     if !live {
         return name;
@@ -279,9 +267,9 @@ fn pane_id_color(
     } else {
         palette::DARK.pane_id
     };
-    // A bright desktop bounds the translucent fill; frame and hover remain opaque.
-    let resolved = over_bright_desktop(fill, opacity);
-    if contrast_ratio(dim, resolved) >= 4.5
+    if surfaces
+        .into_iter()
+        .all(|fill| contrast_ratio(dim, fill) >= 4.5)
         && contrast_ratio(dim, palette::DARK.bar_background) >= 4.5
     {
         dim
@@ -3222,6 +3210,16 @@ impl Renderer {
             if panes.is_empty() {
                 continue;
             }
+            let background = backgrounds
+                .get(column_index)
+                .copied()
+                .unwrap_or(palette::DARK.terminal_fallback);
+            let surfaces = Backing::card(
+                background,
+                self.background_opacity,
+                self.config.format.is_srgb(),
+            )
+            .surfaces();
             let empty_gap = SceneRect {
                 left: card.right(),
                 ..SceneRect::default()
@@ -3274,7 +3272,24 @@ impl Renderer {
                 } else {
                     palette::DARK.secondary_text
                 };
-                let row = if self.pane_frames && index + 1 == panes.len() && !pane.selected {
+                let bottom_edge = self.pane_frames && index + 1 == panes.len() && !pane.selected;
+                let hovered = self.header.hovers(WorkspaceFocus::Panes, &pane.id);
+                let mut pill_fill = hovered.then_some(palette::DARK.chrome_highlight);
+                let title_color = if let Some(fill) = pill_fill {
+                    blend_to_contrast(color, fill, 4.5)
+                } else {
+                    let adapted = blend_to_contrast_pair(color, surfaces, 4.5);
+                    let bar = palette::DARK.bar_background;
+                    if bottom_edge && adapted.is_none_or(|ink| contrast_ratio(ink, bar) < 4.5) {
+                        // The bottom title spans the card and the opaque frame.
+                        pill_fill = Some(bar);
+                        blend_to_contrast(color, bar, 4.5)
+                    } else {
+                        adapted.unwrap_or_else(|| blend_to_contrast(color, background, 4.5))
+                    }
+                };
+                let title_surfaces = pill_fill.map_or(surfaces, |fill| [fill; 2]);
+                let row = if bottom_edge {
                     bottom_title_row(
                         pane.rect,
                         outline.bounds.bottom(),
@@ -3293,7 +3308,7 @@ impl Renderer {
                         &notch.tab.title,
                         row,
                         rect,
-                        color,
+                        title_color,
                         physical_outline_width(
                             if current {
                                 self.focus_border_width
@@ -3304,19 +3319,10 @@ impl Renderer {
                         ),
                     )
                 } else {
-                    self.build_border_title(pane.label(), row, rect, width, color)
+                    self.build_border_title(pane.label(), row, rect, width, title_color)
                 };
-                let id_color = pane_id_color(
-                    color,
-                    current,
-                    pane.live,
-                    backgrounds
-                        .get(column_index)
-                        .copied()
-                        .unwrap_or(palette::DARK.terminal_fallback),
-                    self.background_opacity,
-                );
-                if id_color != color
+                let id_color = pane_id_color(title_color, current, pane.live, title_surfaces);
+                if id_color != title_color
                     && let Some(text) = self.text.get_mut(first_text)
                 {
                     color_label_identity(
@@ -3338,12 +3344,8 @@ impl Renderer {
                 );
                 rectangles.clip = Some(rect);
                 if pill.width > self.metrics.padding {
-                    if self.header.hovers(WorkspaceFocus::Panes, &pane.id) {
-                        rectangles.push_rounded(
-                            pill,
-                            tokens::inner_radius(self.metrics),
-                            palette::DARK.chrome_highlight,
-                        );
+                    if let Some(fill) = pill_fill {
+                        rectangles.push_rounded(pill, tokens::inner_radius(self.metrics), fill);
                     }
                     if notch.is_none() && current && focus == WorkspaceFocus::Panes {
                         rectangles.push_rounded_outline(
@@ -3389,10 +3391,7 @@ impl Renderer {
                                 enabled,
                             },
                             color,
-                            backgrounds
-                                .get(column_index)
-                                .copied()
-                                .unwrap_or(palette::DARK.terminal_fallback),
+                            background,
                         );
                     }
                 }
@@ -3405,12 +3404,7 @@ impl Renderer {
             {
                 let mut stack = crate::contour::stack_outline(workspace, first, fill);
                 let stroke = physical_outline_width(self.border_width, self.metrics.scale);
-                let color = stack_label_color(
-                    backgrounds
-                        .get(column_index)
-                        .copied()
-                        .unwrap_or(palette::DARK.terminal_fallback),
-                );
+                let color = stack_label_color(background);
                 let row = SceneRect {
                     height: chrome_title_metrics(self.metrics).text_height,
                     ..card
@@ -3470,17 +3464,7 @@ impl Renderer {
             // The Stack's Close, in the label's colour, over its card's outline.
             if let Some((close, color)) = stack_close {
                 self.push_heading_button(
-                    workspace,
-                    focus,
-                    rectangles,
-                    close,
-                    "×",
-                    color,
-                    card,
-                    backgrounds
-                        .get(column_index)
-                        .copied()
-                        .unwrap_or(palette::DARK.terminal_fallback),
+                    workspace, focus, rectangles, close, "×", color, card, background,
                 );
             }
         }
@@ -4976,6 +4960,102 @@ mod tests {
     }
 
     #[test]
+    fn pane_header_labels_contrast_with_their_painted_backing() {
+        let size = PhysicalSize::new(1280, 800);
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let mut renderer = Renderer::hosted(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8UnormSrgb,
+            (size.width, size.height),
+            1.0,
+            FontSetup::new(&FontSettings::default()).unwrap(),
+        )
+        .unwrap();
+        renderer.background_opacity = 0.8;
+        let mut snapshot = popup_sidebar_snapshot();
+        snapshot.sidebar = eon_workspace_protocol::v51::Sidebar::Closed;
+        let panes = &mut snapshot.tabs[0].columns[0].panes;
+        panes[0].label = "p1  Upper pane".into();
+        panes[1].label = "p2  Lower pane".into();
+        let [dark, middle, light] = [8, 160, 244].map(|v| SceneColor { r: v, g: v, b: v });
+        let palette = &palette::DARK;
+        for (frames, selected, hovered, background) in [
+            (true, "p1", false, light),
+            (true, "p1", false, middle),
+            (true, "p1", false, dark),
+            (true, "p2", true, light),
+            (false, "p2", true, light),
+        ] {
+            snapshot.tabs[0].selected_pane = Some(selected.into());
+            snapshot.tabs[0].columns[0].expanded = selected.into();
+            let metrics = renderer.metrics();
+            let workspace =
+                WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                    renderer.fit_tab_text(text)
+                });
+            renderer.pane_frames = frames;
+            renderer.text.clear();
+            renderer.set_hovered_header(hovered.then(|| (WorkspaceFocus::Panes, selected.into())));
+            let title_tabs = renderer.workspace_title_tabs(&workspace);
+            let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+            let mut batch = RectangleBatch::new(size.width, size.height);
+            renderer.build_workspace(
+                &workspace,
+                WorkspaceFocus::Terminal,
+                &mut batch,
+                &[background],
+                &title_tabs,
+                &pane_tabs,
+            );
+            for pane in &workspace.panes {
+                let (text, run) = renderer
+                    .text
+                    .iter()
+                    .flat_map(|text| text.buffer.layout_runs().map(move |run| (text, run)))
+                    .find(|(_, run)| run.text == pane.label())
+                    .expect("painted pane title");
+                let bottom = frames && selected == "p1" && pane.id == "p2";
+                let pill = if hovered && pane.selected {
+                    Some(palette.chrome_highlight)
+                } else if bottom && background != dark {
+                    Some(palette.bar_background)
+                } else {
+                    None
+                };
+                let card =
+                    workspace.card_fill(workspace.chrome, metrics, renderer.card_stroke_width());
+                let center = if bottom {
+                    card.bounds.bottom()
+                } else {
+                    text.top + 8.0
+                };
+                for y in [center - 2.5, center + 2.5] {
+                    assert_eq!(paint_at(&batch, (text.left + 8.0, y)), pill);
+                }
+                let surfaces =
+                    pill.map_or_else(|| card_surfaces(background, 0.8, true), |fill| [fill; 2]);
+                assert_eq!(run.glyphs.first().unwrap().start, 0);
+                assert!(run.glyphs.last().unwrap().start > pane.id.len() + 1);
+                for glyph in run.glyphs {
+                    let ink = rgb(glyph.color_opt.unwrap_or(text.color));
+                    for fill in surfaces {
+                        assert!(contrast_ratio(ink, fill) >= 4.5, "{} on {fill:?}", run.text);
+                    }
+                }
+                if background == dark {
+                    let seed = if pane.selected {
+                        palette.primary_text
+                    } else {
+                        palette.secondary_text
+                    };
+                    assert_eq!(rgb(text.color), seed);
+                }
+            }
+        }
+    }
+
+    #[test]
     fn pane_identity_dimming_preserves_contrast_and_shaped_geometry() {
         let name = SceneColor {
             r: 239,
@@ -4983,7 +5063,8 @@ mod tests {
             b: 248,
         };
         let black = SceneColor { r: 0, g: 0, b: 0 };
-        let dim = pane_id_color(name, true, true, black, 0.8);
+        let surfaces = |opacity| card_surfaces(black, opacity, true);
+        let dim = pane_id_color(name, true, true, surfaces(0.8));
         assert_ne!(dim, name);
         assert!(
             contrast_ratio(
@@ -4995,18 +5076,17 @@ mod tests {
                 }
             ) >= 4.5
         );
-        assert_eq!(pane_id_color(name, true, true, black, 0.3), name);
+        assert_eq!(pane_id_color(name, true, true, surfaces(0.3)), name);
         assert_eq!(
             pane_id_color(
                 name,
                 true,
                 true,
-                SceneColor {
+                [SceneColor {
                     r: 230,
                     g: 220,
                     b: 200
-                },
-                1.0
+                }; 2]
             ),
             name
         );
