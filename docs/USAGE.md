@@ -2079,6 +2079,11 @@ arguments. A consumer that closes stdout early leaves the checks' exit status in
   (`~/.local/state/eon/logs/orbit` by default), named
   `GENERATION-TERMINAL-RUN.log`; Eon keeps the newest 100 plus those of running
   Orbit hosts.
+- **The first tab opened without quick search:** without `--dir`, a fresh
+  window's first tab starts on quick search. When its Files popup cannot
+  start, the tab gets a pane at the launch directory instead, and the
+  supervisor log above has a `t1 starts without its Files pair` line with the
+  reason.
 - **A command works in Yazelix Nova but not in Eon:** Eon's managed Nushell
   and Bash load your own shell configuration (`~/.config/nushell` and
   `~/.bashrc`), while Nova's Nushell reads `~/.config/yazelix/nu` in place of

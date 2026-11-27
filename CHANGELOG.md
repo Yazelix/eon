@@ -7,6 +7,9 @@ installation, and proven contract changes.
 
 - Orbit rejects incomplete launch options before starting a terminal, even
   when another launch flag follows the missing value (`eon-k77x4`).
+- When a fresh window's first tab cannot start its Files popup, so it opens a
+  pane at the launch directory instead of quick search, the supervisor log
+  now says why (`eon-w6gsx`).
 - Claude quota keeps updating when CodexBar reports a Sonnet or Opus weekly
   lane, and a model-only weekly lane is no longer shown as the all-models
   Claude week (`eon-kgmlz`, EON-C27).

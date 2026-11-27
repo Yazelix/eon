@@ -1494,6 +1494,7 @@ fn supervise(
                     |_| Ok(()),
                 )
                 .map_err(&startup_error)?
+                .0
             } else {
                 let recovered = if sessions.is_empty() {
                     vec![(
@@ -1593,7 +1594,7 @@ fn supervise(
         }
         let mut workspaces = if mode == LaunchMode::Workspace {
             Some(if sessions.is_empty() {
-                WorkspaceSet::registered_pending(
+                let (workspaces, unpaired) = WorkspaceSet::registered_pending(
                     registry.clone(),
                     registration.as_ref().unwrap().clone(),
                     workspace_ids.as_ref().unwrap().clone(),
@@ -1628,7 +1629,14 @@ fn supervise(
                         )
                     },
                 )
-                .map_err(&startup_error)?
+                .map_err(&startup_error)?;
+                if let Some(detail) = unpaired {
+                    log.record(&format!(
+                        "t1 starts without its Files pair, at {}: {detail}",
+                        launch_directory.display()
+                    ));
+                }
+                workspaces
             } else {
                 WorkspaceSet::registered_recovered(
                     registry.clone(),
@@ -7299,7 +7307,8 @@ mod tests {
                 |_, _| Ok(Default::default()),
                 |_| Ok(()),
             )
-            .unwrap(),
+            .unwrap()
+            .0,
         );
         registry.inject(Some(Fault::WaitBeforeRecordPublication));
         state.registry_worker = Some(Worker::start(registry.clone()).unwrap());

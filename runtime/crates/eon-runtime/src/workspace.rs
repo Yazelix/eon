@@ -278,6 +278,7 @@ impl WorkspaceSet {
             prepare,
             operate,
         )
+        .map(|(set, _)| set)
     }
 
     #[cfg(test)]
@@ -299,6 +300,7 @@ impl WorkspaceSet {
             prepare,
             operate,
         )
+        .map(|_| ())
     }
 
     #[cfg(test)]
@@ -334,7 +336,7 @@ impl WorkspaceSet {
         pair: bool,
         prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
-    ) -> Result<Self, String> {
+    ) -> Result<(Self, Option<String>), String> {
         let mut set = Self {
             registry,
             workspaces: Vec::new(),
@@ -346,7 +348,7 @@ impl WorkspaceSet {
             recent_mutations: VecDeque::new(),
             in_flight: None,
         };
-        set.insert_registered_pending(
+        let unpaired = set.insert_registered_pending(
             registration,
             directory,
             home,
@@ -355,7 +357,7 @@ impl WorkspaceSet {
             prepare,
             operate,
         )?;
-        Ok(set)
+        Ok((set, unpaired))
     }
 
     fn pending_allowance(&self) -> Result<usize, Failure> {
@@ -401,9 +403,9 @@ impl WorkspaceSet {
         pair: bool,
         prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         operate: impl FnMut(SessionOperation) -> Result<(), String>,
-    ) -> Result<(), String> {
+    ) -> Result<Option<String>, String> {
         let allowance = self.pending_allowance().map_err(|error| error.detail)?;
-        let workspace = Workspace::pending(
+        let (workspace, unpaired) = Workspace::pending(
             registration,
             &mut self.ids,
             allowance,
@@ -418,7 +420,7 @@ impl WorkspaceSet {
         self.ids.next_tab += 1;
         self.recent_workspaces.push_back(workspace.id.clone());
         self.workspaces.push(workspace);
-        Ok(())
+        Ok(unpaired)
     }
 
     pub(crate) fn registered_recovered(
@@ -1500,7 +1502,7 @@ impl Workspace {
         pair: bool,
         mut prepare: impl FnMut(&PopupCommand, &Path) -> Result<PreparedCommand, String>,
         mut operate: impl FnMut(SessionOperation) -> Result<(), String>,
-    ) -> Result<Self, String> {
+    ) -> Result<(Self, Option<String>), String> {
         let mut workspace = Self {
             id: format!("s{}", ids.next_workspace),
             persistent_id: Some(registration.id),
@@ -1520,11 +1522,12 @@ impl Workspace {
             }],
             active: 0,
         };
-        // Without its pair, as for a launch `--dir` (EON-C18), t1
-        // starts its first pane at once.
-        if !pair
-            || workspace
-                .open_popup(
+        // Without its pair, as for a launch `--dir` (EON-C18), t1 starts its
+        // first pane at once; a pair that fails to start does the same, as
+        // its dismissal would, and the caller gets why.
+        let unpaired = pair
+            .then(|| {
+                workspace.open_popup(
                     ids,
                     allowance,
                     0,
@@ -1533,12 +1536,14 @@ impl Workspace {
                     &mut operate,
                     true,
                 )
-                .is_err()
-        {
+            })
+            .and_then(Result::err)
+            .map(|failure| failure.detail);
+        if !pair || unpaired.is_some() {
             workspace.tabs[0].pending = false;
             workspace.start_pane(ids, allowance, 0, &mut operate)?;
         }
-        Ok(workspace)
+        Ok((workspace, unpaired))
     }
 
     fn with_recovered_sessions(
@@ -4881,7 +4886,8 @@ pub(crate) mod tests {
             prepared,
             |_| Ok(()),
         )
-        .unwrap();
+        .unwrap()
+        .0;
         (registry, set)
     }
 
@@ -5274,54 +5280,61 @@ pub(crate) mod tests {
     }
 
     /// A launch `--dir` starts t1's first pane at once, with no pair
-    /// (EON-C18).
+    /// (EON-C18). A pair that fails to start leaves t1 the same, and says
+    /// why (eon-w6gsx).
     #[test]
     fn a_launch_directory_starts_t1_with_its_first_pane_and_no_pair() {
-        let registry = Registry::in_test_directory(
-            super::super::supervisor::temporary_directory().join("sessions"),
-        );
-        let registration = registry.create(None).unwrap();
-        let mut started = Vec::new();
-        let set = WorkspaceSet::registered_pending(
-            Some(registry),
-            registration,
-            IdAllocator::new("/runtime".into(), 0).unwrap(),
-            "/launch".into(),
-            Some("/".into()),
-            catalog(),
-            false,
-            prepared,
-            |operation| {
-                if let SessionOperation::Start {
-                    session,
-                    directory,
-                    command,
-                    tab,
-                } = operation
-                {
-                    started.push((session.id, directory, command, tab));
-                }
-                Ok(())
-            },
-        )
-        .unwrap();
-        assert_eq!(
-            started,
-            [(
-                "terminal-1".to_owned(),
-                PathBuf::from("/launch"),
-                LaunchCommand::Pane,
-                None
-            )]
-        );
-        let snapshot = set.snapshot();
-        let [tab] = snapshot.tabs.as_slice() else {
-            panic!("one tab");
-        };
-        assert!(!tab.pending && tab.popups.is_empty() && tab.selected_popup.is_none());
-        assert_eq!(tab.directory, b"/launch");
-        assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
-        assert_eq!(tab.panes().count(), 1);
+        for (pair, unpaired) in [(false, None), (true, Some("no Files here"))] {
+            let registry = Registry::in_test_directory(
+                super::super::supervisor::temporary_directory().join("sessions"),
+            );
+            let registration = registry.create(None).unwrap();
+            let mut started = Vec::new();
+            let (set, reason) = WorkspaceSet::registered_pending(
+                Some(registry),
+                registration,
+                IdAllocator::new("/runtime".into(), 0).unwrap(),
+                "/launch".into(),
+                Some("/".into()),
+                catalog(),
+                pair,
+                prepared,
+                |operation| {
+                    if let SessionOperation::Start {
+                        session,
+                        directory,
+                        command,
+                        tab,
+                    } = operation
+                    {
+                        if matches!(command, LaunchCommand::Files { .. }) {
+                            return Err("no Files here".into());
+                        }
+                        started.push((session.id, directory, command, tab));
+                    }
+                    Ok(())
+                },
+            )
+            .unwrap();
+            assert_eq!(reason.as_deref(), unpaired);
+            assert_eq!(
+                started,
+                [(
+                    "terminal-1".to_owned(),
+                    PathBuf::from("/launch"),
+                    LaunchCommand::Pane,
+                    None
+                )]
+            );
+            let snapshot = set.snapshot();
+            let [tab] = snapshot.tabs.as_slice() else {
+                panic!("one tab");
+            };
+            assert!(!tab.pending && tab.popups.is_empty() && tab.selected_popup.is_none());
+            assert_eq!(tab.directory, b"/launch");
+            assert_eq!(tab.selected_pane.as_deref(), Some("p1"));
+            assert_eq!(tab.panes().count(), 1);
+        }
     }
 
     fn two_workspace_set(

@@ -178,12 +178,13 @@ fn temporary_directory() -> PathBuf {
     path
 }
 
-fn bash_executable() -> PathBuf {
-    // Nix builders supply Bash on PATH without /usr/bin/env.
+/// `program` on the test's PATH: Nix builders supply tools such as Bash on
+/// PATH without /usr/bin/env or /bin.
+fn path_executable(program: &str) -> PathBuf {
     std::env::split_paths(&std::env::var_os("PATH").unwrap())
-        .filter_map(|directory| fs::canonicalize(directory.join("bash")).ok())
+        .filter_map(|directory| fs::canonicalize(directory.join(program)).ok())
         .find(|path| path.is_file())
-        .expect("the test environment supplies Bash")
+        .unwrap_or_else(|| panic!("the test environment supplies {program}"))
 }
 
 fn executable(path: &Path, source: impl AsRef<[u8]>) {
@@ -4407,6 +4408,14 @@ while [ ! -e "$EON_TEST_STOP" ]; do sleep 0.01; done
         log_lines(&self.zoxide_log)
     }
 
+    /// The text of this window's supervisor logs; Orbit's sit apart in `orbit/`.
+    fn logs(&self) -> String {
+        fs::read_dir(self.root.join("state/eon/logs"))
+            .unwrap()
+            .filter_map(|entry| fs::read_to_string(entry.unwrap().path()).ok())
+            .collect()
+    }
+
     /// Kills `supervisor` as a crash would and waits until the fake Orbit of
     /// every terminal its window showed has seen its lease end. Each fake
     /// Orbit notices on its own poll, and one still holding the ended lease
@@ -4742,6 +4751,67 @@ fn a_slow_command_pane_starts_once_without_changing_focus() {
     wait_for(&marker);
     assert_eq!(fs::read_to_string(marker).unwrap(), "started\n");
     window.stop_generation(&mut supervisor);
+}
+
+/// `eon run -- COMMAND` without `--dir` starts t1 pending on quick search at
+/// the launch directory, in the default namespace and an independent window
+/// alike. A pair that cannot start leaves t1 a pane there instead, as its
+/// dismissal would (EON-C18), and the supervisor log says why (eon-w6gsx).
+#[test]
+fn run_without_dir_starts_t1_on_quick_search_or_logs_why_not() {
+    const FALLBACK: &str = "t1 starts without its Files pair";
+    for (row, independent, files) in [
+        ("default", false, true),
+        ("independent", true, true),
+        ("no-files", false, false),
+    ] {
+        let mut window = PairWindow::new();
+        if independent {
+            window = window.independent("0000000c");
+        }
+        let mut command = window.command(&["sleep", "300"]);
+        if !files {
+            fs::remove_file(window.root.join("session-bin/eon-files")).unwrap();
+            // No ambient eon-files: only the tools the child and the mocks run.
+            let tools = window.root.join("tools");
+            fs::create_dir(&tools).unwrap();
+            for tool in ["sleep", "cat"] {
+                std::os::unix::fs::symlink(path_executable(tool), tools.join(tool)).unwrap();
+            }
+            command.env("PATH", &tools);
+        }
+        let mut supervisor = window.start(command);
+        wait_for_ready(&window.control());
+        let snapshot = window.inspect(row);
+        let tab = &snapshot.tabs[0];
+        assert_eq!(tab.directory, window.launch.as_os_str().as_bytes(), "{row}");
+        let logs = window.logs();
+        if files {
+            let (_, pair) =
+                pending_pair(&snapshot).unwrap_or_else(|| panic!("{row}: {snapshot:?}"));
+            assert_eq!(tab.selected_popup.as_ref(), Some(&pair.id), "{row}");
+            let launch = window.pair_launch(&pair.session);
+            assert_eq!(launch.directory, window.launch, "{row}");
+            assert!(
+                launch
+                    .arguments
+                    .iter()
+                    .any(|argument| argument == "--eon-quick"),
+                "{row}"
+            );
+            assert!(!logs.contains(FALLBACK), "{row}: {logs}");
+        } else {
+            assert!(!tab.pending && tab.popups.is_empty(), "{snapshot:?}");
+            assert_eq!(tab.panes().count(), 1, "{snapshot:?}");
+            let line = format!("{FALLBACK}, at {}: ", window.launch.display());
+            assert!(
+                logs.lines()
+                    .any(|logged| logged.contains(&line) && logged.contains("eon-files")),
+                "{logs}"
+            );
+        }
+        window.stop_generation(&mut supervisor);
+    }
 }
 
 #[test]
@@ -5393,10 +5463,7 @@ fn hotkeys_switch_the_pair_screens_or_hide_it() {
         !failed.is_empty() && failed.iter().all(|call| *call == move_to(&window.home)),
         "{failed:?}"
     );
-    let logs: String = fs::read_dir(window.root.join("state/eon/logs"))
-        .unwrap()
-        .filter_map(|entry| fs::read_to_string(entry.unwrap().path()).ok())
-        .collect();
+    let logs = window.logs();
     assert!(
         logs.contains(&format!("Files did not move to {home}")),
         "{logs}"
@@ -5949,7 +6016,7 @@ fn a_failing_test_closes_its_terminals_before_reaping_their_child() {
 fn update_handoff_preserves_the_process_boundary_and_bounds_script_recursion() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
-    let bash = bash_executable();
+    let bash = path_executable("bash");
     let internal = root.join("window/libexec/eon/bin");
     fs::create_dir_all(&internal).unwrap();
     executable(
@@ -6102,7 +6169,7 @@ fn update_handoff_preserves_the_process_boundary_and_bounds_script_recursion() {
 fn update_check_reports_a_profile_entry_as_one_json_object_without_changing_it() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
-    let bash = bash_executable();
+    let bash = path_executable("bash");
     let platform = if cfg!(target_os = "macos") {
         "aarch64-darwin"
     } else {
@@ -22569,9 +22636,7 @@ fn terminals_do_not_inherit_a_launching_neovim_server() {
             .env("NVIM_LISTEN_ADDRESS", &server);
         let mut supervisor = window.start(command);
         wait_for_ready(&window.control());
-        if window.inspect("launched").tabs[0].pending {
-            pick_editor_popup_tab(&window);
-        }
+        pick_editor_popup_tab(&window);
         let created = window.eon(&["pane", "create", "--json"]);
         assert!(created.status.success(), "{created:?}");
         let snapshot = window.inspect("inherited-server");
@@ -26453,7 +26518,7 @@ fn a_confirmed_close_inspects_first_and_a_failed_inspection_closes_nothing() {
 fn update_direct_checks_and_installs_only_through_the_owned_payload_helper() {
     let root = temporary_directory();
     let binary = Path::new(env!("CARGO_BIN_EXE_eon"));
-    let bash = bash_executable();
+    let bash = path_executable("bash");
     let versions = Command::new(binary).arg("versions").output().unwrap();
     let text = stdout(&versions);
     let identity: Vec<_> = text.lines().next().unwrap().split_whitespace().collect();

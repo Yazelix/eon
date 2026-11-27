@@ -197,7 +197,8 @@ pub(crate) fn source_b() -> Source {
         prepared,
         |_| Ok(()),
     )
-    .unwrap();
+    .unwrap()
+    .0;
     Source {
         set,
         registry,
