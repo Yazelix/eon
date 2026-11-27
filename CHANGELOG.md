@@ -12,6 +12,8 @@ installation, and proven contract changes.
   full, so a second start beside it fails with "server already listening"
   instead of removing the socket. On Linux that start no longer waits for the
   live Orbit to accept (`eon-260mh.18`).
+- A busy or starting Eon supervisor is reported unreachable, not dead or
+  corrupt, and a launch retries it for a bounded time (`eon-260mh.19`).
 - Venus pane labels adapt to light and dark terminal backgrounds set with
   OSC 11 (`eon-4vtmu`).
 - The Agents sidebar keeps the tab's terminal background when its leftmost

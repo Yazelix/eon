@@ -204,12 +204,21 @@ fn connect_control_with_timeout(
 
     let stream = super::sessions::unix_connect_with_timeout(socket, timeout).map_err(|error| {
         let kind = match error.kind() {
-            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused => {
-                EndpointFailureKind::Dead
-            }
+            std::io::ErrorKind::NotFound => EndpointFailureKind::Dead,
             std::io::ErrorKind::TimedOut | std::io::ErrorKind::WouldBlock => {
                 EndpointFailureKind::Unreachable
             }
+            // A live stream socket that fails a connect is starting (before
+            // listen(2)) or busy (a full accept queue: macOS refuses, Linux
+            // polls to POLLHUP with no error set).
+            _ if matches!(
+                probe_stream_socket(socket),
+                Ok(StreamSocketProbe::LiveStream)
+            ) =>
+            {
+                EndpointFailureKind::Unreachable
+            }
+            std::io::ErrorKind::ConnectionRefused => EndpointFailureKind::Dead,
             _ => EndpointFailureKind::Corrupt,
         };
         EndpointFailure::new(
@@ -1713,6 +1722,41 @@ mod tests {
 
         drop(socket);
         drop(ControlListener::bind(&path).unwrap());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn a_live_listener_that_cannot_accept_is_unreachable() {
+        use super::EndpointFailureKind::{Dead, Unreachable};
+        use socket2::{Domain, SockAddr, Socket, Type};
+        let root = temporary_directory();
+        // Every system refuses a stream connect before listen(2).
+        let bound = root.join("bound.sock");
+        let socket = Socket::new(Domain::UNIX, Type::STREAM, None).unwrap();
+        socket.bind(&SockAddr::unix(&bound).unwrap()).unwrap();
+        // A full accept queue: macOS refuses, Linux polls to POLLHUP.
+        let busy = root.join("busy.sock");
+        let (_listener, _queued) = crate::fixtures::busy_listener(&busy);
+        let closed = root.join("closed.sock");
+        drop(UnixListener::bind(&closed).unwrap());
+
+        assert!(super::CONTROL_TIMEOUT > Duration::from_secs(10));
+        for (path, expected) in [(bound, Unreachable), (busy, Unreachable), (closed, Dead)] {
+            fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+            let (sender, receiver) = std::sync::mpsc::channel();
+            let target = path.clone();
+            // The full CONTROL_TIMEOUT, under a 10 s watchdog.
+            thread::spawn(move || {
+                let result = super::connect_control(&target);
+                sender
+                    .send(result.map(drop).map_err(|error| error.kind))
+                    .unwrap();
+            });
+            let result = receiver
+                .recv_timeout(Duration::from_secs(10))
+                .expect("the control connect hung");
+            assert_eq!(result, Err(expected), "{}", path.display());
+        }
         fs::remove_dir_all(root).unwrap();
     }
 

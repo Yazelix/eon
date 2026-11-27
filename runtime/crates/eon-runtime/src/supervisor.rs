@@ -264,7 +264,7 @@ pub(super) fn launch_current(
         let lifecycle_lock_path = supervisor_lock_path(&root, &generation);
         let runtime = generation_directory(&root, &generation);
         let socket = runtime.join("eon.sock");
-        let endpoint_failure = match probe_supervisor(inputs, &socket, &generation) {
+        match probe_supervisor(inputs, &socket, &generation) {
             Ok((active_mode, supervisor)) => {
                 missing_deadline = None;
                 if active_mode != mode {
@@ -310,36 +310,24 @@ pub(super) fn launch_current(
                     EndpointFailureKind::Dead
                         | EndpointFailureKind::Starting
                         | EndpointFailureKind::Unreachable
-                ) =>
-            {
-                error
-            }
+                ) => {}
             Err(error) => return Err(error.detail),
-        };
-        let lifecycle_lock = if matches!(
-            endpoint_failure.kind,
-            EndpointFailureKind::Dead | EndpointFailureKind::Starting
-        ) {
-            let Some(lock) = try_lock_supervisor_lifecycle(&lifecycle_lock_path)? else {
-                let deadline = missing_deadline.get_or_insert_with(|| {
-                    Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_add(Duration::from_secs(1))
-                });
-                if Instant::now() >= *deadline {
-                    return Err(format!(
-                        "timed out waiting for Eon supervisor lifecycle {}",
-                        lifecycle_lock_path.display()
-                    ));
-                }
-                drop(namespace_lock);
-                thread::sleep(Duration::from_millis(25));
-                continue;
-            };
-            lock
-        } else {
-            // Never wait for a lifecycle while holding namespace arbitration.
+        }
+        // A live supervisor holds its lifecycle lock for its whole life, so
+        // re-probe a busy or starting one rather than wait for the lock.
+        let Some(lifecycle_lock) = try_lock_supervisor_lifecycle(&lifecycle_lock_path)? else {
+            let deadline = missing_deadline.get_or_insert_with(|| {
+                Instant::now() + SESSION_CLEANUP_TIMEOUT.saturating_add(Duration::from_secs(1))
+            });
+            if Instant::now() >= *deadline {
+                return Err(format!(
+                    "timed out waiting for Eon supervisor lifecycle {}",
+                    lifecycle_lock_path.display()
+                ));
+            }
+            // Never wait while holding namespace arbitration.
             drop(namespace_lock);
-            let waited = lock_supervisor_lifecycle(&lifecycle_lock_path)?;
-            drop(waited);
+            thread::sleep(Duration::from_millis(25));
             continue;
         };
         match probe_supervisor(inputs, &socket, &generation) {
@@ -3871,6 +3859,10 @@ impl std::ops::Deref for LifecycleLock {
 fn open_supervisor_lifecycle_lock(path: &Path) -> Result<LifecycleLock, String> {
     #[cfg(test)]
     crate::fixtures::assert_not_update_validator("the lifecycle lock");
+    #[cfg(test)]
+    if let Some(marker) = env::var_os("EON_TEST_LIFECYCLE_MARKER") {
+        fs::write(marker, b"locking").map_err(|error| error.to_string())?;
+    }
     let mut options = fs::OpenOptions::new();
     options
         .read(true)
@@ -6821,6 +6813,94 @@ mod tests {
             }
             fs::remove_dir_all(root).unwrap();
         }
+    }
+
+    #[test]
+    fn busy_launch_process() {
+        let Some(root) = std::env::var_os("EON_TEST_BUSY_LAUNCH_ROOT").map(PathBuf::from) else {
+            return;
+        };
+        let result = super::launch_current(
+            &crate::fixtures::inputs(),
+            LaunchMode::Terminal,
+            &[],
+            false,
+            false,
+            "eon",
+            &super::LaunchOptions::default(),
+        );
+        fs::write(root.join("launch-result"), format!("{result:?}")).unwrap();
+    }
+
+    #[test]
+    fn launch_reprobes_a_busy_supervisor_that_keeps_its_lifecycle_lock() {
+        use eon_workspace_protocol::v51::{LifecycleResponse, encode_lifecycle_response};
+        use std::{io::Write, thread};
+        struct Reap(std::process::Child);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = (self.0.kill(), self.0.wait());
+            }
+        }
+        let root = temporary_directory();
+        let generation = current_generation(&crate::fixtures::inputs()).unwrap();
+        let runtime = root.join("runtime");
+        let socket = super::prepare_generation_runtime(&runtime, &generation)
+            .unwrap()
+            .join("eon.sock");
+        let (listener, queued) = crate::fixtures::busy_listener(&socket);
+        fs::set_permissions(&socket, fs::Permissions::from_mode(0o600)).unwrap();
+        let lock = super::supervisor_lock_path(&runtime, &generation);
+        let _held = super::lock_supervisor_lifecycle(&lock).unwrap();
+        let mut child = Reap(
+            Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "supervisor::tests::busy_launch_process"])
+                .env("EON_TEST_BUSY_LAUNCH_ROOT", &root)
+                .env("EON_TEST_LIFECYCLE_MARKER", root.join("locking"))
+                .env("EON_RUNTIME_DIR", &runtime)
+                .spawn()
+                .unwrap(),
+        );
+        let deadline = Instant::now() + Duration::from_secs(10);
+        // The launch met the full queue and reached the held lifecycle lock.
+        while !root.join("locking").exists() {
+            if child.0.try_wait().unwrap().is_some() {
+                let result = fs::read_to_string(root.join("launch-result"));
+                panic!("the launch returned before locking: {result:?}");
+            }
+            assert!(Instant::now() < deadline, "the launch never locked");
+            thread::sleep(Duration::from_millis(1));
+        }
+        drop(queued);
+        listener.set_nonblocking(true).unwrap();
+        let left = || {
+            Some(
+                deadline
+                    .saturating_duration_since(Instant::now())
+                    .max(Duration::from_millis(1)),
+            )
+        };
+        while child.0.try_wait().unwrap().is_none() {
+            assert!(Instant::now() < deadline, "the launch did not return");
+            let Ok((stream, _)) = listener.accept() else {
+                thread::sleep(Duration::from_millis(5));
+                continue;
+            };
+            let mut stream = UnixStream::from(std::os::fd::OwnedFd::from(stream));
+            stream.set_nonblocking(false).unwrap();
+            // I/O ends by the test's deadline; Darwin refuses the option only
+            // once the peer has hung up, which bound_io allows.
+            super::bound_io(&stream, stream.set_read_timeout(left())).unwrap();
+            // A drained client closed without a request.
+            if stream.read(&mut [0; 4096]).is_ok_and(|read| read > 0) {
+                let reply = LifecycleResponse::Failure(super::failure("fixture", "drained"));
+                super::bound_io(&stream, stream.set_write_timeout(left())).unwrap();
+                let _ = stream.write_all(&encode_lifecycle_response(&reply).unwrap());
+            }
+        }
+        let result = fs::read_to_string(root.join("launch-result")).unwrap();
+        assert!(result.contains("inspection: drained"), "{result}");
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
