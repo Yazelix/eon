@@ -14090,7 +14090,9 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
     executable(&venus, "#!/bin/sh\nexit 0\n");
 
     let binary = PathBuf::from(env!("CARGO_BIN_EXE_eon"));
-    let launch = || {
+    // Each launch's stderr is kept: a losing launch that fails names its cause.
+    let errors = [root.join("first.err"), root.join("second.err")];
+    let launch = |stderr: &Path| {
         eon_command(&binary)
             .env("EON_RUNTIME_DIR", &runtime)
             .env("EON_CONFIG_HOME", &config)
@@ -14100,16 +14102,21 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
             .env("EON_TEST_ORBIT_LOG", &orbit_log)
             .env("EON_TEST_ORBIT_DELAY_MS", "250")
             .stdout(Stdio::null())
-            .stderr(Stdio::null())
+            .stderr(fs::File::create(stderr).unwrap())
             .spawn()
             .unwrap()
     };
+    let stderrs = || {
+        errors
+            .each_ref()
+            .map(|path| fs::read_to_string(path).unwrap_or_default())
+    };
     let mut first = TestProcess {
-        child: launch(),
+        child: launch(&errors[0]),
         stop: fallback_stop.clone(),
     };
     let mut second = TestProcess {
-        child: launch(),
+        child: launch(&errors[1]),
         stop: fallback_stop.clone(),
     };
     let generation = generation_runtime(&runtime);
@@ -14121,16 +14128,20 @@ fn concurrent_launches_converge_and_generation_stop_is_owner_routed() {
         let second_status = second.child.try_wait().unwrap();
         match (first_status, second_status) {
             (None, Some(status)) => {
-                assert!(status.success());
+                assert!(status.success(), "losing launch {status}: {:?}", stderrs());
                 break true;
             }
             (Some(status), None) => {
-                assert!(status.success());
+                assert!(status.success(), "losing launch {status}: {:?}", stderrs());
                 break false;
             }
-            (Some(_), Some(_)) => panic!("both concurrent Eon launches exited"),
+            (Some(_), Some(_)) => panic!("both concurrent Eon launches exited: {:?}", stderrs()),
             (None, None) => {
-                assert!(Instant::now() < deadline, "neither Eon launch attached");
+                assert!(
+                    Instant::now() < deadline,
+                    "neither Eon launch attached: {:?}",
+                    stderrs()
+                );
                 thread::sleep(Duration::from_millis(10));
             }
         }
