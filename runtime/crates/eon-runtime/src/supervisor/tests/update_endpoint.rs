@@ -14,6 +14,43 @@ struct Window {
     orbit: i32,
 }
 
+fn snapshot_pending_reason(
+    snapshot: &eon_workspace_protocol::v51::Snapshot,
+) -> Result<Option<&'static str>, String> {
+    let workspaces = &snapshot.workspaces;
+    if let Some(error) = workspaces
+        .iter()
+        .find_map(|w| w.registration_error.as_ref())
+    {
+        return Err(format!("recovered session registration failed: {error:?}"));
+    }
+    if workspaces.is_empty() || !workspaces.iter().all(|w| w.persistent_id.is_some()) {
+        return Ok(Some("recovered session registration never settled"));
+    }
+    if snapshot.running.as_ref().is_none_or(|r| r.others.is_none()) {
+        return Ok(Some("running windows scan never settled"));
+    }
+    let settled = |pane: &eon_workspace_protocol::v51::Pane| {
+        pane.live
+            && ![
+                "  connecting",
+                " · connecting",
+                "  unavailable",
+                " · unavailable",
+            ]
+            .iter()
+            .any(|suffix| pane.label.ends_with(suffix))
+    };
+    let mut panes = snapshot.tabs.iter().flat_map(|tab| tab.panes());
+    if panes
+        .next()
+        .is_none_or(|p| !settled(p) || !panes.all(settled))
+    {
+        return Ok(Some("pane metadata labels never settled"));
+    }
+    Ok(None)
+}
+
 impl Window {
     /// Starts a window whose root `prepare` may seed first, with `fault`
     /// passed to the child as `EON_UPDATE_TEST_FAULT`.
@@ -24,7 +61,7 @@ impl Window {
         let runtime = root.join("a").join(&generation);
         prepare_runtime(&runtime).unwrap();
         fs::set_permissions(&runtime, fs::Permissions::from_mode(0o700)).unwrap();
-        crate::session_registry::Registry::in_test_directory(root.join("state/eon/sessions"));
+        fs::write(root.join("config.toml"), "[bar]\nwidgets = []\n").unwrap();
         script(&root.join("venus"), "#!/bin/sh\nexec sleep 60\n");
         let mut inputs = crate::fixtures::inputs();
         inputs.orbit = std::env::var_os("ORBIT_BIN")
@@ -76,27 +113,40 @@ impl Window {
             orbit,
         };
         let deadline = Instant::now() + Duration::from_secs(30);
-        while !window.control_answers() {
+        let mut pending = "the window never answered on eon.sock";
+        loop {
+            if let Some(snapshot) = window.snapshot() {
+                match snapshot_pending_reason(&snapshot) {
+                    Ok(None) => break,
+                    Ok(Some(reason)) => pending = reason,
+                    Err(error) => window.fail(&error),
+                }
+            }
             let exited = window.child.as_mut().unwrap().try_wait().unwrap().is_some();
             if exited || Instant::now() >= deadline {
-                window.fail("the window never answered on eon.sock");
+                window.fail(pending);
             }
             std::thread::sleep(Duration::from_millis(10));
         }
         window
     }
 
+    /// Fetches a workspace snapshot over `eon.sock`, if the supervisor answers.
+    fn snapshot(&self) -> Option<eon_workspace_protocol::v51::Snapshot> {
+        match control::send_action(
+            &self.runtime.join("eon.sock"),
+            Action::Workspace(WorkspaceAction::Inspect),
+        ) {
+            Ok(control::ControlResponse::Workspace(super::super::Response::Snapshot(snapshot))) => {
+                Some(snapshot)
+            }
+            _ => None,
+        }
+    }
+
     /// An ordinary EONW request still gets its answer.
     fn control_answers(&self) -> bool {
-        matches!(
-            control::send_action(
-                &self.runtime.join("eon.sock"),
-                Action::Workspace(WorkspaceAction::Inspect)
-            ),
-            Ok(control::ControlResponse::Workspace(
-                super::super::Response::Snapshot(_)
-            ))
-        )
+        self.snapshot().is_some()
     }
 
     /// What a refused request must leave unchanged: the workspace snapshot,
@@ -108,14 +158,7 @@ impl Window {
         Option<Vec<u8>>,
         Vec<std::ffi::OsString>,
     ) {
-        let Ok(control::ControlResponse::Workspace(super::super::Response::Snapshot(snapshot))) =
-            control::send_action(
-                &self.runtime.join("eon.sock"),
-                Action::Workspace(WorkspaceAction::Inspect),
-            )
-        else {
-            panic!("no snapshot");
-        };
+        let snapshot = self.snapshot().expect("no snapshot");
         let mut names = fs::read_dir(&self.runtime)
             .unwrap()
             .map(|entry| entry.unwrap().file_name())
@@ -279,6 +322,10 @@ fn a_real_window_answers_inspect_and_keeps_serving_eonw() {
         inspected.hosts
     );
     let before = window.state();
+    assert_eq!(snapshot_pending_reason(&before.0), Ok(None));
+    assert!(before.0.codex_quota.is_none() && before.0.codex_quota_failure.is_none());
+    assert!(before.0.claude_quota.is_none() && before.0.claude_quota_failure.is_none());
+    assert!(before.0.google_quota.is_none() && before.0.google_quota_failure.is_none());
     // A request this slice does not serve, and EONW bytes on the wrong socket.
     for (kind, code) in [(2, Code::Malformed), (3, Code::Unsupported)] {
         let mut request = b"EONU\x01\x00\x00\x00\x10\x00\x00\x00".to_vec();
