@@ -523,7 +523,7 @@ fn transact(
         .spawn();
     let result = child
         .map_err(Bounded::Spawn)
-        .and_then(|mut child| wait_child(&mut child, None, true));
+        .and_then(|mut child| wait_child(&mut child, None, true, &mut []));
     match result {
         Ok(status) if status.success() => (),
         Ok(status) => match status.code() {

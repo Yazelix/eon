@@ -11,7 +11,7 @@ use std::{
     fs,
     io::{IsTerminal, Read, Write},
     os::{
-        fd::AsFd,
+        fd::{AsFd, OwnedFd},
         unix::{
             ffi::OsStrExt,
             fs::{OpenOptionsExt, PermissionsExt},
@@ -68,8 +68,11 @@ const NIX_LIMIT: Duration = Duration::from_secs(30);
 const PROFILE_MANIFEST_LIMIT: u64 = 4 * 1024 * 1024;
 /// curl's own limit is 30 s; this bounds a curl that ignores it.
 const CURL_LIMIT: Duration = Duration::from_secs(45);
-/// Fixed cancellation safety budget before killing the helper-owned process group.
+/// Fixed cancellation safety budget: how long the leader has after TERM before
+/// the helper-owned process group is killed.
 const TERMINATION_GRACE: Duration = Duration::from_secs(5);
+/// How often a bounded wait looks at its child and pipes.
+const POLL: Duration = Duration::from_millis(20);
 
 /// Whether this command line is a package mode of `eon update`, which the
 /// product answers before Runtime sees it. Help stays with Runtime.
@@ -768,8 +771,11 @@ impl Bounded {
     }
 }
 
-/// Runs `command` without input, collecting its output, and kills it once
-/// `limit` passes.
+/// Runs `command` without input, collecting its output. Once `limit` passes
+/// or an interrupt arrives, it stops the command's owned process group, also
+/// when the leader exited while a descendant in that group held a pipe. A pipe
+/// holder that left the group is never signalled: a pipe it keeps open through
+/// the deadline ends the call in `TimedOut` (or `Interrupted`).
 pub(crate) fn bounded(mut command: Command, limit: Duration) -> Result<Output, Bounded> {
     let mut child = owned_child(&mut command)
         .stdin(Stdio::null())
@@ -777,22 +783,16 @@ pub(crate) fn bounded(mut command: Command, limit: Duration) -> Result<Output, B
         .stderr(Stdio::piped())
         .spawn()
         .map_err(Bounded::Spawn)?;
-    let collect = |pipe: Option<Box<dyn Read + Send>>| {
-        thread::spawn(move || {
-            let mut bytes = Vec::new();
-            if let Some(mut pipe) = pipe {
-                let _ = pipe.read_to_end(&mut bytes);
-            }
-            bytes
-        })
-    };
-    let stdout = collect(child.stdout.take().map(|pipe| Box::new(pipe) as _));
-    let stderr = collect(child.stderr.take().map(|pipe| Box::new(pipe) as _));
-    let status = wait_child(&mut child, Some(limit), false)?;
+    let mut pipes = [
+        (child.stdout.take().map(OwnedFd::from), Vec::new()),
+        (child.stderr.take().map(OwnedFd::from), Vec::new()),
+    ];
+    let status = wait_child(&mut child, Some(limit), false, &mut pipes)?;
+    let [(_, stdout), (_, stderr)] = pipes;
     Ok(Output {
         status,
-        stdout: stdout.join().unwrap_or_default(),
-        stderr: stderr.join().unwrap_or_default(),
+        stdout,
+        stderr,
     })
 }
 
@@ -803,7 +803,7 @@ pub(crate) fn bounded_status(mut command: Command, limit: Duration) -> Result<Ex
         .stderr(Stdio::null())
         .spawn()
         .map_err(Bounded::Spawn)?;
-    wait_child(&mut child, Some(limit), true)
+    wait_child(&mut child, Some(limit), true, &mut [])
 }
 
 /// Observe exit without releasing the process-group leader's PID.
@@ -820,31 +820,41 @@ fn child_exited(child: &Child) -> std::io::Result<bool> {
     }
 }
 
+/// Waits for `child` while reading `pipes` to EOF, all within one `limit`. The
+/// leader stays unreaped until then, so expiry, an interrupt or a failed read
+/// can stop its owned group without reaching a reused process-group ID.
 fn wait_child(
     child: &mut Child,
     limit: Option<Duration>,
     cleanup_group: bool,
+    pipes: &mut [(Option<OwnedFd>, Vec<u8>)],
 ) -> Result<ExitStatus, Bounded> {
-    let started = Instant::now();
+    let deadline = limit.map(|limit| Instant::now() + limit);
+    let mut drain_failure = None;
     loop {
-        let exited = child_exited(child).map_err(Bounded::Wait)?;
-        let failure = if INTERRUPTED.load(Ordering::Relaxed) {
+        let reading = pipes.iter().any(|(pipe, _)| pipe.is_some());
+        let exited = !reading && child_exited(child).map_err(Bounded::Wait)?;
+        let failure = if let Some(error) = drain_failure.take() {
+            Some(Bounded::Wait(error))
+        } else if INTERRUPTED.load(Ordering::Relaxed) {
             Some(Bounded::Interrupted)
-        } else if limit.is_some_and(|limit| started.elapsed() >= limit) {
+        } else if deadline.is_some_and(|deadline| Instant::now() >= deadline) {
             Some(Bounded::TimedOut(limit.unwrap()))
         } else {
             None
         };
         if let Some(failure) = failure {
+            // Close the read ends first, so no writer blocks on them during the grace.
+            pipes.iter_mut().for_each(|(pipe, _)| *pipe = None);
             // The child is a new process-group leader; never signal the shared Nix daemon.
             let group = Pid::from_child(child);
             let _ = rustix::process::kill_process_group(group, Signal::TERM);
-            let deadline = Instant::now() + TERMINATION_GRACE;
-            while Instant::now() < deadline {
+            let grace = Instant::now() + TERMINATION_GRACE;
+            while Instant::now() < grace {
                 if child_exited(child).map_err(Bounded::Wait)? {
                     break;
                 }
-                thread::sleep(Duration::from_millis(20));
+                thread::sleep(POLL);
             }
             let _ = rustix::process::kill_process_group(group, Signal::KILL);
             let _ = child.wait();
@@ -856,8 +866,49 @@ fn wait_child(
             }
             return child.wait().map_err(Bounded::Wait);
         }
-        thread::sleep(Duration::from_millis(20));
+        let wait = deadline.map_or(POLL, |deadline| {
+            POLL.min(deadline.saturating_duration_since(Instant::now()))
+        });
+        if reading {
+            drain_failure = read_ready(pipes, wait).err();
+        } else {
+            thread::sleep(wait);
+        }
     }
+}
+
+/// Reads what `pipes` have within `wait`, closing each at EOF.
+fn read_ready(pipes: &mut [(Option<OwnedFd>, Vec<u8>)], wait: Duration) -> std::io::Result<()> {
+    let mut polled: Vec<_> = (pipes.iter().flat_map(|(pipe, _)| pipe))
+        .map(|pipe| PollFd::new(pipe, PollFlags::IN))
+        .collect();
+    let timeout = Timespec::try_from(wait).map_err(std::io::Error::other)?;
+    match rustix::event::poll(&mut polled, Some(&timeout)) {
+        Ok(_) | Err(rustix::io::Errno::INTR) => {}
+        Err(error) => return Err(error.into()),
+    }
+    let ready = (polled.iter().map(|fd| readable(fd.revents()))).collect::<Result<Vec<_>, _>>()?;
+    let open = pipes.iter_mut().filter(|(pipe, _)| pipe.is_some());
+    for ((pipe, bytes), _) in open.zip(ready).filter(|(_, ready)| *ready) {
+        let mut buffer = [0; 64 * 1024];
+        match rustix::io::read(pipe.as_ref().unwrap(), &mut buffer) {
+            Ok(0) => *pipe = None,
+            Ok(read) => bytes.extend_from_slice(&buffer[..read]),
+            Err(rustix::io::Errno::INTR | rustix::io::Errno::AGAIN) => {}
+            Err(error) => return Err(error.into()),
+        }
+    }
+    Ok(())
+}
+
+/// Whether a polled pipe can be read without blocking. An invalid or failed
+/// registration is a wait failure, never a blocking read.
+fn readable(events: PollFlags) -> std::io::Result<bool> {
+    if events.intersects(PollFlags::NVAL | PollFlags::ERR) {
+        let message = format!("pipe poll reported {events:?}");
+        return Err(std::io::Error::other(message));
+    }
+    Ok(events.intersects(PollFlags::IN | PollFlags::HUP))
 }
 
 /// A `nix profile list --json` element.
@@ -2177,7 +2228,7 @@ fn install_inner(request: &Request, invoked: Build, places: &Places, system: &Sy
             .spawn()
             .map_err(|error| ("selection-failed", "fetch-build", error.to_string()))?;
         ran_nix = true;
-        let status = wait_child(&mut child, None, false).map_err(|error| {
+        let status = wait_child(&mut child, None, false, &mut []).map_err(|error| {
             let (code, message) = error.trouble(["selection-failed"; 3], "nix profile upgrade");
             (code, "fetch-build", message)
         })?;
@@ -3955,6 +4006,61 @@ mod tests {
         ));
         let output = bounded(Command::new("true"), NIX_LIMIT).ok().unwrap();
         assert!(output.status.success());
+
+        // A descendant that writes after the leader exits keeps its output.
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo early; (sleep 1; echo late; echo err >&2) &"]);
+        let output = bounded(command, NIX_LIMIT).ok().unwrap();
+        assert_eq!(
+            (output.stdout, output.stderr),
+            (b"early\nlate\n".to_vec(), b"err\n".to_vec())
+        );
+
+        // The leader exits while a descendant in its group holds both pipes
+        // past the limit: the limit holds, and the owned group is stopped.
+        let scratch = tempfile::tempdir().unwrap();
+        let leader = scratch.path().join("leader");
+        let mut command = Command::new("sh");
+        command.args(["-c", "echo $$ > \"$1\"; sleep 30 & echo out", "sh"]);
+        command.arg(&leader);
+        let limit = Duration::from_secs(2);
+        let started = Instant::now();
+        assert!(matches!(bounded(command, limit), Err(Bounded::TimedOut(_))));
+        assert!((limit..Duration::from_secs(6)).contains(&started.elapsed()));
+        let group = fs::read_to_string(&leader).unwrap().trim().parse().unwrap();
+        let group = Pid::from_raw(group).unwrap();
+        let gone = Instant::now() + Duration::from_secs(5);
+        while rustix::process::test_kill_process_group(group).is_ok() {
+            assert!(Instant::now() < gone, "the owned group outlived bounded");
+            thread::sleep(Duration::from_millis(20));
+        }
+
+        // A failed read (a directory is never a readable pipe) stops the owned
+        // group before the failure is reported, without waiting for the limit.
+        let mut command = Command::new("sleep");
+        command.arg("30");
+        let mut child = owned_child(&mut command).spawn().unwrap();
+        let group = Pid::from_child(&child);
+        let directory = OwnedFd::from(fs::File::open(scratch.path()).unwrap());
+        let mut pipes = [(Some(directory), Vec::new())];
+        let started = Instant::now();
+        assert!(matches!(
+            wait_child(&mut child, Some(NIX_LIMIT), false, &mut pipes),
+            Err(Bounded::Wait(_))
+        ));
+        assert!(started.elapsed() < Duration::from_secs(5));
+        assert!(rustix::process::test_kill_process_group(group).is_err());
+        // Only readable or closed pipes are read; invalid or failed ones fail the wait.
+        for (events, readable_now) in [
+            (PollFlags::empty(), Some(false)),
+            (PollFlags::IN, Some(true)),
+            (PollFlags::HUP, Some(true)),
+            (PollFlags::NVAL, None),
+            (PollFlags::ERR, None),
+            (PollFlags::IN | PollFlags::ERR, None),
+        ] {
+            assert_eq!(readable(events).ok(), readable_now, "{events:?}");
+        }
 
         let mut command = Command::new("sleep");
         command.arg("10");

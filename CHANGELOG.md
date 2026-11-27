@@ -10,6 +10,11 @@ installation, and proven contract changes.
 - When a fresh window's first tab cannot start its Files popup, so it opens a
   pane at the launch directory instead of quick search, the supervisor log
   now says why (`eon-w6gsx`).
+- `eon update`, `eon report` and `eon tutor` no longer wait past a helper
+  command's time limit when the helper exits but a process it started still
+  holds its output. At the limit, Eon stops the processes left in the
+  helper's process group and reports the time limit; a process that left
+  that group is not signalled (`eon-ifnv0`).
 - Claude quota keeps updating when CodexBar reports a Sonnet or Opus weekly
   lane, and a model-only weekly lane is no longer shown as the all-models
   Claude week (`eon-kgmlz`, EON-C27).
