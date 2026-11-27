@@ -135,20 +135,28 @@ fn normalize(bytes: &[u8], provider: &str, now: u64) -> Result<Option<CodexQuota
     if usage.is_null() {
         return Ok(None);
     }
-    if !usage["dataConfidence"].is_null() && usage["dataConfidence"] != "authoritative" {
-        return Err(Failure::Estimated);
+    // CodexBar 0.74.1 omits unknown confidence; exact and percentOnly percentages are measured.
+    match usage.get("dataConfidence") {
+        None => {}
+        Some(Value::String(c)) if c == "exact" || c == "percentOnly" => {}
+        Some(_) => return Err(Failure::Estimated),
     }
     let observed_at = timestamp(&usage["updatedAt"]).map_err(|()| Failure::ObservationTime)?;
     if observed_at == 0 || observed_at > now || now - observed_at > STALE_AFTER {
         return Err(Failure::ObservationTime);
     }
-    // The selected providers have at most two windows; silently dropping another is incorrect.
-    if !usage["tertiary"].is_null() {
+    // Codex has no third window; Claude's, an unnamed Sonnet or Opus weekly lane, is not read.
+    if provider != "claude" && !usage["tertiary"].is_null() {
         return Err(Failure::InvalidWindow);
     }
+    // Without the all-models week, Claude OAuth puts an OAuth Apps, Sonnet or Opus weekly lane in
+    // primary; it is never that week (eon-kgmlz).
+    let scoped_primary = provider == "claude"
+        && usage["secondary"].is_null()
+        && usage["primary"]["windowMinutes"] == 10080;
     let mut unscoped: Vec<Supplied> = Vec::new();
     for value in [&usage["primary"], &usage["secondary"]] {
-        if value.is_null() {
+        if value.is_null() || scoped_primary {
             continue;
         }
         let next = supplied(value, provider)?;
@@ -1411,9 +1419,15 @@ mod tests {
         json!([{"provider":provider, "source":if provider == "codex" {"codex-cli"} else {"oauth"},
             "usage":{"updatedAt":"2026-10-14T00:00:00Z",
                 "primary":{"usedPercent":23.5,"windowMinutes":300},
-                "secondary":{"usedPercent":2,"windowMinutes":10080,"resetsAt":"2026-10-19T20:59:59Z"}},
-            "identity":{"accountEmail":"discard@example.invalid"}}])
+                "secondary":{"usedPercent":2,"windowMinutes":10080,"resetsAt":"2026-10-19T20:59:59Z"},
+                // CodexBar 0.74.1 encodes identity inside usage, nested and flat.
+                "identity":{"providerID":provider,"accountEmail":IDENTITY[0],
+                    "accountOrganization":IDENTITY[1],"loginMethod":IDENTITY[2]},
+                "accountEmail":IDENTITY[0],"accountOrganization":IDENTITY[1],
+                "loginMethod":IDENTITY[2]}}])
     }
+
+    const IDENTITY: [&str; 3] = ["discard@example.invalid", "Discard Org", "discard-plan"];
 
     /// A one-window reading observed now, as a fake backend prints it.
     fn fresh(provider: &str) -> (Value, u64) {
@@ -1515,6 +1529,43 @@ mod tests {
                     .is_none()
             );
         }
+        // Codex reads a lone weekly primary as its week.
+        let mut codex = payload("codex");
+        codex[0]["usage"]["primary"] = codex[0]["usage"]["secondary"].take();
+        let codex = normalize(&serde_json::to_vec(&codex).unwrap(), "codex", NOW).unwrap();
+        assert_eq!(codex.unwrap().windows[0].duration_minutes, 10080);
+        // Claude's tertiary is not read, and a lone weekly primary is a scoped lane (eon-kgmlz).
+        let claude = |tertiary: &Value, edit: &dyn Fn(&mut Value)| {
+            let mut input = payload("claude");
+            input[0]["usage"]["tertiary"] = tertiary.clone();
+            edit(&mut input[0]["usage"]);
+            normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW)
+        };
+        let measured = claude(&Value::Null, &|_| {});
+        let week = measured.clone().unwrap().unwrap().windows[1..].to_vec();
+        let lane = json!({"usedPercent":60,"windowMinutes":10080});
+        for tertiary in &[Value::Null, lane, json!(1)] {
+            assert_eq!(claude(tertiary, &|_| {}), measured);
+            let repeat = claude(tertiary, &|u| u["primary"] = u["secondary"].clone());
+            assert_eq!(repeat.unwrap().unwrap().windows, week);
+            let scoped = |u: &mut Value| {
+                u["primary"] = json!({"usedPercent":40,"windowMinutes":10080});
+                u["secondary"] = Value::Null;
+            };
+            assert_eq!(claude(tertiary, &scoped), Ok(None));
+            let fable = claude(tertiary, &|u| {
+                scoped(u);
+                u["extraRateWindows"] = json!([{"id":"claude-weekly-scoped-fable",
+                    "title":"Fable only","window":{"usedPercent":40,"windowMinutes":10080}}]);
+            });
+            let fable = fable.unwrap().unwrap().windows;
+            assert!(fable.len() == 1 && fable[0].scope.as_deref() == Some("Fable"));
+        }
+        let hourly = claude(&Value::Null, &|u| {
+            u["primary"]["windowMinutes"] = json!(60);
+            u["secondary"] = Value::Null;
+        });
+        assert_eq!(hourly, Err(Failure::InvalidWindow));
     }
 
     #[test]
@@ -1643,11 +1694,32 @@ mod tests {
         let mut input = payload("claude");
         input[0]["source"] = json!("web");
         assert!(normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW).is_err());
-        input = payload("claude");
-        input[0]["usage"]["dataConfidence"] = json!("estimated");
+        // CodexBar 0.74.1's confidence: only exact and percentOnly carry measured percentages.
+        for provider in ["codex", "claude"] {
+            let bytes = serde_json::to_vec(&payload(provider)).unwrap();
+            let measured = normalize(&bytes, provider, NOW);
+            for (confidence, expected) in [
+                (json!("exact"), &measured),
+                (json!("percentOnly"), &measured),
+                (json!("estimated"), &Err(Failure::Estimated)),
+                (json!("unknown"), &Err(Failure::Estimated)),
+                (json!("authoritative"), &Err(Failure::Estimated)),
+                (json!(1), &Err(Failure::Estimated)),
+                (Value::Null, &Err(Failure::Estimated)),
+            ] {
+                input = payload(provider);
+                input[0]["usage"]["dataConfidence"] = confidence;
+                assert_eq!(
+                    normalize(&serde_json::to_vec(&input).unwrap(), provider, NOW),
+                    *expected
+                );
+            }
+        }
+        input = payload("codex");
+        input[0]["usage"]["tertiary"] = json!({"usedPercent":1,"windowMinutes":10080});
         assert_eq!(
-            normalize(&serde_json::to_vec(&input).unwrap(), "claude", NOW),
-            Err(Failure::Estimated)
+            normalize(&serde_json::to_vec(&input).unwrap(), "codex", NOW),
+            Err(Failure::InvalidWindow)
         );
     }
     #[test]
@@ -2745,6 +2817,18 @@ mod tests {
             &widgets,
         );
         assert_eq!(shown(&quotas).unwrap().windows[0].remaining_percent, 76);
+        // Identity reaches neither stored readings nor the snapshot, whose fields Debug all shows.
+        let claude = payload("claude");
+        let quota = normalize(&serde_json::to_vec(&claude).unwrap(), "claude", NOW).unwrap();
+        save(&root.join("claude-identity.json"), quota.as_ref());
+        let mut snapshot = quota_snapshot(&quotas);
+        snapshot.claude_quota = quota.map(claude_quota);
+        let read = |name| fs::read_to_string(name).unwrap();
+        let stored = read(store.join("codex.json")) + &read(root.join("claude-identity.json"));
+        for text in IDENTITY {
+            assert!(claude[0]["usage"].to_string().contains(text));
+            assert!(!format!("{stored}{snapshot:?}").contains(text));
+        }
         drop(quotas);
         assert!(!store.join("claude.json").exists());
         // A later supervisor whose every read fails, as a rate-limited one's does, shows it.

@@ -5,6 +5,9 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Claude quota keeps updating when CodexBar reports a Sonnet or Opus weekly
+  lane, and a model-only weekly lane is no longer shown as the all-models
+  Claude week (`eon-kgmlz`, EON-C27).
 - Venus pane labels adapt to light and dark terminal backgrounds set with
   OSC 11 (`eon-4vtmu`).
 - The Agents sidebar keeps the tab's terminal background when its leftmost
