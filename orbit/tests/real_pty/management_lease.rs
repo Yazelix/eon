@@ -20,6 +20,12 @@ use std::{
 
 const MANAGED: [&str; 4] = ["--management-v10", "session-2", "run-2", "component-2"];
 
+/// How long a Stop's answer may take within Orbit's own bounds, in seconds:
+/// two worker decisions of at most `DECISION_DEADLINE` (2 s) each, ORB-C12's
+/// 500 ms grace after SIGHUP, `REAP_DEADLINE` (2 s) after SIGKILL, and
+/// `NEGOTIATION_MS` (1 s) to write the answer, 7.5 s in all.
+pub const STOP_ANSWER: f64 = 8.0;
+
 /// What a management connection reads next.
 #[derive(Debug, PartialEq)]
 pub enum Reply {

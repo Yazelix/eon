@@ -1,4 +1,4 @@
-use crate::management_lease::{Manager, Reply};
+use crate::management_lease::{Manager, Reply, STOP_ANSWER};
 use crate::management_record::{live, suffixed, tombstone};
 use crate::support::*;
 use orbit_protocol::management::{
@@ -81,6 +81,7 @@ pub fn run() {
         TerminationReason::ExplicitStop,
         ProcessOutcome::Signal(libc::SIGKILL),
     );
+    lease.set_timeout(STOP_ANSWER);
     match lease.read() {
         Reply::Message(ServerMessage::Stopped(stopped)) => {
             assert_eq!((stopped.reason, stopped.outcome), killed, "{stopped:?}")

@@ -1,4 +1,4 @@
-use crate::management_lease::{Manager, Reply, leased as lease, own_name};
+use crate::management_lease::{Manager, Reply, STOP_ANSWER, leased as lease, own_name};
 use crate::management_record::suffixed;
 use crate::support::*;
 use orbit_protocol::{
@@ -187,6 +187,7 @@ pub fn run() {
     type_line(&mut client, "renamed");
     until_logged(&log, &["named", "renamed"]);
 
+    second.set_timeout(STOP_ANSWER);
     match second.send(&management::ClientMessage::Stop) {
         Reply::Message(management::ServerMessage::Stopped(_)) => {}
         other => panic!("expected Stopped, received {other:?}"),
