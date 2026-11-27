@@ -898,9 +898,10 @@ fn default_colors_follow_independent_osc_updates_resets_and_reattachment() -> Te
     Ok(())
 }
 
+const PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
+
 #[test]
 fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
-    const PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
     const fn rgb(r: u8, g: u8, b: u8) -> Rgb {
         Rgb { r, g, b }
     }
@@ -934,21 +935,56 @@ fn ansi_palette_launch_is_visible_and_survives_reattachment() -> TestResult {
     assert_eq!(second.frame.colors.palette[1], rgb(0x10, 0x11, 0x12));
     drop(second);
     assert!(server.shutdown()?.success());
+    Ok(())
+}
 
+#[test]
+fn launch_rejects_invalid_color_values_before_starting_child() -> TestResult {
+    let dir = TestDir::new("invalid-launch-colors")?;
     let invalid_socket = dir.0.join("bad.sock");
     let child_marker = dir.0.join("child-started");
-    for (option, invalid) in [
-        ("--ansi-palette-v1", "incomplete"),
-        ("--default-colors-v1", "123456"),
+    for (options, diagnostic) in [
+        (
+            &[
+                "--default-colors-v1",
+                "--ansi-palette-v1",
+                PALETTE,
+                "012345,abcdef",
+            ][..],
+            "orbit: --default-colors-v1 requires a value",
+        ),
+        (
+            &[
+                "--ansi-palette-v1",
+                "--management-v10",
+                "session",
+                "run",
+                "component",
+                PALETTE,
+            ],
+            "orbit: --ansi-palette-v1 requires a value",
+        ),
+        (
+            &["--ansi-palette-v1", "incomplete"],
+            "orbit: --ansi-palette-v1 colors must be six hexadecimal digits",
+        ),
+        (
+            &["--default-colors-v1", "123456"],
+            "orbit: --default-colors-v1 must contain exactly 2 colors",
+        ),
     ] {
-        let status = server_command()
+        let output = server_command()
             .arg(&invalid_socket)
-            .args([option, invalid, "--", "/bin/sh", "-c", ": > \"$1\"", "sh"])
+            .args(options)
+            .args(["--", "/bin/sh", "-c", ": > \"$1\"", "sh"])
             .arg(&child_marker)
-            .status()?;
-        assert!(!status.success(), "{option}");
-        assert!(!invalid_socket.exists(), "{option}");
-        assert!(!child_marker.exists(), "{option}");
+            .stderr(Stdio::piped())
+            .output()?;
+        assert!(!child_marker.exists(), "{options:?} started its child");
+        assert!(!invalid_socket.exists(), "{options:?} left its socket");
+        let stderr = std::str::from_utf8(&output.stderr)?.trim_end();
+        assert_eq!(output.status.code(), Some(1), "{options:?}: {stderr}");
+        assert_eq!(stderr, diagnostic, "{options:?}");
     }
     Ok(())
 }

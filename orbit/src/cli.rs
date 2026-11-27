@@ -38,85 +38,88 @@ pub(crate) fn parse(arguments: &[OsString]) -> Result<Serve, String> {
     if first != "serve" {
         return Err(USAGE.into());
     }
-    let mut arguments = arguments.to_vec();
-    let management = take_management(&mut arguments)?;
-    let palette = take_colors(&mut arguments, ANSI_PALETTE_ARGUMENT)?;
-    let default_colors = take_colors(&mut arguments, DEFAULT_COLORS_ARGUMENT)?;
-    if (palette.is_some() || default_colors.is_some()) && launch_end(&arguments) > 1 {
+    let separator = arguments
+        .iter()
+        .position(|argument| argument == "--")
+        .unwrap_or(arguments.len());
+    let (mut prefix, suffix) = arguments.split_at(separator);
+    let (mut management, mut palette, mut default_colors) = (None, None, None);
+    let mut command = Vec::new();
+    while let Some((argument, rest)) = prefix.split_first() {
+        prefix = rest;
+        match launch_option(argument) {
+            Some(MANAGEMENT_ARGUMENT) => {
+                if management.is_some() || rest.iter().take(3).any(|id| id == MANAGEMENT_ARGUMENT) {
+                    return Err("duplicate --management-v10 argument".into());
+                }
+                let (values, remaining) = launch_values(rest)
+                    .ok_or("--management-v10 requires Session, run, and component identities")?;
+                management = Some(Launch::new(values.each_ref().map(OsString::as_os_str))?);
+                prefix = remaining;
+            }
+            Some(option) => {
+                let is_palette = option == ANSI_PALETTE_ARGUMENT;
+                if (is_palette && palette.is_some()) || (!is_palette && default_colors.is_some()) {
+                    return Err(format!("duplicate {option} argument"));
+                }
+                let ([value], remaining) =
+                    launch_values(rest).ok_or_else(|| format!("{option} requires a value"))?;
+                let value = value
+                    .to_str()
+                    .ok_or_else(|| format!("{option} requires a UTF-8 value"))?;
+                if is_palette {
+                    palette = Some(parse_colors(value, option)?);
+                } else {
+                    default_colors = Some(parse_colors(value, option)?);
+                }
+                prefix = remaining;
+            }
+            None => command.push(argument.clone()),
+        }
+    }
+    if (palette.is_some() || default_colors.is_some()) && command.len() > 1 {
         return Err("unexpected argument before the command separator".into());
     }
-    let socket = if arguments.first().is_some_and(|value| value != "--") {
-        PathBuf::from(arguments.remove(0))
-    } else {
+    let socket = if command.is_empty() {
         default_socket_path()?
+    } else {
+        PathBuf::from(command.remove(0))
     };
-    if arguments.first().is_some_and(|value| value == "--") {
-        arguments.remove(0);
-    }
-    if arguments.is_empty() {
-        arguments.push(env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into()));
+    // A legacy positional command keeps a literal separator in its argv.
+    let child = if command.is_empty() {
+        suffix.get(1..).unwrap_or_default()
+    } else {
+        suffix
+    };
+    command.extend_from_slice(child);
+    if command.is_empty() {
+        command.push(env::var_os("SHELL").unwrap_or_else(|| "/bin/sh".into()));
     }
     Ok(Serve {
         socket,
         management,
         palette,
         default_colors,
-        command: arguments,
+        command,
     })
 }
 
-/// Where the command separator is, or the end; options stop there.
-fn launch_end(arguments: &[OsString]) -> usize {
-    arguments
-        .iter()
-        .position(|argument| argument == "--")
-        .unwrap_or(arguments.len())
+fn launch_option(argument: &OsStr) -> Option<&'static str> {
+    [
+        MANAGEMENT_ARGUMENT,
+        ANSI_PALETTE_ARGUMENT,
+        DEFAULT_COLORS_ARGUMENT,
+    ]
+    .into_iter()
+    .find(|option| argument == *option)
 }
 
-fn take_management(arguments: &mut Vec<OsString>) -> Result<Option<Launch>, String> {
-    let launch_end = launch_end(arguments);
-    let mut positions = arguments[..launch_end]
+fn launch_values<const N: usize>(arguments: &[OsString]) -> Option<(&[OsString; N], &[OsString])> {
+    let (values, remaining) = arguments.split_first_chunk()?;
+    values
         .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| (argument == MANAGEMENT_ARGUMENT).then_some(index));
-    let Some(index) = positions.next() else {
-        return Ok(None);
-    };
-    if positions.next().is_some() {
-        return Err("duplicate --management-v10 argument".into());
-    }
-    let values = arguments
-        .get(index + 1..index + 4)
-        .filter(|_| index + 4 <= launch_end)
-        .ok_or("--management-v10 requires Session, run, and component identities")?;
-    let launch = Launch::new([&values[0], &values[1], &values[2]].map(OsString::as_os_str))?;
-    arguments.drain(index..index + 4);
-    Ok(Some(launch))
-}
-
-fn take_colors<const N: usize>(
-    arguments: &mut Vec<OsString>,
-    option: &str,
-) -> Result<Option<[RgbColor; N]>, String> {
-    let launch_end = launch_end(arguments);
-    let mut positions = arguments[..launch_end]
-        .iter()
-        .enumerate()
-        .filter_map(|(index, argument)| (argument == option).then_some(index));
-    let Some(index) = positions.next() else {
-        return Ok(None);
-    };
-    if positions.next().is_some() {
-        return Err(format!("duplicate {option} argument"));
-    }
-    let value = arguments
-        .get(index + 1)
-        .filter(|_| index + 1 < launch_end)
-        .and_then(|value| value.to_str())
-        .ok_or_else(|| format!("{option} requires a UTF-8 value"))?;
-    let colors = parse_colors(value, option)?;
-    arguments.drain(index..=index + 1);
-    Ok(Some(colors))
+        .all(|value| launch_option(value).is_none())
+        .then_some((values, remaining))
 }
 
 fn parse_colors<const N: usize>(value: &str, option: &str) -> Result<[RgbColor; N], String> {
@@ -176,6 +179,7 @@ pub(crate) fn guardian_fault() -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::os::unix::ffi::OsStringExt;
 
     const PALETTE: &str = "000102,101112,202122,303132,404142,505152,606162,707172,808182,909192,a0a1a2,b0b1b2,c0c1c2,d0d1d2,e0e1e2,f0f1f2";
 
@@ -248,6 +252,11 @@ mod tests {
         assert_eq!(serve.palette, None);
         assert_eq!(serve.command, args(&["child", ANSI_PALETTE_ARGUMENT, "x"]));
 
+        let child = args(&["child", "value", "--", DEFAULT_COLORS_ARGUMENT]);
+        let mut legacy = args(&["serve", "/tmp/orbit.sock"]);
+        legacy.extend_from_slice(&child);
+        assert_eq!(parse(&legacy).unwrap().command, child);
+
         for bad in [
             &["client"][..],
             &[],
@@ -301,6 +310,21 @@ mod tests {
     }
 
     #[test]
+    fn management_requires_three_adjacent_identities() {
+        for (option, value) in [
+            (ANSI_PALETTE_ARGUMENT, PALETTE),
+            (DEFAULT_COLORS_ARGUMENT, "012345,abcdef"),
+        ] {
+            let mut arguments = args(&["serve", "/tmp/orbit.sock", MANAGEMENT_ARGUMENT, "s"]);
+            arguments.extend(args(&[option, value]));
+            assert_eq!(
+                parse(&arguments).unwrap_err(),
+                "--management-v10 requires Session, run, and component identities"
+            );
+        }
+    }
+
+    #[test]
     fn palettes_are_exactly_sixteen_hex_colors() {
         assert!(parse_colors::<16>(PALETTE, ANSI_PALETTE_ARGUMENT).is_ok());
         for value in [
@@ -319,58 +343,84 @@ mod tests {
     }
 
     #[test]
-    fn default_colors_are_a_pair_of_hex_colors_before_the_child_separator() {
-        use std::os::unix::ffi::OsStringExt;
-
-        let pair = "012345,aBcDeF";
-        let serve = parse(&args(&[
-            "serve",
-            "/tmp/orbit.sock",
-            DEFAULT_COLORS_ARGUMENT,
-            pair,
-            ANSI_PALETTE_ARGUMENT,
-            PALETTE,
-            MANAGEMENT_ARGUMENT,
-            "session-1",
-            "run-1",
-            "component-1",
-            "--",
+    fn launch_options_work_in_every_order() {
+        let options: [&[&str]; 3] = [
+            &[DEFAULT_COLORS_ARGUMENT, "012345,aBcDeF"],
+            &[ANSI_PALETTE_ARGUMENT, PALETTE],
+            &[MANAGEMENT_ARGUMENT, "session-1", "run-1", "component-1"],
+        ];
+        let mut command = args(&[
             "child",
             DEFAULT_COLORS_ARGUMENT,
-            "child-option",
-        ]))
-        .unwrap();
-        assert_eq!(
-            serve.default_colors,
-            Some([
+            ANSI_PALETTE_ARGUMENT,
+            MANAGEMENT_ARGUMENT,
+            "--",
+        ]);
+        command.push(OsString::from_vec(vec![0xff]));
+        let expected = Serve {
+            socket: PathBuf::from("/tmp/orbit.sock"),
+            management: Some(Launch {
+                session_id: "session-1".into(),
+                run_id: "run-1".into(),
+                component_generation: "component-1".into(),
+            }),
+            palette: Some(parse_colors(PALETTE, ANSI_PALETTE_ARGUMENT).unwrap()),
+            default_colors: Some([
                 RgbColor {
                     r: 1,
                     g: 0x23,
-                    b: 0x45
+                    b: 0x45,
                 },
                 RgbColor {
                     r: 0xab,
                     g: 0xcd,
-                    b: 0xef
+                    b: 0xef,
                 },
-            ])
-        );
-        assert!(serve.palette.is_some() && serve.management.is_some());
-        assert_eq!(
-            serve.command,
-            args(&["child", DEFAULT_COLORS_ARGUMENT, "child-option"])
-        );
-        let bare = parse(&args(&["serve", "/tmp/orbit.sock", "child", "value"])).unwrap();
-        assert_eq!(bare.default_colors, None);
-        assert_eq!(bare.command, args(&["child", "value"]));
+            ]),
+            command,
+        };
+        for order in [
+            [0, 1, 2],
+            [0, 2, 1],
+            [1, 0, 2],
+            [1, 2, 0],
+            [2, 0, 1],
+            [2, 1, 0],
+        ] {
+            let mut arguments = args(&["serve", "/tmp/orbit.sock"]);
+            arguments.extend(order.into_iter().flat_map(|index| args(options[index])));
+            arguments.push("--".into());
+            arguments.extend_from_slice(&expected.command);
+            assert_eq!(parse(&arguments).unwrap(), expected, "order {order:?}");
+        }
+    }
 
+    #[test]
+    fn color_arguments_distinguish_missing_and_non_utf8_values() {
+        for option in [ANSI_PALETTE_ARGUMENT, DEFAULT_COLORS_ARGUMENT] {
+            for tail in [&[][..], &["--", "child"]] {
+                let mut arguments = args(&["serve", option]);
+                arguments.extend(args(tail));
+                assert_eq!(
+                    parse(&arguments).unwrap_err(),
+                    format!("{option} requires a value")
+                );
+            }
+            let mut arguments = args(&["serve", option]);
+            arguments.push(OsString::from_vec(vec![0xff]));
+            assert_eq!(
+                parse(&arguments).unwrap_err(),
+                format!("{option} requires a UTF-8 value")
+            );
+        }
+    }
+
+    #[test]
+    fn invalid_default_color_pairs_are_refused() {
+        let pair = "012345,aBcDeF";
         for invalid in ["", "012345", "012345,abcdef,000000", "012345,abcdeg"] {
             assert!(parse(&args(&["serve", DEFAULT_COLORS_ARGUMENT, invalid])).is_err());
         }
-        let mut invalid_bytes = args(&["serve", DEFAULT_COLORS_ARGUMENT]);
-        assert!(parse(&invalid_bytes).is_err());
-        invalid_bytes.push(OsString::from_vec(vec![0xff]));
-        assert!(parse(&invalid_bytes).is_err());
         assert!(
             parse(&args(&[
                 "serve",

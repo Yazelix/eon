@@ -70,7 +70,12 @@ signal, the code `Exited` carries; it prints nothing on success. A bad command
 line or a command that cannot start fails with status 1 and a message
 prefixed `orbit: `. The real-PTY command-line and lifecycle
 checks cover the palette in frames, the child's arguments, exit codes, and
-both failures. The real-PTY palette-reset check has the child override colors
+both failures. Launch flags take their values from adjacent arguments before
+the command separator. Another launch flag in a required value slot makes the
+option incomplete. The lifecycle test
+`launch_rejects_invalid_color_values_before_starting_child` checks that Orbit
+reports the incomplete color option without starting the child. The real-PTY
+palette-reset check has the child override colors
 0, 1 and 200, then send an OSC 104 that names no index: every color returns
 to the supplied 16 and xterm's defaults above them. Installing the palette as
 current colors instead of defaults made it fail.
