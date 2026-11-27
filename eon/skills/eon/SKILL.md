@@ -108,6 +108,17 @@ unchanged with `--no-focus`. Use plain `eon tab create --json` only when the per
 a tab that starts on quick search: it activates the new pending tab and moves
 the person's view. Its `created` pane is null, and the pick that later starts
 the tab's first pane does not report that pane in `created`.
+Start another agent only in a project folder the person already trusts in
+that agent; give it other folders with its `--add-dir DIR` (Claude Code,
+Codex), not a broader start folder. Before sending the new agent text,
+`--enter` or `--key`, wait until `eon pane read` shows its normal input prompt: right
+after launch the prompt may not be drawn yet. A folder-trust prompt needs the
+person: leave it and tell them. Current Claude Code reports that prompt as
+needs input; Codex reports nothing and preselects "Trust and continue", so
+Enter there trusts the folder. Never grant trust for the person: no answering
+the prompt, no editing an agent's trust records, no option that skips
+permission checks. `eon agent launch` changes trust only where a backend the
+person configured asks for it with `trusted_settings`.
 Create a session with `eon session new --no-focus --json`, adding
 `--name NAME` when requested. Read its window-local `sN` from `created` and
 its durable identity from `created_persistent_id`. Names may repeat; renaming
@@ -264,7 +275,8 @@ with TEXT or `--enter`. `keys` in the reply counts the keys Orbit accepted;
 after a failure no later key is sent, so read the pane before retrying.
 On macOS, `alt+` types the plain character in a program's legacy
 keyboard mode; send `--key escape --key b` for readline's `alt+b`.
-Never press keys to accept folder trust or another approval for the person.
+Never press keys, or send `--enter`, to accept folder trust or another
+approval for the person.
 
 A sandboxed agent that may connect to Unix sockets can drive Eon, and
 `eon pane create` and `eon pane send` then run commands outside its sandbox.

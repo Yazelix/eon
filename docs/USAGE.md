@@ -1784,8 +1784,8 @@ for `focused`, every key after the first needs the same focused terminal. The
 JSON reply adds `keys`, the number of keys Orbit accepted. If a later key
 fails, the command stops, sends no further key and exits 1 with `keys` and the
 `error`; when the failure left that key's delivery uncertain, `error.detail`
-says so. Key transport is not trust: never use it to accept a folder-trust or
-approval prompt on a person's behalf.
+says so. Key transport is not trust: never use it, or `--enter`, to accept a
+folder-trust or approval prompt on a person's behalf.
 
 A loop that presses Enter in several panes can hand `eon` its own input: a
 Nushell closure passes its element to the first external command, and in a
@@ -1909,6 +1909,24 @@ Remove a skill by deleting its link: `rm ~/.claude/skills/eon` or
 An agent's sandbox does not contain what it does through `eon pane create`,
 `eon pane read` and `eon pane send`, and Codex needs `--no-daemon` in Eon; see
 [Sending to a terminal](#sending-to-a-terminal).
+
+**Starting an agent in a new folder.** Start agents in a project folder you
+have already trusted in that agent, as in `eon tab create --dir DIR --no-focus
+--json -- COMMAND...`. Claude Code also trusts the folders inside one it
+trusts. To reach other folders, pass an option such as `--add-dir DIR`, which
+Claude Code and Codex take, rather than starting the agent somewhere broader
+such as your home folder. In a folder it has not trusted, an agent may first ask
+whether you trust the folder, and only you can answer. Current Claude Code asks with
+"No, exit" selected and reports the prompt as needing input, so it appears
+under Alt+G and in the attention inbox. Codex asks in a Git repository it has
+not trusted, with "Trust and continue" selected, and reports nothing while it
+waits, so its pane shows no attention. An agent that starts another waits for
+its normal input prompt in `eon pane read` before sending text, `--enter` or
+`--key` (right after launch nothing may be drawn yet, and Enter at Codex's
+prompt trusts the folder), and leaves a trust prompt to you. Agents never grant trust
+for you by answering it, editing an agent's trust records or using an option
+that skips permission checks. [`eon agent launch`](#agent-commands) changes
+trust only where a backend you configured asks for it with `trusted_settings`.
 
 Optionally add a session-start hook. Merge the following `SessionStart` entry
 into `~/.claude/settings.json`, preserving your other settings and hooks:
