@@ -2,13 +2,13 @@ use crate::scene::{
     Color, DrawRow, QuotaPaceHistory, Scene, ScenePreview, bar_workspace, hidden_needs_input,
 };
 use eon_workspace_protocol::v51::{
-    AttentionState, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
+    AttentionState, Column, Pane, Popup, Response as WorkspaceResponse, Snapshot, Tab,
 };
-use orbit_protocol::FrameReducer;
 use orbit_protocol::session::{
     ClipboardLocation, FailureCode, PixelFormat, PreviewOutcome, RESOURCE_CHUNK_BYTES,
     ResourceAnnounce, ResourceChunk, ScrollOutcome, ServerMessage, WheelOutcome,
 };
+use orbit_protocol::{FrameReducer, Rgb};
 use std::{
     collections::{HashMap, HashSet},
     error::Error,
@@ -260,6 +260,8 @@ pub struct WorkspaceModel {
     snapshot: Option<Snapshot>,
     // Keep the last frame color when a popup covers its column.
     pane_backgrounds: HashMap<Vec<u8>, Option<Color>>,
+    // Keep the former leftmost color when a popup prevents the new pane from rendering.
+    leftmost_backgrounds: HashMap<String, Color>,
     notice: Option<WorkspaceNotice>,
     /// The serial the shown notice was given, so a newer notice can outrank older client
     /// notices and a client notice can outrank older ones.
@@ -504,6 +506,21 @@ impl WorkspaceModel {
                     self.notice = None;
                 }
                 if workspace_changed {
+                    for tab in self.snapshot.iter().flat_map(|current| &current.tabs) {
+                        if let Some(color) = tab
+                            .columns
+                            .first()
+                            .and_then(|column| self.pane_background(column))
+                        {
+                            self.leftmost_backgrounds.insert(tab.id.clone(), color);
+                        }
+                    }
+                    self.leftmost_backgrounds.retain(|id, _| {
+                        snapshot
+                            .tabs
+                            .iter()
+                            .any(|tab| tab.id == *id && !tab.columns.is_empty())
+                    });
                     let panes: HashSet<_> = snapshot
                         .tabs
                         .iter()
@@ -660,20 +677,32 @@ impl WorkspaceModel {
         }
     }
 
+    fn pane_background(&self, column: &Column) -> Option<Color> {
+        let pane = column
+            .panes
+            .iter()
+            .find(|pane| pane.id == column.expanded)?;
+        self.pane_backgrounds.get(&pane.endpoint).copied().flatten()
+    }
+
     /// Colors in active-tab column order, including while a popup covers the columns.
     pub(crate) fn column_backgrounds(&self, covered_zoom: bool) -> Vec<Option<Color>> {
         let Some(tab) = self.active_tab() else {
             return Vec::new();
         };
+        let fallback = tab.selected_popup.is_some().then(|| Rgb::BLACK.into());
+        let leftmost = fallback
+            .and_then(|_| self.leftmost_backgrounds.get(&tab.id).copied())
+            .or(fallback);
         tab.columns
             .iter()
-            .filter(|column| !covered_zoom || tab.selected_pane.as_ref() == Some(&column.expanded))
-            .map(|column| {
-                let pane = column
-                    .panes
-                    .iter()
-                    .find(|pane| pane.id == column.expanded)?;
-                self.pane_backgrounds.get(&pane.endpoint).copied().flatten()
+            .enumerate()
+            .filter(|(_, column)| {
+                !covered_zoom || tab.selected_pane.as_ref() == Some(&column.expanded)
+            })
+            .map(|(index, column)| {
+                self.pane_background(column)
+                    .or(if index == 0 { leftmost } else { fallback })
             })
             .collect()
     }

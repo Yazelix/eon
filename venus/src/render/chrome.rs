@@ -5976,6 +5976,21 @@ mod tests {
         }
     }
 
+    fn popup_sidebar_renderer() -> Renderer {
+        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
+        let mut renderer = Renderer::hosted(
+            device,
+            queue,
+            wgpu::TextureFormat::Rgba8Unorm,
+            (1280, 800),
+            1.0,
+            FontSetup::new(&FontSettings::default()).unwrap(),
+        )
+        .unwrap();
+        renderer.background_opacity = 0.8;
+        renderer
+    }
+
     #[test]
     fn popup_keeps_workspace_backdrop_colors() {
         use super::super::{
@@ -6004,17 +6019,7 @@ mod tests {
         model.record_pane_background(Some(b"/tmp/p1.sock"), Some(&left_scene));
         model.record_pane_background(Some(b"/tmp/p2.sock"), Some(&right_scene));
         let size = PhysicalSize::new(1280, 800);
-        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-        let mut renderer = Renderer::hosted(
-            device,
-            queue,
-            wgpu::TextureFormat::Rgba8Unorm,
-            (1280, 800),
-            1.0,
-            FontSetup::new(&FontSettings::default()).unwrap(),
-        )
-        .unwrap();
-        renderer.background_opacity = 0.8;
+        let mut renderer = popup_sidebar_renderer();
         renderer.panel_heading = crate::PanelHeading::Notch;
         let metrics = renderer.metrics();
         let peers = [Some(&left_scene)];
@@ -6115,6 +6120,106 @@ mod tests {
         snapshot.active_tab = "t1".into();
         model.apply(Response::Snapshot(snapshot));
         assert_eq!(model.column_backgrounds(false), [Some(left), Some(right)]);
+    }
+
+    #[test]
+    fn covered_sidebar_uses_its_tabs_last_leftmost_background() {
+        use eon_workspace_protocol::v51::Response;
+
+        let size = PhysicalSize::new(1280, 800);
+        let mut renderer = popup_sidebar_renderer();
+        let metrics = renderer.metrics();
+        let shade = |r| SceneColor { r, g: r, b: r };
+        let scene = |background| crate::Scene {
+            background,
+            ..super::super::tests::padding_scene()
+        };
+        let popup = scene(shade(90));
+        let mut generation = 0;
+        let mut render = |model: &mut crate::WorkspaceModel| {
+            let snapshot = model.snapshot().unwrap();
+            let endpoint = crate::active_popup(snapshot).unwrap().endpoint.clone();
+            let ws = WorkspaceScene::from_snapshot(snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                (text.into(), text.len() as f32 * metrics.width)
+            });
+            model.record_pane_background(Some(&endpoint), Some(&popup));
+            ws.column_backgrounds
+                .replace(model.column_backgrounds(false));
+            let popup = Some(&popup);
+            generation += 1;
+            renderer.rebuild_if_needed(
+                popup,
+                None,
+                0.0,
+                Some(&ws),
+                &[],
+                None,
+                WorkspaceFocus::Terminal,
+                "",
+                true,
+                "",
+                generation,
+            );
+            let cards = card_backdrops(&ws, popup, &[], metrics, renderer.card_stroke_width());
+            let heading = &ws.sidebar_headings[0];
+            let ink = renderer
+                .text
+                .iter()
+                .find(|text| text.left == heading.rect.left && text.top == heading.rect.top)
+                .unwrap()
+                .color;
+            (cards[0].1, cards.last().unwrap().1, ink)
+        };
+        let mut failures = Vec::new();
+        let mut check = |stage, model: &mut crate::WorkspaceModel, background| {
+            let ink = blend_to_contrast(palette::DARK.primary_text, background, 4.5);
+            let expected = (shade(90), background, Color::rgb(ink.r, ink.g, ink.b));
+            let actual = render(model);
+            if actual != expected {
+                failures.push((stage, actual, expected));
+            }
+        };
+        for level in [0, 32, 240] {
+            let mut snapshot = popup_sidebar_snapshot();
+            let mut other = snapshot.tabs[0].clone();
+            other.id = "t2".into();
+            other.columns[0].panes.truncate(1);
+            let pane = &mut other.columns[0].panes[0];
+            pane.id = "p3".into();
+            pane.session = "terminal-p3".into();
+            pane.endpoint = b"/tmp/p3.sock".to_vec();
+            other.columns[0].expanded = "p3".into();
+            other.selected_pane = Some("p3".into());
+            other.popups[0].id = "u2".into();
+            other.popups[0].session = "terminal-u2".into();
+            other.popups[0].endpoint = b"/tmp/u2.sock".to_vec();
+            other.selected_popup = Some("u2".into());
+            snapshot.tabs.push(other);
+            snapshot.workspaces[0].tab_count = 2;
+            let mut model = crate::WorkspaceModel::default();
+            model.apply(Response::Snapshot(snapshot.clone()));
+            model.record_pane_background(Some(b"/tmp/p2.sock"), Some(&scene(shade(level))));
+            snapshot.tabs[0].selected_popup = Some("u1".into());
+            model.apply(Response::Snapshot(snapshot.clone()));
+            check("before close", &mut model, shade(level));
+
+            let first = &mut snapshot.tabs[0];
+            first.columns[0].panes.pop().unwrap();
+            first.columns[0].expanded = "p1".into();
+            first.selected_pane = Some("p1".into());
+            model.apply(Response::Snapshot(snapshot.clone()));
+            check("after close", &mut model, shade(level));
+
+            snapshot.active_tab = "t2".into();
+            model.apply(Response::Snapshot(snapshot.clone()));
+            check("unseen tab", &mut model, shade(0));
+            snapshot.active_tab = "t1".into();
+            model.apply(Response::Snapshot(snapshot));
+            check("return to tab", &mut model, shade(level));
+            model.record_pane_background(Some(b"/tmp/p1.sock"), Some(&scene(shade(70))));
+            check("replacement frame", &mut model, shade(70));
+        }
+        assert!(failures.is_empty(), "{failures:#?}");
     }
 
     #[test]

@@ -7,6 +7,9 @@ installation, and proven contract changes.
 
 - Venus pane labels adapt to light and dark terminal backgrounds set with
   OSC 11 (`eon-4vtmu`).
+- The Agents sidebar keeps the tab's terminal background when its leftmost
+  pane closes behind a popup. An unseen tab uses the default terminal black
+  until its pane supplies a background (`eon-r9vnp`).
 - Venus stops sending typing, input-method commits and keyboard paste to
   Orbit after GPU device loss. To keep an Eon workspace's terminals running,
   turn off input lock if active, then detach with Alt+Shift+D
