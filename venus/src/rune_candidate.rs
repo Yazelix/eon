@@ -9,7 +9,7 @@
 //!   `Application` on Rune (`application::rune_host`, eon-yp6vg.7.9);
 //! - a new GPU device or target format is terminal, not rebuilt (eon-yp6vg.7.10);
 //! - no Rune accessibility tree for the terminal (the VEN-C1 Rune-hosted gap);
-//! - the cursor stays visible, and the hosted renderer draws no cursor tail.
+//! - the fixture cursor stays visible and uses a static cursor.
 
 pub(crate) mod fixtures;
 pub(crate) mod header_pilot;
@@ -565,7 +565,14 @@ pub(crate) mod rune_host {
                     .unwrap_or_else(|| entry.prepare_hosted_header(renderer))
             } else {
                 entry.sync_images(renderer);
-                renderer.prepare_hosted(entry.scene(), (None, 0.0), true, entry.generation, "", "")
+                renderer.prepare_hosted(
+                    entry.scene(),
+                    (None, 0.0),
+                    (true, f.dt as f32),
+                    entry.generation,
+                    "",
+                    "",
+                )
             };
             if let Err(error) = result {
                 self.fail(error.to_string());
@@ -974,6 +981,37 @@ mod venus_host {
             }
         }
     }
+}
+
+/// Runs a compositor on a private target; only capture frames need a readback.
+#[cfg(test)]
+pub(crate) fn offscreen_frame<S: 'static>(
+    (device, queue): (&wgpu::Device, &wgpu::Queue),
+    ui: &mut rune::render::Renderer,
+    rt: &mut rune::Runtime<S>,
+    (size, target): ((u32, u32), &rune::render::Offscreen),
+    (dt, readback): (f64, bool),
+    render: impl FnOnce(&mut rune::Frame<'_, S>),
+) -> Option<Vec<u8>> {
+    let format = ui.format();
+    let mut encoder = device.create_command_encoder(&Default::default());
+    render(&mut rune::Frame {
+        device,
+        queue,
+        encoder: &mut encoder,
+        target: &target.view,
+        format,
+        size,
+        dt,
+        update_ms: 0.0,
+        rt,
+        ui,
+    });
+    if readback {
+        target.copy(&mut encoder);
+    }
+    queue.submit([encoder.finish()]);
+    readback.then(|| target.read(device))
 }
 
 #[cfg(test)]

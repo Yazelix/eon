@@ -315,7 +315,7 @@ fn prepare(
         .collect();
     if hosted {
         renderer
-            .prepare_hosted(scene, (None, 0.0), blink, generation, "", "")
+            .prepare_hosted(scene, (None, 0.0), (blink, 0.0), generation, "", "")
             .unwrap();
     } else {
         prepare_parent(renderer, scene, generation, blink);

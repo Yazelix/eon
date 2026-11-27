@@ -335,6 +335,7 @@ struct FrameHandoff {
     staged: Cell<Option<PresentationIdentity>>,
     completed: Cell<Option<Completion>>,
     queued: Cell<bool>,
+    animating: Cell<bool>,
 }
 
 impl FrameHandoff {
@@ -348,6 +349,9 @@ impl FrameHandoff {
             (FrameOutcome::Skipped, Some(FrameSkip::Covered)) => Completion::Covered,
             _ => Completion::Surface,
         };
+        if matches!(completion, Completion::Covered | Completion::Surface) {
+            self.animating.set(false);
+        }
         // A less severe skip can arrive before a pending surface withdrawal is applied.
         if self.completed.get() != Some(Completion::Surface) {
             self.completed.set(Some(completion));
@@ -356,6 +360,7 @@ impl FrameHandoff {
     }
 
     fn discard(&self) {
+        self.animating.set(false);
         self.staged.take();
         self.completed.take();
     }
@@ -431,6 +436,15 @@ impl Host {
         if self.check_failure() {
             tx.quit();
             return false;
+        }
+        if self.frames.animating.get()
+            && !self
+                .app
+                .window
+                .as_ref()
+                .is_some_and(|window| window.renderer.cursor_animation_active())
+        {
+            self.frames.animating.set(false);
         }
         while let Some(request) = self.app.native_requests.take() {
             self.apply(request);
@@ -536,7 +550,11 @@ impl Host {
                     self.app.native_requests.redraw |= self.app.advance_terminal_scroll(now);
                 }
             }
-            Some(Completion::Surface | Completion::Drawn(None)) => self.withdraw_surface(),
+            Some(Completion::Surface) => {
+                self.app.reset_cursor_animation();
+                self.withdraw_surface();
+            }
+            Some(Completion::Drawn(None)) => self.withdraw_surface(),
             Some(Completion::Covered) => {
                 self.app.presentation.unpublish();
                 self.app.stop_covered_motion();
@@ -762,7 +780,11 @@ impl Host {
         let geometry = slot_for_target(geometry, f.size);
         if f.rt.state.identity.is_none() {
             let fonts = f.rt.state.fonts.take()?;
-            match hosted_renderer(f, geometry, fonts, crate::render::HOSTED_LOOK) {
+            let look = crate::render::HostedLook {
+                cursor_tail: f.rt.state.app.cursor_tail,
+                ..crate::render::HOSTED_LOOK
+            };
+            match hosted_renderer(f, geometry, fonts, look) {
                 Ok(renderer) => {
                     f.rt.state.identity = Some(target);
                     f.rt.state.create_window(renderer, geometry);
@@ -778,11 +800,15 @@ impl Host {
             (host.control.quit)();
             return None;
         }
-        host.prepare_grid(geometry)
+        host.prepare_grid(geometry, f.dt as f32)
             .map(|candidate| (geometry, candidate))
     }
 
-    fn prepare_grid(&mut self, geometry: SlotGeometry) -> Option<PresentationIdentity> {
+    fn prepare_grid(
+        &mut self,
+        geometry: SlotGeometry,
+        cursor_delta: f32,
+    ) -> Option<PresentationIdentity> {
         if self
             .slot
             .replace(geometry)
@@ -803,6 +829,7 @@ impl Host {
         app.sync_images();
         app.prepare_workspace();
         let candidate = app.presentation_candidate(app.workspace_scene().as_deref());
+        app.reset_cursor_animation_for_frame();
         let scene = app.terminal.model.scene()?;
         let scroll = if candidate.revision.is_some() {
             (
@@ -819,7 +846,7 @@ impl Host {
         if let Err(error) = renderer.prepare_hosted(
             scene,
             scroll,
-            app.blink_visible,
+            (app.blink_visible, cursor_delta),
             generation,
             &status,
             preedit,
@@ -836,6 +863,16 @@ impl Host {
         drawn: Drawn,
     ) -> bool {
         self.frames.staged.take();
+        self.frames
+            .animating
+            .set(self.app.window.as_mut().is_some_and(|window| {
+                if prepared.is_some() && drawn.slot.is_none() {
+                    window.renderer.reset_cursor_animation();
+                }
+                prepared.is_some()
+                    && drawn.slot.is_some()
+                    && window.renderer.cursor_animation_active()
+            }));
         if let Some(refusal) = drawn.refusal {
             self.fail(refusal);
             return false;
@@ -873,13 +910,18 @@ impl Host {
 }
 
 /// Draws Venus's window in Rune's frame pass.
-struct HostCompositor;
+struct HostCompositor(Rc<FrameHandoff>);
 
 /// Frames in a row a slot may draw away from where it was prepared before that is a fault.
 const MOVED_FRAMES: u32 = 3;
 
 impl Compositor<Host> for HostCompositor {
+    fn animating(&self) -> bool {
+        self.0.animating.get()
+    }
+
     fn render(&mut self, f: &mut Frame<'_, Host>) {
+        self.0.animating.set(false);
         if !f.rt.state.begin() {
             (f.rt.state.control.quit)();
             return;
@@ -1057,6 +1099,7 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         },
     );
     spec.poll = Some(poll);
+    let frames = Rc::new(FrameHandoff::default());
     let mut app = App::new(spec)
         .args(Vec::new())
         .srgb_blend(false)
@@ -1069,9 +1112,8 @@ pub(crate) fn run(arguments: LaunchArguments) -> Result {
         .on_close_request(on_close_request)
         .on_quit_request(on_quit_request)
         .on_close(on_close)
-        .compositor(HostCompositor);
+        .compositor(HostCompositor(Rc::clone(&frames)));
     let _ = handle.set(app.handle());
-    let frames = Rc::new(FrameHandoff::default());
     let receipt_handle = app.handle();
     app = app.on_frame_encoded({
         let frames = Rc::clone(&frames);

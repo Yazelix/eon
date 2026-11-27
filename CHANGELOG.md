@@ -76,6 +76,8 @@ installation, and proven contract changes.
   whole-row updates (`eon-yp6vg.69`).
 - The packaged Rune preview uses the rebased Rune engine at `7d7bd5e4`, including
   Rune's upstream window-close handling (`eon-yp6vg.67`).
+- The Rune preview draws the configured Venus cursor tail and lets the
+  window rest once the tail settles (`eon-qofz0`).
 - The Agents sidebar shows a pane's tag (`eon pane rename PANE NAME --tag TAG`)
   at the end of its row's second line, such as `1h · p25 · eon-igae.25`. On a
   narrow sidebar only the tag shortens, with `…`, and screen readers hear the

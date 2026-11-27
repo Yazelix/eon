@@ -4853,19 +4853,17 @@ mod tests {
         }
     }
 
+    fn chrome_renderer(size: (u32, u32), scale: f64) -> Renderer {
+        let (device, queue) = wgpu::Device::noop(&Default::default());
+        let fonts = FontSetup::new(&FontSettings::default()).unwrap();
+        let format = wgpu::TextureFormat::Rgba8Unorm;
+        Renderer::hosted(device, queue, format, size, scale, fonts).unwrap()
+    }
+
     #[test]
     fn bar_dots_follow_text_ink_and_only_critical_outlines_light_up() {
         use eon_workspace_protocol::v51::{CodexQuota, CodexQuotaState, QuotaWindow};
-        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-        let mut renderer = Renderer::hosted(
-            device,
-            queue,
-            wgpu::TextureFormat::Rgba8Unorm,
-            (2200, 300),
-            1.0,
-            FontSetup::new(&FontSettings::default()).unwrap(),
-        )
-        .unwrap();
+        let mut renderer = chrome_renderer((2200, 300), 1.0);
         for scale in [1.0, 1.5, 2.0] {
             let size = PhysicalSize::new((2200.0 * scale) as u32, (300.0 * scale) as u32);
             renderer.resize(size, scale);
@@ -6111,16 +6109,7 @@ mod tests {
     }
 
     fn popup_sidebar_renderer() -> Renderer {
-        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-        let mut renderer = Renderer::hosted(
-            device,
-            queue,
-            wgpu::TextureFormat::Rgba8Unorm,
-            (1280, 800),
-            1.0,
-            FontSetup::new(&FontSettings::default()).unwrap(),
-        )
-        .unwrap();
+        let mut renderer = chrome_renderer((1280, 800), 1.0);
         renderer.background_opacity = 0.8;
         renderer
     }
@@ -7670,16 +7659,7 @@ mod tests {
     fn antigravity_mark_is_never_tinted_by_row_background() {
         let scale = 1.0;
         let size = PhysicalSize::new(1280, 800);
-        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-        let mut renderer = Renderer::hosted(
-            device,
-            queue,
-            wgpu::TextureFormat::Rgba8Unorm,
-            (size.width, size.height),
-            scale,
-            FontSetup::new(&FontSettings::default()).unwrap(),
-        )
-        .unwrap();
+        let mut renderer = chrome_renderer((size.width, size.height), scale);
         renderer.background_opacity = 1.0;
         let metrics = renderer.metrics();
         let mut snapshot = popup_sidebar_snapshot();
@@ -7975,16 +7955,7 @@ mod tests {
     fn production_tab_and_overflow_callers_keep_background_soft_and_animated() {
         for scale in [1.0, 1.5, 2.0] {
             let size = PhysicalSize::new((800.0 * scale) as u32, (600.0 * scale) as u32);
-            let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-            let mut renderer = Renderer::hosted(
-                device,
-                queue,
-                wgpu::TextureFormat::Rgba8Unorm,
-                (size.width, size.height),
-                scale,
-                FontSetup::new(&FontSettings::default()).unwrap(),
-            )
-            .unwrap();
+            let mut renderer = chrome_renderer((size.width, size.height), scale);
             let metrics = renderer.metrics();
             let mut snapshot = popup_sidebar_snapshot();
             snapshot.sidebar = eon_workspace_protocol::v51::Sidebar::Closed;
@@ -8078,16 +8049,7 @@ mod tests {
     fn sidebar_and_inbox_render_full_row_symbols_and_keep_text_positions() {
         for scale in [1.0, 1.25, 1.5, 1.75, 2.0] {
             let size = PhysicalSize::new((1600.0 * scale) as u32, (900.0 * scale) as u32);
-            let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-            let mut renderer = Renderer::hosted(
-                device,
-                queue,
-                wgpu::TextureFormat::Rgba8Unorm,
-                (size.width, size.height),
-                scale,
-                FontSetup::new(&FontSettings::default()).unwrap(),
-            )
-            .unwrap();
+            let mut renderer = chrome_renderer((size.width, size.height), scale);
             renderer.background_opacity = 1.0;
             let metrics = renderer.metrics();
             for (app, id) in [
@@ -8286,16 +8248,7 @@ mod tests {
 
     #[test]
     fn quota_chip_draw_inputs_keep_provider_glyphs_and_tints() {
-        let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-        let mut renderer = Renderer::hosted(
-            device,
-            queue,
-            wgpu::TextureFormat::Rgba8Unorm,
-            (320, 180),
-            1.0,
-            FontSetup::new(&FontSettings::default()).unwrap(),
-        )
-        .unwrap();
+        let mut renderer = chrome_renderer((320, 180), 1.0);
         let rect = SceneRect {
             left: 10.0,
             top: 20.0,
@@ -8417,10 +8370,7 @@ mod tests {
         let card = |c, o| Backing::card(c, o, true);
         let desktops = [0, 50, 100, 116, 117, 119, 154, 255].map(grey);
         let is_k = |t: &PlacedText| t.buffer.lines.first().map(|l| l.text()) == Some("K");
-        let (dev, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
-        let fonts = FontSetup::new(&FontSettings::default()).unwrap();
-        let fmt = wgpu::TextureFormat::Rgba8Unorm;
-        let mut r = Renderer::hosted(dev, queue, fmt, (1280, 800), 1.0, fonts).unwrap();
+        let mut r = chrome_renderer((1280, 800), 1.0);
         let (m, sz) = (r.metrics(), PhysicalSize::new(1280, 800));
         let fit = |_: crate::scene::HeaderText<'_>, t: &str| (t.into(), t.len() as f32 * m.width);
         let scene = WorkspaceScene::from_snapshot(&popup_sidebar_snapshot(), sz, m, 0.0, 0.0, fit);
@@ -10677,10 +10627,7 @@ mod tests {
         use accesskit::ActivationHandler;
         use eon_workspace_protocol::v51::{CodexQuota, CodexQuotaState, QuotaWindow, Response};
         let sz = PhysicalSize::new(1280, 800);
-        let (dev, queue) = wgpu::Device::noop(&Default::default());
-        let fonts = FontSetup::new(&FontSettings::default()).unwrap();
-        let fmt = wgpu::TextureFormat::Rgba8Unorm;
-        let mut r = Renderer::hosted(dev, queue, fmt, (1280, 800), 1.0, fonts).unwrap();
+        let mut r = chrome_renderer((1280, 800), 1.0);
         let m = r.metrics();
         let (t0, t1, r_old, r_mv) = (8_000_000, 8_000_600, 8_259_200, 8_432_000);
         let push =

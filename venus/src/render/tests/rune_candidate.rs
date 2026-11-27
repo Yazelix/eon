@@ -31,7 +31,14 @@ fn hosted_steps_prepare_images_and_text_in_painter_order() {
     let prepare = |renderer: &mut Renderer, entry: &mut Entry| {
         entry.sync_images(renderer);
         renderer
-            .prepare_hosted(entry.scene(), (None, 0.0), true, entry.generation, "", "")
+            .prepare_hosted(
+                entry.scene(),
+                (None, 0.0),
+                (true, 0.0),
+                entry.generation,
+                "",
+                "",
+            )
             .unwrap();
         assert!(
             matches!(renderer.hosted_backdrop, Some((_, 6))),
@@ -177,26 +184,15 @@ fn read_candidate<S: 'static>(
     target: &rune::render::Offscreen,
     render: impl FnOnce(&mut rune::Frame<'_, S>),
 ) -> Vec<u8> {
-    let format = ui.format();
-    let mut encoder = gpu.device.create_command_encoder(&Default::default());
-    {
-        let mut frame = rune::Frame {
-            device: &gpu.device,
-            queue: &gpu.queue,
-            encoder: &mut encoder,
-            target: &target.view,
-            format,
-            size,
-            dt: 0.0,
-            update_ms: 0.0,
-            rt,
-            ui,
-        };
-        render(&mut frame);
-    }
-    target.copy(&mut encoder);
-    gpu.queue.submit([encoder.finish()]);
-    target.read(&gpu.device)
+    crate::rune_candidate::offscreen_frame(
+        (&gpu.device, &gpu.queue),
+        ui,
+        rt,
+        (size, target),
+        (0.0, true),
+        render,
+    )
+    .unwrap()
 }
 
 /// The windowed path's own recording: the scene prepared as `render` prepares it, in a pass
@@ -220,7 +216,7 @@ fn prepare_parent(parent: &mut Renderer, scene: &Scene, generation: u64, blink: 
             None,
             WorkspaceFocus::Terminal,
             "",
-            blink,
+            (blink, None),
             "",
             generation,
         )
@@ -796,7 +792,14 @@ fn disallow_incompatible_passes(gpu: &rune::render::Gpu) {
     let mut renderer = probe_terminal(gpu, format, size, 1.0);
     let entry = Entry::new().unwrap();
     renderer
-        .prepare_hosted(entry.scene(), (None, 0.0), true, entry.generation, "", "")
+        .prepare_hosted(
+            entry.scene(),
+            (None, 0.0),
+            (true, 0.0),
+            entry.generation,
+            "",
+            "",
+        )
         .unwrap();
     let mut ui = rune::render::Renderer::new(&gpu.device, format);
     for (view, blend, wrong_pass) in [

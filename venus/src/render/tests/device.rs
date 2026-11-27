@@ -1,14 +1,18 @@
 use super::*;
 
-fn blink_test_renderer() -> Renderer {
+fn blink_test_renderer(cursor_tail: Option<(SceneColor, f32)>) -> Renderer {
     let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
-    Renderer::hosted(
+    Renderer::hosted_with_look(
         device,
         queue,
         wgpu::TextureFormat::Rgba8Unorm,
         (320, 180),
         1.0,
         clipping_test_fonts(),
+        HostedLook {
+            cursor_tail,
+            ..HOSTED_LOOK
+        },
     )
     .unwrap()
 }
@@ -28,6 +32,57 @@ fn blink_test_scene() -> Scene {
         explicit_color: false,
     });
     scene
+}
+
+#[test]
+fn hosted_tail_matches_the_windowed_painter_at_fixed_deltas() {
+    let color = SceneColor {
+        r: 241,
+        g: 133,
+        b: 31,
+    };
+    let mut renderer = blink_test_renderer(Some((color, 1.0)));
+    let mut scene = blink_test_scene();
+    let size = renderer.size();
+    let viewport = SceneRect {
+        width: size.width as f32,
+        height: size.height as f32,
+        ..SceneRect::default()
+    };
+    let mut reference = CursorAnimation::default();
+    for (column, delta, active) in [
+        (0, 0.0, false),
+        (2, 0.5, true),
+        (2, 0.016, true),
+        (2, 0.05, false),
+    ] {
+        scene.cursor.as_mut().unwrap().column = column;
+        let mut expected = RectangleBatch::new(size.width, size.height);
+        assert_eq!(
+            build_tail_cursor(
+                &mut expected,
+                &mut reference,
+                &scene,
+                true,
+                renderer.metrics(),
+                viewport,
+                color,
+                cursor_outline(color),
+                1.0,
+                delta,
+            ),
+            active
+        );
+        renderer
+            .prepare_hosted(&scene, (None, 0.0), (true, delta), 1, "", "")
+            .unwrap();
+        assert_eq!(
+            renderer.last_dynamic_cursor_bytes, expected.bytes,
+            "delta {delta}"
+        );
+        assert_eq!(renderer.cursor_animation_active(), active);
+    }
+    assert_eq!((renderer.grid_rebuilds, renderer.glyphon_prepares), (1, 1));
 }
 
 fn blink_test_workspace(metrics: CellMetrics) -> WorkspaceScene {
@@ -64,10 +119,10 @@ fn blink_test_workspace(metrics: CellMetrics) -> WorkspaceScene {
 
 #[test]
 fn cursor_blink_reuses_grid_and_glyphon_preparation() {
-    let mut renderer = blink_test_renderer();
+    let mut renderer = blink_test_renderer(None);
     let scene = blink_test_scene();
     renderer
-        .prepare_hosted(&scene, (None, 0.0), true, 1, "", "")
+        .prepare_hosted(&scene, (None, 0.0), (true, 0.0), 1, "", "")
         .unwrap();
     let before = (renderer.grid_rebuilds, renderer.glyphon_prepares);
     let text_buffers = renderer
@@ -90,7 +145,7 @@ fn cursor_blink_reuses_grid_and_glyphon_preparation() {
                 None,
                 WorkspaceFocus::Terminal,
                 "",
-                visible,
+                (visible, None),
                 "",
                 1,
             )
@@ -121,14 +176,14 @@ fn cursor_blink_reuses_grid_and_glyphon_preparation() {
 
 #[test]
 fn sgr_blink_still_rebuilds_foregrounds_and_prepares_glyphs() {
-    let mut renderer = blink_test_renderer();
+    let mut renderer = blink_test_renderer(None);
     let mut scene = padding_scene();
     let cell = &mut scene.content[0].cells[0];
     cell.text = "A".into();
     cell.style.blink = true;
     cell.style.underline = orbit_protocol::Underline::Single;
     renderer
-        .prepare_hosted(&scene, (None, 0.0), true, 1, "", "")
+        .prepare_hosted(&scene, (None, 0.0), (true, 0.0), 1, "", "")
         .unwrap();
     let before = (renderer.grid_rebuilds, renderer.glyphon_prepares);
     let lit_vertices = renderer.vertex_count;
@@ -143,7 +198,7 @@ fn sgr_blink_still_rebuilds_foregrounds_and_prepares_glyphs() {
                 None,
                 WorkspaceFocus::Terminal,
                 "",
-                visible,
+                (visible, None),
                 "",
                 1,
             )
@@ -165,7 +220,7 @@ fn sgr_blink_still_rebuilds_foregrounds_and_prepares_glyphs() {
 fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds() {
     use orbit_protocol::session::VerticalDirection;
 
-    let mut renderer = blink_test_renderer();
+    let mut renderer = blink_test_renderer(None);
     renderer.resize(PhysicalSize::new(900, 600), 1.0);
     let workspace = blink_test_workspace(renderer.metrics());
     let scene = padding_scene();
@@ -186,7 +241,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
                 None,
                 WorkspaceFocus::Terminal,
                 "",
-                true,
+                (true, None),
                 "",
                 generation,
             )
@@ -202,7 +257,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
                 None,
                 WorkspaceFocus::Terminal,
                 "",
-                false,
+                (false, None),
                 "",
                 generation,
             )
@@ -247,7 +302,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
                     None,
                     WorkspaceFocus::Terminal,
                     "",
-                    true,
+                    (true, None),
                     "",
                     generation,
                 )
@@ -263,7 +318,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
                     None,
                     WorkspaceFocus::Terminal,
                     "",
-                    false,
+                    (false, None),
                     "",
                     generation,
                 )
@@ -294,7 +349,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
                 None,
                 WorkspaceFocus::Terminal,
                 "",
-                true,
+                (true, None),
                 "",
                 generation,
             )
@@ -310,7 +365,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
                 None,
                 WorkspaceFocus::Terminal,
                 "",
-                false,
+                (false, None),
                 "",
                 generation,
             )
@@ -325,7 +380,7 @@ fn sgr_blink_in_other_columns_and_previews_invalidates_only_visible_foregrounds(
 fn dynamic_cursors_keep_column_clips_and_selected_scroll_dialog_gates() {
     use orbit_protocol::CursorShape;
 
-    let mut renderer = blink_test_renderer();
+    let mut renderer = blink_test_renderer(None);
     for scale in [1.0, 2.0] {
         renderer.resize(PhysicalSize::new(900, 600), scale);
         let metrics = renderer.metrics();
@@ -370,7 +425,7 @@ fn dynamic_cursors_keep_column_clips_and_selected_scroll_dialog_gates() {
                                 Some(&workspace),
                                 &columns,
                                 dialog,
-                                visible,
+                                (visible, None),
                             );
                             let quads = painted_rects(&batch).collect::<Vec<_>>();
                             let other_area = workspace.other_columns[0].terminal;
@@ -405,8 +460,14 @@ fn dynamic_cursors_keep_column_clips_and_selected_scroll_dialog_gates() {
             }
         }
         renderer.terminal.cursor_handoff = true;
-        let batch =
-            renderer.build_dynamic_cursors(None, 0.0, Some(&workspace), &columns, None, true);
+        let batch = renderer.build_dynamic_cursors(
+            None,
+            0.0,
+            Some(&workspace),
+            &columns,
+            None,
+            (true, None),
+        );
         assert!(
             !batch.bytes.is_empty(),
             "selected attachment gap cannot hide other columns"
@@ -434,16 +495,9 @@ fn dynamic_cursors_keep_column_clips_and_selected_scroll_dialog_gates() {
 
 #[test]
 fn hosted_frames_prepare_draw_and_resize_without_a_surface() {
-    let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
-    let mut renderer = Renderer::hosted(
-        device.clone(),
-        queue.clone(),
-        wgpu::TextureFormat::Rgba8Unorm,
-        (320, 180),
-        1.0,
-        clipping_test_fonts(),
-    )
-    .unwrap();
+    let mut renderer = blink_test_renderer(None);
+    let device = renderer.device.clone();
+    let queue = renderer.queue.clone();
     let scene = blink_test_scene();
     for (frame, (size, scale)) in [
         (PhysicalSize::new(320, 180), 1.0),
@@ -454,7 +508,7 @@ fn hosted_frames_prepare_draw_and_resize_without_a_surface() {
     {
         if frame == 0 {
             renderer
-                .prepare_hosted(&scene, (None, 0.0), true, 1, "", "")
+                .prepare_hosted(&scene, (None, 0.0), (true, 0.0), 1, "", "")
                 .unwrap();
         } else {
             renderer.resize(size, scale);
@@ -468,7 +522,7 @@ fn hosted_frames_prepare_draw_and_resize_without_a_surface() {
                     None,
                     WorkspaceFocus::Terminal,
                     "",
-                    true,
+                    (true, None),
                     "",
                     1,
                 )

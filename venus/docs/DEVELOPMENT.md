@@ -135,6 +135,14 @@ presented the frame, not that the compositor shows it yet.
 hosted renderer's fixed look. That host is the parent the native pixel proof
 compares against.
 
+With application launch arguments, the Rune host passes the configured
+cursor tail to Venus's existing painter in `src/render/cursor_trail.rs`.
+The locked Rune revision `c22cc2d459cc6b80a3f4ecf45b136eed1d205507`
+supplies `Frame::dt` and `Compositor::animating` in
+`crates/rune/src/compose.rs`. The latter keeps frames coming while the
+tail moves. Blink still uses the application's `Tx::wake_after` deadline
+in `crates/rune/src/el/tx.rs`.
+
 Build it into a directory of its own:
 
 ```sh

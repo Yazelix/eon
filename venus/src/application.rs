@@ -4422,10 +4422,9 @@ impl Application {
             self.marker_wake = next_marker;
             self.native_requests.redraw = true;
         }
-        let animation_active = self
-            .window
-            .as_ref()
-            .is_some_and(|state| state.renderer.cursor_animation_active());
+        let animation_active = self.window.as_ref().is_some_and(|state| {
+            !state.native.is_rune() && state.renderer.cursor_animation_active()
+        });
         if update_animation_deadline(
             animation_active,
             cursor_animation_allowed(self.window_focused, self.window_occluded),
@@ -6440,11 +6439,7 @@ impl Application {
         })
     }
 
-    fn render(&mut self) {
-        self.prepare_workspace();
-        bench_trace("render_begin", "");
-        self.sync_images();
-        let kinetic_active = self.advance_terminal_scroll(Instant::now());
+    fn reset_cursor_animation_for_frame(&mut self) {
         if !cursor_animation_allowed(self.window_focused, self.window_occluded)
             || (self.terminal.model.scene().is_some()
                 && (!self.terminal.model.is_attached()
@@ -6452,6 +6447,14 @@ impl Application {
         {
             self.reset_cursor_animation();
         }
+    }
+
+    fn render(&mut self) {
+        self.prepare_workspace();
+        bench_trace("render_begin", "");
+        self.sync_images();
+        let kinetic_active = self.advance_terminal_scroll(Instant::now());
+        self.reset_cursor_animation_for_frame();
         let scroll_offset = self.terminal_scroll_offset();
         let unshifted = scroll_offset == 0.0;
         let scene_started = crate::frame_time();

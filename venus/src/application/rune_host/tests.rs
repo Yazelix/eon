@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::tests::{OrbitPeer, PEER_TIMEOUT, busy_window_snapshot, noop_renderer};
-use crate::rune_candidate::fixture_messages;
+use crate::rune_candidate::{fixture_messages, offscreen_frame};
 use eon_workspace_protocol::v51::Response;
 use std::{ffi::OsString, os::unix::fs::PermissionsExt, sync::mpsc};
 use winit::{
@@ -108,8 +108,11 @@ fn venus_follows_presents_with_its_own_exit_on_the_same_lane() {
     assert_eq!(recorder.calls(), ["focus", "close"]);
 }
 
-/// A Rune host on a GPU-less device, whose first frame has made Venus's window.
-fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'static) -> Host {
+fn host_before_window(
+    arguments: &[&str],
+    admission: &str,
+    quit: impl Fn() + Send + Sync + 'static,
+) -> Host {
     let arguments = crate::launch::launch_arguments(
         arguments.iter().map(OsString::from),
         Some(admission.into()),
@@ -121,7 +124,7 @@ fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'st
         || unreachable!(),
         |_, _| grid_view(),
     ));
-    let mut host = Host {
+    Host {
         app: Application::new(arguments, EventSink::Host(Arc::new(|_| true))),
         handle: native.handle(),
         control: Arc::new(Control::new(quit)),
@@ -137,7 +140,12 @@ fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'st
         moved: None,
         closing: false,
         storms: Storms::default(),
-    };
+    }
+}
+
+/// A Rune host on a GPU-less device, whose first frame has made Venus's window.
+fn host(arguments: &[&str], admission: &str, quit: impl Fn() + Send + Sync + 'static) -> Host {
+    let mut host = host_before_window(arguments, admission, quit);
     host.create_window(
         noop_renderer(),
         SlotGeometry::new([0.0, 0.0, 960.0, 600.0], 1.0),
@@ -513,10 +521,10 @@ fn a_warm_workspace_is_reused_until_the_compositor_changes_geometry() {
     assert!(Rc::ptr_eq(&before, &host.app.workspace_scene().unwrap()));
 
     let half = SlotGeometry::new([0.0, 0.0, 480.0, 600.0], 1.0);
-    host.prepare_grid(half);
+    host.prepare_grid(half, 0.0);
     let resized = host.app.workspace_scene().unwrap();
     assert!(resized.pane_viewport.width < before.pane_viewport.width);
-    host.prepare_grid(half);
+    host.prepare_grid(half, 0.0);
     assert!(Rc::ptr_eq(&resized, &host.app.workspace_scene().unwrap()));
 }
 
@@ -899,29 +907,12 @@ fn resize_and_occlusion_supersede_queued_frames_and_moved_slots_never_admit() {
     present(&mut host, current);
     assert!(host.app.presentation.is_current(current));
 
-    for _ in 1..MOVED_FRAMES {
-        assert!(host.finish_slot(
-            Some((native_slot(), current)),
-            Drawn {
-                hook_calls: 1,
-                slot: None,
-                refusal: None,
-                clip: None,
-                moved: Some(SlotGeometry::new([0.0, 0.0, 800.0, 600.0], 1.0)),
-            },
-        ));
+    let moved = Some(window_slot((800, 600), 1.0));
+    for attempt in 1..=MOVED_FRAMES {
+        let retry = host.finish_slot(Some((native_slot(), current)), undrawn_slot(moved, None));
+        assert_eq!(retry, attempt < MOVED_FRAMES);
         assert!(!host.app.presentation.has_presented_geometry());
     }
-    assert!(!host.finish_slot(
-        Some((native_slot(), current)),
-        Drawn {
-            hook_calls: 1,
-            slot: None,
-            refusal: None,
-            clip: None,
-            moved: Some(SlotGeometry::new([0.0, 0.0, 800.0, 600.0], 1.0)),
-        },
-    ));
     assert!(host.failed);
 }
 
@@ -1019,7 +1010,7 @@ fn an_idle_drawn_receipt_flushes_the_new_revision_without_requesting_a_redraw() 
     );
     let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
-    let candidate = host.prepare_grid(native_slot()).unwrap();
+    let candidate = host.prepare_grid(native_slot(), 0.0).unwrap();
     host.finish(&mut Tx::default());
     host.app
         .terminal
@@ -1055,7 +1046,7 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
     let peer = Peer::new(&mut host, "withdraw");
     let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
-    let candidate = host.prepare_grid(native_slot()).unwrap();
+    let candidate = host.prepare_grid(native_slot(), 0.0).unwrap();
     present(&mut host, candidate);
     host.app.terminal.selection_gate.finish_sent();
     assert!(host.raw_geometry(Some((800, 600)), None));
@@ -1092,7 +1083,7 @@ fn another_withdrawal_discards_intervening_selection_without_sending_another_can
     on_visibility(&mut host, true, &mut Tx::default());
     host.apply_geometry(NATIVE);
     host.app.terminal.selection_gate = SelectionGate::Ready;
-    let fresh = host.prepare_grid(native_slot()).unwrap();
+    let fresh = host.prepare_grid(native_slot(), 0.0).unwrap();
     present(&mut host, fresh);
     assert!(host.app.send(ClientMessage::ReturnToLive));
     let mut selections = Vec::new();
@@ -1133,7 +1124,7 @@ fn native_input_keeps_touch_and_cancelled_wheel_phases() {
     let peer = Peer::new(&mut host, "native-phases");
     let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
-    let candidate = host.prepare_grid(native_slot()).unwrap();
+    let candidate = host.prepare_grid(native_slot(), 0.0).unwrap();
     present(&mut host, candidate);
     actions_until_marker(&mut host, &stream);
     let mut tx = Tx::default();
@@ -1351,10 +1342,180 @@ fn undrawn_dialogs_capture_pointer_without_activating_targets() {
     assert!(!host.app.input.is_selecting());
 }
 
+fn undrawn_slot(moved: Option<SlotGeometry>, refusal: Option<&str>) -> Drawn {
+    Drawn {
+        hook_calls: u32::from(moved.is_some() || refusal.is_some()),
+        slot: None,
+        moved,
+        refusal: refusal.map(str::to_owned),
+        clip: None,
+    }
+}
+
+fn preview_rows(cols: u16, rows: Vec<orbit_protocol::Row>) -> session::PreviewOutcome {
+    session::PreviewOutcome::Viewport {
+        cols,
+        rows,
+        edge_reached: false,
+    }
+}
+
+fn upward_preview(frame_revision: u64, outcome: session::PreviewOutcome) -> ServerMessage {
+    ServerMessage::VerticalPreview(session::VerticalPreview {
+        frame_revision,
+        direction: session::VerticalDirection::Up,
+        outcome,
+    })
+}
+
+#[test]
+fn hosted_cursor_tail_follows_the_frame_clock() {
+    let mut host = host_before_window(&["orbit.sock"], "stdin-ready-focus-v2", || {});
+    let proof = std::env::var_os("EON_RUNE_PROOF_DIR").map(PathBuf::from);
+    let (device, queue) = proof.as_ref().map_or_else(
+        || wgpu::Device::noop(&wgpu::DeviceDescriptor::default()),
+        |_| {
+            let gpu = rune::render::Gpu::headless();
+            eprintln!("cursor tail capture adapter: {:?}", gpu.adapter.get_info());
+            (gpu.device, gpu.queue)
+        },
+    );
+    let fonts = std::env::var_os("EON_VENUS_FONT_DIRS");
+    host.fonts = Some(FontSetup::with_directories(&host.app.fonts, fonts.as_deref()).unwrap());
+    host.apply_geometry(FULL);
+    on_focus(&mut host, true, &mut Tx::default());
+    let frames = Rc::clone(&host.frames);
+    let mut compositor = HostCompositor(Rc::clone(&frames));
+    let size @ (width, height) = FULL.size;
+    let mut rt = rune::Runtime::new(
+        host,
+        |_, _| grid_view(),
+        (width as f32, height as f32),
+        rune::Env::new(true, 1.0),
+    );
+    rt.set_srgb_blend(false);
+    let format = wgpu::TextureFormat::Rgba8UnormSrgb;
+    let target = rune::render::Offscreen::with_format(&device, width, height, format);
+    let mut ui = rune::render::Renderer::new(&device, format);
+    ui.set_srgb_blend(false);
+    let mut draw = |rt: &mut rune::Runtime<Host>, dt, capture| {
+        rt.frame(dt);
+        let capture = proof.as_ref().zip(capture);
+        let pixels = offscreen_frame(
+            (&device, &queue),
+            &mut ui,
+            rt,
+            (size, &target),
+            (dt, capture.is_some()),
+            |frame| compositor.render(frame),
+        );
+        if let Some((out, name)) = capture {
+            rune::render::write_png(&out.join(name), width, height, &pixels.unwrap()).unwrap();
+        }
+        let host = &mut rt.state;
+        assert_eq!(host.failure.get(), None);
+        if frames.report(FrameOutcome::Drawn, None) {
+            host.receive_frame(&mut Tx::default());
+        }
+        compositor.animating()
+    };
+    let scheduler = HostCompositor(Rc::clone(&frames));
+    let mut tx = Tx::default();
+    assert!(!draw(&mut rt, 0.0, None));
+    let mut grid = grid_fixture(0, grid_at(&rt.state, FULL)).into_iter();
+    let model = &mut rt.state.app.terminal.model;
+    model.apply(grid.next().unwrap()).unwrap();
+    let ServerMessage::Frame(mut frame) = grid.next().unwrap() else {
+        unreachable!()
+    };
+    frame.scroll_position.history_rows = 10;
+    let (cols, rows) = (frame.dimensions.cols, vec![frame.rows[0].clone()]);
+    let mut jump = |host: &mut Host| {
+        let cursor = frame.cursor.viewport.as_mut().unwrap();
+        cursor.x = if cursor.x == 2 { 4 } else { 2 };
+        frame.revision += 1;
+        let model = &mut host.app.terminal.model;
+        model.apply(ServerMessage::Frame(frame.clone())).unwrap();
+        frame.revision
+    };
+    jump(&mut rt.state);
+    let tick = 1.0 / 120.0;
+    assert!(!draw(&mut rt, tick, None));
+    jump(&mut rt.state);
+    assert!(
+        draw(&mut rt, tick, None),
+        "a configured hosted cursor must animate after moving"
+    );
+    assert!(draw(&mut rt, 0.016, Some("cursor-motion.png")));
+    poll(&mut rt.state, 0.0, &mut tx);
+    assert!(rt.state.app.next_animation.is_none());
+    assert!(!draw(&mut rt, 0.05, Some("cursor-rest.png")));
+
+    for skip in [Some(FrameSkip::Covered), Some(FrameSkip::Surface), None] {
+        jump(&mut rt.state);
+        assert!(draw(&mut rt, tick, None));
+        if let Some(skip) = skip {
+            assert!(frames.report(FrameOutcome::Skipped, Some(skip)));
+            assert!(!scheduler.animating(), "{skip:?} before any new draw");
+            rt.state.receive_frame(&mut tx);
+        } else {
+            on_visibility(&mut rt.state, false, &mut tx);
+            assert!(!scheduler.animating(), "occlusion before any new draw");
+            on_visibility(&mut rt.state, true, &mut tx);
+        }
+        assert!(!draw(&mut rt, tick, None));
+    }
+
+    let frame_revision = jump(&mut rt.state);
+    assert!(draw(&mut rt, tick, None));
+    let app = &mut rt.state.app;
+    let height = f64::from(app.window.as_ref().unwrap().renderer.metrics().height);
+    let scroll = &mut app.terminal.terminal_scroll;
+    scroll.push_pixels(height / 8.0, TouchPhase::Started, Instant::now(), height);
+    let preview = upward_preview(frame_revision, preview_rows(cols, rows));
+    app.terminal.model.apply(preview).unwrap();
+    assert_ne!(app.terminal_scroll_offset(), 0.0);
+    assert!(!draw(&mut rt, tick, None), "fractional scroll");
+    rt.state.app.cancel_terminal_scroll();
+    assert!(!draw(&mut rt, tick, None), "scroll ended");
+
+    let app = &mut rt.state.app;
+    let renderer = &mut app.window.as_mut().unwrap().renderer;
+    renderer.suspend_cursor_animation();
+    app.terminal.model = SessionModel::new();
+    assert!(!draw(&mut rt, tick, None));
+    let model = &mut rt.state.app.terminal.model;
+    model.apply(ServerMessage::Attached).unwrap();
+    jump(&mut rt.state);
+    assert!(draw(&mut rt, tick, None), "healthy cursor handoff");
+
+    let slot = window_slot(size, 1.0);
+    let moved = SlotGeometry::new([16.0, 0.0, width as f32, height as f32], 1.0);
+    let undrawn = [
+        (None, None),
+        (Some(moved), None),
+        (None, Some("refused slot")),
+    ];
+    for (moved, refusal) in undrawn {
+        let host = &mut rt.state;
+        let candidate = host.prepare_grid(slot, tick as f32).unwrap();
+        let drawn = undrawn_slot(moved, refusal);
+        let retry = host.finish_slot(Some((slot, candidate)), drawn);
+        assert_eq!(retry, moved.is_some());
+        assert!(!scheduler.animating());
+        if refusal.is_none() {
+            assert!(!draw(&mut rt, tick, None), "undrawn preparation");
+            jump(&mut rt.state);
+            assert!(draw(&mut rt, tick, None));
+        }
+    }
+    assert_eq!(rt.state.failure.get().as_deref(), Some("refused slot"));
+}
+
 #[test]
 fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal() {
     use orbit_protocol::{Rgb, StyleColor};
-    use session::{PreviewOutcome, ScrollOutcome, VerticalDirection, VerticalPreview};
+    use session::{ScrollOutcome, VerticalDirection};
 
     let mut host = host(&["orbit.sock"], "stdin-ready-focus-v2", || {});
     host.apply_geometry(NATIVE);
@@ -1371,7 +1532,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
         host.app.terminal.model.rows_from_live() == Some(0)
     });
     let slot = native_slot();
-    let shown = host.prepare_grid(slot).unwrap();
+    let shown = host.prepare_grid(slot, 0.0).unwrap();
     present(&mut host, shown);
     move_to_terminal(&mut host);
     actions_until_marker(&mut host, &stream);
@@ -1391,11 +1552,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
     entering.cells[0].style.foreground = StyleColor::Rgb(entering_ink);
     next.cells[0].style.foreground = StyleColor::Rgb(next_ink);
     let cols = frame.dimensions.cols;
-    let viewport = |rows| PreviewOutcome::Viewport {
-        cols,
-        rows,
-        edge_reached: false,
-    };
+    let viewport = |rows| preview_rows(cols, rows);
     let step = |host: &mut Host, fraction: f32, phase| {
         let delta = PhysicalPosition::new(0.0, f64::from(metrics.height * fraction / 2.0));
         host.window_event(WindowEvent::MouseWheel {
@@ -1415,14 +1572,13 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
     peer.send(
         &stream,
         &mut host,
-        [ServerMessage::VerticalPreview(VerticalPreview {
-            frame_revision: 1,
-            direction: VerticalDirection::Up,
-            outcome: viewport(vec![entering.clone(), next.clone()]),
-        })],
+        [upward_preview(
+            1,
+            viewport(vec![entering.clone(), next.clone()]),
+        )],
         |host| host.app.terminal.model.scroll_preview().is_some(),
     );
-    assert_eq!(host.prepare_grid(slot).unwrap().revision, Some(1));
+    assert_eq!(host.prepare_grid(slot, 0.0).unwrap().revision, Some(1));
     assert_eq!(host.app.presented_revision(), Some(1));
     assert!(actions_until_marker(&mut host, &stream).is_empty());
     assert!((paint(&host, ink).unwrap().0 - original - metrics.height / 2.0).abs() < 0.01);
@@ -1438,7 +1594,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
             rows: -1
         }
     );
-    assert_eq!(host.prepare_grid(slot).unwrap().revision, Some(1));
+    assert_eq!(host.prepare_grid(slot, 0.0).unwrap().revision, Some(1));
     let before = paint(&host, entering_ink).unwrap().0;
     frame.revision = 2;
     frame.scroll_position.rows_from_live = 1;
@@ -1456,7 +1612,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
         |host| host.app.terminal.model.rows_from_live() == Some(1),
     );
     assert_eq!(host.app.presented_revision(), None);
-    let replacement = host.prepare_grid(slot).unwrap();
+    let replacement = host.prepare_grid(slot, 0.0).unwrap();
     assert_eq!(replacement.revision, Some(2));
     assert!((paint(&host, entering_ink).unwrap().0 - before).abs() < 0.01);
     present(&mut host, replacement);
@@ -1464,7 +1620,7 @@ fn fractional_scroll_draws_continuously_through_commit_and_retires_on_withdrawal
     assert!(paint(&host, next_ink).is_some());
     host.withdraw_surface();
     assert_eq!(host.app.presented_revision(), None);
-    let readmitted = host.prepare_grid(slot).unwrap();
+    let readmitted = host.prepare_grid(slot, 0.0).unwrap();
     assert_eq!(readmitted.revision, Some(2));
     assert!((paint(&host, entering_ink).unwrap().0 - before + metrics.height / 4.0).abs() < 0.01);
     assert_eq!(paint(&host, next_ink), None);
@@ -1486,7 +1642,7 @@ fn withdrawn_frames_stop_scroll_even_after_a_late_preview() {
         let peer = Peer::new(&mut host, name);
         let stream = peer.orbit.accept();
         attach_fixture(&peer, &stream, &mut host, NATIVE);
-        let shown = host.prepare_grid(native_slot()).unwrap();
+        let shown = host.prepare_grid(native_slot(), 0.0).unwrap();
         present(&mut host, shown);
         actions_until_marker(&mut host, &stream);
 
@@ -1537,7 +1693,7 @@ fn withdrawn_frames_stop_scroll_even_after_a_late_preview() {
         assert_eq!(host.app.terminal.terminal_scroll.velocity, 0.0);
         assert!(actions_until_marker(&mut host, &stream).is_empty());
 
-        let matching = host.prepare_grid(native_slot()).unwrap();
+        let matching = host.prepare_grid(native_slot(), 0.0).unwrap();
         present(&mut host, matching);
         wheel(&mut host);
         assert!(matches!(
@@ -1561,7 +1717,7 @@ fn a_raw_resize_withdraws_input_until_a_draw_of_the_applied_grid() {
     let peer = Peer::new(&mut host, "raw");
     let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, FULL);
-    let presented = host.prepare_grid(full_slot).unwrap();
+    let presented = host.prepare_grid(full_slot, 0.0).unwrap();
     present_at(&mut host, full_slot, presented);
     actions_until_marker(&mut host, &stream);
     assert!(
@@ -1575,7 +1731,7 @@ fn a_raw_resize_withdraws_input_until_a_draw_of_the_applied_grid() {
     assert!(host.raw_geometry(Some(HALF.size), None));
     host.app.drive_terminal_scroll();
     wheel(&mut host);
-    let early = host.prepare_grid(half_slot).unwrap();
+    let early = host.prepare_grid(half_slot, 0.0).unwrap();
     present_at(&mut host, half_slot, early);
     assert!(
         !host.app.presentation.has_presented_geometry(),
@@ -1591,7 +1747,7 @@ fn a_raw_resize_withdraws_input_until_a_draw_of_the_applied_grid() {
         actions_until_marker(&mut host, &stream),
         [ClientMessage::Resize(resized)]
     );
-    let old_grid = host.prepare_grid(half_slot).unwrap();
+    let old_grid = host.prepare_grid(half_slot, 0.0).unwrap();
     present_at(&mut host, half_slot, old_grid);
     wheel(&mut host);
     assert_eq!(
@@ -1614,7 +1770,7 @@ fn a_raw_resize_withdraws_input_until_a_draw_of_the_applied_grid() {
     left(&mut host, ElementState::Released);
     assert!(host.app.terminal.deferred_selection.is_empty());
     assert!(actions_until_marker(&mut host, &stream).is_empty());
-    let qualifying = host.prepare_grid(half_slot).unwrap();
+    let qualifying = host.prepare_grid(half_slot, 0.0).unwrap();
     present_at(&mut host, half_slot, qualifying);
     assert!(host.app.presentation.is_current(qualifying));
     wheel(&mut host);
@@ -1643,7 +1799,7 @@ fn a_near_slot_keeps_orbit_and_selection_on_the_applied_grid() {
     let measured = SlotGeometry::new([0.0, 0.0, rounded.size.0 as f32, 600.0], 1.0);
     host.apply_geometry(applied);
     let prepared = slot_for_target(measured, applied.size);
-    assert!(host.prepare_grid(prepared).is_none());
+    assert!(host.prepare_grid(prepared, 0.0).is_none());
     let peer = Peer::new(&mut host, "rounding");
     let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, rounded);
@@ -1653,14 +1809,14 @@ fn a_near_slot_keeps_orbit_and_selection_on_the_applied_grid() {
         [ClientMessage::Resize(required)]
     );
 
-    let candidate = host.prepare_grid(prepared).unwrap();
+    let candidate = host.prepare_grid(prepared, 0.0).unwrap();
     present_in(&mut host, prepared, measured, candidate);
     assert_eq!(host.app.presented_revision(), None);
 
     peer.send(&stream, &mut host, grid_fixture(1, required), |host| {
         host.app.terminal.model.scene().unwrap().revision == 2
     });
-    let candidate = host.prepare_grid(prepared).unwrap();
+    let candidate = host.prepare_grid(prepared, 0.0).unwrap();
     present_in(&mut host, prepared, measured, candidate);
     assert!(host.app.presentation.is_current(candidate));
     host.app.cursor = PhysicalPosition::new(120.0, 300.0);
@@ -1681,7 +1837,7 @@ fn compatible_output_keeps_the_displayed_selection_revision_until_raw_resize() {
     let peer = Peer::new(&mut host, "compatible");
     let stream = peer.orbit.accept();
     attach_fixture(&peer, &stream, &mut host, NATIVE);
-    let displayed = host.prepare_grid(native_slot()).unwrap();
+    let displayed = host.prepare_grid(native_slot(), 0.0).unwrap();
     present(&mut host, displayed);
     actions_until_marker(&mut host, &stream);
 
@@ -1703,7 +1859,7 @@ fn compatible_output_keeps_the_displayed_selection_revision_until_raw_resize() {
 
     assert!(host.raw_geometry(Some((959, 600)), None));
     assert!(host.raw_geometry(Some(NATIVE.size), None));
-    let matching = host.prepare_grid(native_slot()).unwrap();
+    let matching = host.prepare_grid(native_slot(), 0.0).unwrap();
     present(&mut host, matching);
     left(&mut host, ElementState::Released);
     assert_eq!(
@@ -1793,7 +1949,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
             .chain(grid_fixture(4, size)),
         at_revision(5),
     );
-    let old = host.prepare_grid(slot).unwrap();
+    let old = host.prepare_grid(slot, 0.0).unwrap();
     present_at(&mut host, slot, old);
     assert_eq!(host.app.presented_revision(), Some(5));
     let old_graphics = host.app.terminal.model.scene().unwrap().graphics.clone();
@@ -1817,7 +1973,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
         host.app.window.as_ref().unwrap().renderer.image_resident(),
         0
     );
-    let retained = host.prepare_grid(slot).unwrap();
+    let retained = host.prepare_grid(slot, 0.0).unwrap();
     assert!(host.app.terminal.images_resyncing);
     assert_eq!(
         retained.revision, None,
@@ -1840,7 +1996,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
         ],
         at_revision(6),
     );
-    let fresh = host.prepare_grid(slot).unwrap();
+    let fresh = host.prepare_grid(slot, 0.0).unwrap();
     let pending = host.app.terminal.model.scene().unwrap().graphics.clone();
     assert_ne!(old_graphics.attachment, pending.attachment);
     assert!(
@@ -1874,7 +2030,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
             .chain([ServerMessage::Frame(image_frame.clone())]),
         at_revision(7),
     );
-    let fresh = host.prepare_grid(slot).unwrap();
+    let fresh = host.prepare_grid(slot, 0.0).unwrap();
     present_at(&mut host, slot, fresh);
     assert_eq!(host.app.presented_revision(), Some(7));
     let replacement = host.app.terminal.model.scene().unwrap().graphics.clone();
@@ -1903,7 +2059,7 @@ fn refused_image_reattach_presents_only_the_new_attachment_on_the_same_renderer(
         at_revision(8),
     );
     for _ in 0..2 {
-        assert_eq!(host.prepare_grid(slot).unwrap().revision, Some(8));
+        assert_eq!(host.prepare_grid(slot, 0.0).unwrap().revision, Some(8));
         assert_eq!(
             host.app.terminal.model.image_attachment(),
             Some(pending.attachment)

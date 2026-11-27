@@ -1460,7 +1460,6 @@ struct WindowedTarget {
 pub(crate) struct HostedLook {
     pub(crate) background_opacity: f32,
     pub(crate) padding_color: PaddingColor,
-    /// The hosted renderer draws the static scene cursor, never the tail.
     pub(crate) cursor_tail: Option<(SceneColor, f32)>,
     pub(crate) pane_frames: bool,
     pub(crate) panel_heading: PanelHeading,
@@ -1492,6 +1491,8 @@ pub struct Renderer {
     glyphon_prepares: u64,
     #[cfg(all(test, feature = "candidate-rune"))]
     differential_image_vertices: Vec<u8>,
+    #[cfg(test)]
+    last_dynamic_cursor_bytes: Vec<u8>,
     windowed: Option<WindowedTarget>,
     device: wgpu::Device,
     device_lost: Arc<AtomicBool>,
@@ -1779,7 +1780,7 @@ impl Renderer {
         &mut self,
         scene: &Scene,
         (scroll_preview, scroll_offset): (Option<&ScenePreview>, f32),
-        blink_visible: bool,
+        (blink_visible, cursor_delta): (bool, f32),
         generation: u64,
         status: &str,
         preedit: &str,
@@ -1795,7 +1796,7 @@ impl Renderer {
             None,
             WorkspaceFocus::Terminal,
             status,
-            blink_visible,
+            (blink_visible, Some(cursor_delta)),
             preedit,
             generation,
         )
@@ -1826,7 +1827,7 @@ impl Renderer {
             None,
             WorkspaceFocus::Terminal,
             "",
-            true,
+            (true, Some(0.0)),
             "",
             generation,
         )
@@ -1965,6 +1966,8 @@ impl Renderer {
             glyphon_prepares: 0,
             #[cfg(all(test, feature = "candidate-rune"))]
             differential_image_vertices: Vec::new(),
+            #[cfg(test)]
+            last_dynamic_cursor_bytes: Vec::new(),
             windowed,
             device,
             device_lost,
@@ -2041,7 +2044,7 @@ impl Renderer {
         dialog: Option<&DialogScene>,
         workspace_focus: WorkspaceFocus,
         status: &str,
-        blink_visible: bool,
+        (blink_visible, cursor_delta): (bool, Option<f32>),
         preedit: &str,
         generation: u64,
     ) -> Result<(bool, u64, u64), RenderError> {
@@ -2069,7 +2072,7 @@ impl Renderer {
             workspace,
             columns,
             dialog,
-            blink_visible,
+            (blink_visible, cursor_delta),
         );
         #[cfg(feature = "candidate-rune")]
         if self.header_paint.overlap
@@ -2086,6 +2089,10 @@ impl Renderer {
             ));
         }
         self.upload_dynamic_vertices(&cursors.bytes);
+        #[cfg(test)]
+        {
+            self.last_dynamic_cursor_bytes = cursors.bytes;
+        }
         if content_changed {
             #[cfg(test)]
             {
@@ -2339,7 +2346,7 @@ impl Renderer {
             dialog,
             workspace_focus,
             status,
-            blink_visible,
+            (blink_visible, None),
             preedit,
             generation,
         )?;
@@ -2887,7 +2894,7 @@ impl Renderer {
         workspace: Option<&WorkspaceScene>,
         columns: &[Option<&Scene>],
         dialog: Option<&DialogScene>,
-        blink_visible: bool,
+        (blink_visible, cursor_delta): (bool, Option<f32>),
     ) -> RectangleBatch {
         let mut rectangles = RectangleBatch::new(self.config.width, self.config.height);
         if let Some(workspace) = workspace {
@@ -2951,12 +2958,13 @@ impl Renderer {
                 rectangles.clip = clip;
                 if !(scene.is_none() && self.terminal.cursor_handoff) {
                     self.terminal.cursor_handoff = false;
-                    let now = Instant::now();
-                    let delta = self
-                        .terminal
-                        .last_cursor_frame
-                        .replace(now)
-                        .map_or(0.0, |last| now.duration_since(last).as_secs_f32());
+                    let delta = cursor_delta.unwrap_or_else(|| {
+                        let now = Instant::now();
+                        self.terminal
+                            .last_cursor_frame
+                            .replace(now)
+                            .map_or(0.0, |last| now.duration_since(last).as_secs_f32())
+                    });
                     if let Some(scene) = scene {
                         build_tail_cursor(
                             &mut rectangles,
