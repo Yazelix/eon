@@ -2169,9 +2169,9 @@ impl Workspace {
                     .position(|item| item.id == popup.id)
                     .expect("the popup being replaced remains live");
                 self.stop_popup(tab_index, index, operate)?;
-                if let Err(detail) = operate(launch) {
+                if let Err(error) = Self::start_popup(ids, launch, operate) {
                     self.remove_empty_tab(tab_index);
-                    return Err(action_error("popup-start", detail));
+                    return Err(error);
                 }
                 self.commit_popup(ids, tab_index, candidate);
                 return Ok(());
@@ -10721,54 +10721,141 @@ pub(crate) mod tests {
         assert_eq!(panes[2].session, fresh.session);
         assert_eq!(tab.selected_pane.as_ref(), Some(&panes[2].id));
 
-        // Git's restart keeps the old instance when its stop fails and records
-        // no replacement when its start fails.
-        assert_eq!(
-            workspace
-                .dispatch(
-                    "stop-fails",
-                    None,
-                    invoke("git", Some(&live_git.id)),
-                    prepared,
-                    |operation| match operation {
-                        SessionOperation::Stop(_) => Err("stop failed".into()),
-                        SessionOperation::Start { .. } | SessionOperation::MarkPair { .. } => {
-                            Ok(())
-                        }
-                        SessionOperation::RevealFiles { .. }
-                        | SessionOperation::MoveFiles { .. } =>
-                            unreachable!("no reveal was requested"),
-                    }
-                )
-                .unwrap_err()
-                .code,
-            "popup-stop"
-        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_popup_retarget_start_consumes_terminal_identity() {
+        use crate::sessions::session_number;
+
+        let mut workspace = two_workspace_set(|_| Ok(()));
+        let snapshot = workspace.snapshot();
+        let pane = &snapshot.tabs[0].panes().next().unwrap().session;
+        let tab = snapshot.active_tab;
+        workspace
+            .dispatch(
+                "open-background-tab",
+                None,
+                Action::LaunchTab {
+                    directory: b"/".to_vec(),
+                    argv: Vec::new(),
+                    focus: false,
+                },
+                prepared,
+                |_| Ok(()),
+            )
+            .unwrap();
+        let survivor = workspace.snapshot().tabs[1].id.clone();
+        workspace
+            .dispatch("open-git", None, invoke(&tab, "git"), prepared, |_| Ok(()))
+            .unwrap();
+        let git = workspace.snapshot().tabs[0].popups[0].clone();
+        workspace
+            .session_ended(pane, SessionEnd::Exited, |_| Ok(()))
+            .unwrap();
+        let directory = std::env::current_dir().unwrap();
+        workspace
+            .dispatch(
+                "retarget-tab",
+                None,
+                Action::Workspace(WorkspaceAction::SetTabDirectory {
+                    tab: tab.clone(),
+                    directory: directory.as_os_str().as_bytes().to_vec(),
+                }),
+                prepared,
+                |operation| panic!("retarget operated a terminal: {operation:?}"),
+            )
+            .unwrap();
+
+        let replace = || Action::InvokePopup {
+            tab: tab.clone(),
+            entry: "git".into(),
+            expected_instance: Some(git.id.clone()),
+            intent: InvokeIntent::Toggle,
+        };
+        let error = workspace
+            .dispatch(
+                "prepare-fails",
+                None,
+                replace(),
+                |_, _| Err("cannot prepare Git".into()),
+                |operation| panic!("failed preparation operated a terminal: {operation:?}"),
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "popup-command");
+        let error = workspace
+            .dispatch(
+                "stop-fails",
+                None,
+                replace(),
+                prepared,
+                |operation| match operation {
+                    SessionOperation::Stop(id) if id == git.session => Err("stop failed".into()),
+                    other => panic!("expected only the old terminal's stop, got {other:?}"),
+                },
+            )
+            .unwrap_err();
+        assert_eq!(error.code, "popup-stop");
         assert_eq!(
             workspace.snapshot().tabs[0].popups,
-            std::slice::from_ref(&live_git)
+            std::slice::from_ref(&git)
         );
+
+        let timeout = "terminal startup timed out; launch record remains";
+        let mut operations = Vec::new();
+        let error = workspace
+            .dispatch("replace-git", None, replace(), prepared, |operation| {
+                let start = matches!(operation, SessionOperation::Start { .. });
+                operations.push(operation);
+                if start { Err(timeout.into()) } else { Ok(()) }
+            })
+            .unwrap_err();
+        assert_eq!(error.code, "popup-start");
+        assert_eq!(error.detail, timeout);
+        let [
+            SessionOperation::Stop(stopped),
+            SessionOperation::Start {
+                session: timed_out,
+                directory: launched_at,
+                ..
+            },
+        ] = operations.as_slice()
+        else {
+            panic!("expected stop then replacement start, got {operations:?}");
+        };
+        assert_eq!(stopped, &git.session);
+        assert_eq!(launched_at, &directory);
+        let terminal_number = session_number(&timed_out.id).unwrap();
+        assert_eq!(terminal_number, session_number(&git.session).unwrap() + 1);
+        let snapshot = workspace.snapshot();
+        assert_eq!(snapshot.tabs.len(), 1);
+        assert_eq!(snapshot.active_tab, survivor);
+        assert!(snapshot.tabs[0].popups.is_empty());
+
+        let next_number = terminal_number + 1;
+        let next_endpoint = terminal_endpoint(workspace.runtime_directory(), next_number);
+        assert_ne!(next_endpoint, timed_out.endpoint);
+        workspace
+            .dispatch(
+                "reopen-git",
+                None,
+                invoke(&survivor, "git"),
+                prepared,
+                |operation| {
+                    let SessionOperation::Start { session, .. } = operation else {
+                        panic!("expected a fresh start, got {operation:?}");
+                    };
+                    assert_eq!(session.id, format!("terminal-{next_number}"));
+                    assert_eq!(session.endpoint, next_endpoint);
+                    Ok(())
+                },
+            )
+            .unwrap();
+        let popup_number = git.id.strip_prefix('u').and_then(canonical_number).unwrap();
         assert_eq!(
-            workspace
-                .dispatch(
-                    "start-fails",
-                    None,
-                    invoke("git", Some(&live_git.id)),
-                    prepared,
-                    |operation| match operation {
-                        SessionOperation::Stop(_) | SessionOperation::MarkPair { .. } => Ok(()),
-                        SessionOperation::RevealFiles { .. }
-                        | SessionOperation::MoveFiles { .. } =>
-                            unreachable!("no reveal was requested"),
-                        SessionOperation::Start { .. } => Err("start failed".into()),
-                    }
-                )
-                .unwrap_err()
-                .code,
-            "popup-start"
+            workspace.snapshot().tabs[0].popups[0].id,
+            format!("u{}", popup_number + 1)
         );
-        assert!(workspace.snapshot().tabs[0].popups.is_empty());
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

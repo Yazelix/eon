@@ -67,6 +67,10 @@ outside workspace topology, and never authorizes fallback signals or automatic
 command replay. The canonical protocol crate supplies the lifecycle budgets
 consumed by Runtime and Venus; EONW and Reserved Stop bytes are unchanged.
 
+Each popup Start consumes its `terminal-N` and endpoint, even on a retarget
+timeout. The shared [`start_popup`](crates/eon-runtime/src/workspace.rs) path
+handles failure. Successful registration assigns the popup instance ID (`uN`).
+
 Runtime gives an ordinary pane close one fifteen-second completion budget for
 Stop and reconciliation. A close of the final tab's last pane uses the
 five-second tab-close budget. Tab close and generation cleanup each retain
