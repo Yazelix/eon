@@ -255,14 +255,48 @@ impl FontSetup {
     /// of the platform's sans-serif choice. The database's other faces of that file's family
     /// leave it, so a layout check measures one known file whatever else is installed.
     pub fn set_header_font_file(&mut self, path: &std::path::Path) -> Result<(), RenderError> {
+        self.set_header_font(
+            fontdb::Source::File(path.into()),
+            &path.display().to_string(),
+        )
+        .map(|_| ())
+    }
+
+    #[cfg(feature = "candidate-rune")]
+    pub(crate) fn set_packaged_header_font(
+        &mut self,
+        bytes: std::sync::Arc<[u8]>,
+    ) -> Result<String, RenderError> {
+        let db = self.font_system.db();
+        let known = db.faces().any(|face| {
+            face.post_script_name == "DejaVuSans"
+                && db.with_face_data(face.id, |data, index| index == 0 && data == &*bytes)
+                    == Some(true)
+        });
+        if !known {
+            return Err(RenderError(
+                "expected the packaged DejaVu Sans regular face".into(),
+            ));
+        }
+        self.set_header_font(
+            fontdb::Source::Binary(std::sync::Arc::new(bytes)),
+            "packaged DejaVu Sans",
+        )
+    }
+
+    fn set_header_font(
+        &mut self,
+        source: fontdb::Source,
+        description: &str,
+    ) -> Result<String, RenderError> {
         let db = self.font_system.db_mut();
-        let loaded = db.load_font_source(fontdb::Source::File(path.into()));
+        let loaded = db.load_font_source(source);
         let family = loaded
             .first()
             .and_then(|&id| db.face(id))
             .and_then(|face| face.families.first())
             .map(|(name, _)| name.clone())
-            .ok_or_else(|| RenderError(format!("no font face in {}", path.display())))?;
+            .ok_or_else(|| RenderError(format!("no font face in {description}")))?;
         let others = db
             .faces()
             .filter(|face| {
@@ -280,11 +314,10 @@ impl FontSetup {
         });
         if !chosen.is_some_and(|id| loaded.contains(&id)) {
             return Err(RenderError(format!(
-                "header text would not use {}",
-                path.display()
+                "header text would not use {description}"
             )));
         }
-        Ok(())
+        Ok(family)
     }
 
     /// Header text's shaped width at `metrics`, as the renderer measures tab labels and hints.

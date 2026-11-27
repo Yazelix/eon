@@ -537,6 +537,10 @@ impl RectangleBatch {
         };
         let start = image_vertex_count(&self.image_bytes);
         for piece in pieces {
+            #[cfg(feature = "candidate-rune")]
+            {
+                self.header_paint.overlap |= self.header_paint.overlaps(piece, false);
+            }
             self.write_image_piece(piece, target, image.source);
         }
         let end = image_vertex_count(&self.image_bytes);

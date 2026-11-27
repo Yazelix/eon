@@ -1,13 +1,16 @@
 //! The hosted renderer under the private Rune candidate (eon-yp6vg.7.7).
 
 use super::*;
-use crate::rune_candidate::{Entry, Failure, Fit, STEP_COUNT, SlotGeometry, rune_host};
+use crate::rune_candidate::{
+    Entry, Failure, Fit, STEP_COUNT, SlotGeometry, fixtures, header_pilot, rune_host,
+};
 use images::DrawStep;
-use rune::Compositor;
+use rune::{Compositor, render::KIND_TRIANGLE};
 
 #[path = "../../../tests/support/canonical.rs"]
 mod canonical;
 mod differential;
+mod overlap;
 
 #[test]
 fn hosted_steps_prepare_images_and_text_in_painter_order() {
@@ -36,6 +39,18 @@ fn hosted_steps_prepare_images_and_text_in_painter_order() {
         );
     };
     prepare(&mut renderer, &mut entry);
+    let standalone = (renderer.vertex_count, renderer.clear);
+    let workspace = fixtures::header_workspace(&mut renderer, 0);
+    renderer
+        .prepare_hosted_workspace(entry.scene(), &workspace, entry.generation)
+        .unwrap();
+    assert!(matches!(renderer.hosted_backdrop, Some((_, 0))));
+    assert_eq!(renderer.clear, wgpu::Color::TRANSPARENT);
+    prepare(&mut renderer, &mut entry);
+    assert_eq!((renderer.vertex_count, renderer.clear), standalone);
+    let prepared = renderer.glyphon_prepares;
+    prepare(&mut renderer, &mut entry);
+    assert_eq!(renderer.glyphon_prepares, prepared);
     // Shaped text buffers by the grid row they draw in; a row's layers sit near its top.
     let rows = |renderer: &Renderer| {
         let metrics = renderer.metrics();
@@ -252,15 +267,13 @@ fn candidate_runtime(
     scale: f32,
 ) -> rune::Runtime<rune_host::State> {
     let mut rt = rune::Runtime::new(
-        rune_host::State {
-            entry: Entry::new().unwrap(),
-            drawn: None,
-        },
+        rune_host::State::new(Entry::new().unwrap(), None),
         view,
         points,
         rune::Env::new(true, scale),
     );
     rt.set_srgb_blend(false);
+    rt.track_marks = true;
     rt
 }
 
@@ -268,6 +281,467 @@ fn rune_renderer(gpu: &rune::render::Gpu) -> rune::render::Renderer {
     let mut ui = rune::render::Renderer::new(&gpu.device, OFFSCREEN);
     ui.set_srgb_blend(false);
     ui
+}
+
+#[test]
+fn rune_header_pilot_rejects_unadmitted_font_bytes() {
+    let path = std::path::PathBuf::from(std::env::var_os("EON_VENUS_TEST_SANS_FONT").unwrap());
+    let mut decoy = std::fs::read(&path).unwrap();
+    decoy.push(1);
+    let mono = std::fs::read(path.with_file_name("DejaVuSansMono.ttf")).unwrap();
+    let mut fonts = packaged_fonts();
+    assert!(header_pilot::fonts(&mut fonts, false, None).is_err());
+    for bytes in [b"malformed SFNT".to_vec(), mono, decoy] {
+        assert!(fonts.set_packaged_header_font(bytes.into()).is_err());
+    }
+}
+
+#[test]
+#[ignore = "requires a closure-only fontconfig on Linux"]
+fn rune_header_pilot_mounted_title_uses_the_measured_clip() {
+    use crate::contour::TITLE_FIT_WORK;
+
+    let look = crate::render::HostedLook {
+        panel_heading: PanelHeading::Notch,
+        pane_frames: true,
+        background_opacity: 0.8,
+        border_width: 2,
+        focus_border_width: 2,
+        ..HOSTED_LOOK
+    };
+    let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
+    let mut admitted = packaged_fonts();
+    let path = std::env::var_os("EON_VENUS_TEST_SANS_FONT");
+    let family = header_pilot::fonts(&mut admitted, true, path.clone()).unwrap();
+    let bytes = std::fs::read(path.as_ref().unwrap()).unwrap();
+    let mut parent_fonts = packaged_fonts();
+    header_pilot::fonts(&mut parent_fonts, false, path).unwrap();
+    let mut parent = Renderer::hosted_with_look(
+        device.clone(),
+        queue.clone(),
+        OFFSCREEN,
+        (1280, 800),
+        1.0,
+        parent_fonts,
+        look,
+    )
+    .unwrap();
+    let emoji_family = if cfg!(target_vendor = "apple") {
+        "Apple Color Emoji"
+    } else {
+        "Noto Color Emoji"
+    };
+    let mut renderer =
+        Renderer::hosted_with_look(device, queue, OFFSCREEN, (1280, 800), 1.0, admitted, look)
+            .unwrap();
+    renderer.enable_header_pilot(true);
+    for scale in [1.0_f32, 1.25, 1.5, 2.0] {
+        let points = (1280.0, 800.0);
+        renderer.resize(
+            PhysicalSize::new((points.0 * scale) as u32, (points.1 * scale) as u32),
+            f64::from(scale),
+        );
+        let mut entry = Entry::new().unwrap();
+        let mut rt = candidate_runtime(rune_host::view, points, scale);
+        for step in 0..STEP_COUNT {
+            let workspace = fixtures::header_workspace(&mut renderer, step);
+            entry.sync_images(&mut renderer);
+            TITLE_FIT_WORK.set([0; 3]);
+            renderer
+                .prepare_hosted_workspace(entry.scene(), &workspace, entry.generation)
+                .unwrap();
+            let [fits, measurements, _] = TITLE_FIT_WORK.get();
+            if [1, 4].contains(&step) {
+                assert_eq!([fits, measurements], [0, 0]);
+            } else {
+                assert!((1..=2).contains(&fits));
+                assert!(measurements > 0 && measurements <= 24);
+            }
+            renderer
+                .prepare_hosted_workspace(entry.scene(), &workspace, entry.generation)
+                .unwrap();
+            assert_eq!(TITLE_FIT_WORK.get(), [fits, measurements, 0]);
+            let paint = &renderer.header_paint;
+            let title = paint.title.clone().unwrap();
+            assert!(title.source.starts_with("1  "));
+            if step == 2 {
+                assert!(title.source.contains('…') && title.source.ends_with("end"));
+            }
+            assert!(!paint.outline.is_empty() && paint.outline.len() <= 512);
+            rt.update(|state, _| state.header = Some((family, Some(title.clone()))));
+            rt.frame(0.0);
+            let elements = rt.elements();
+            let element = elements
+                .iter()
+                .find(|e| e.key.as_deref() == Some("popup-title"))
+                .unwrap();
+            assert_eq!(element.text.as_deref(), Some(title.source.as_str()));
+            assert!(!element.wrap && !element.truncate && !element.text_cut);
+            assert!(
+                element.rect[..2]
+                    .iter()
+                    .zip(title.origin)
+                    .all(|(point, px)| (point * scale - px).abs() <= 1.0 / 64.0)
+            );
+            assert!(elements[element.parent.unwrap()].clips);
+            assert!(
+                (element.rect[2] * scale - (title.clip.right() - title.origin[0])).abs()
+                    <= 1.0 / 64.0
+            );
+            assert_eq!(
+                element.text_style.as_ref().unwrap().family.as_deref(),
+                Some(family)
+            );
+            let work = |rt: &rune::Runtime<rune_host::State>| {
+                (
+                    rt.text.shaped,
+                    rt.text.rebroken,
+                    rt.text.cached_layout_count(),
+                )
+            };
+            let count = work(&rt);
+            let layout = rt
+                .text
+                .layout_rich(&title.source, &[], title.style(family), scale, None);
+            assert_eq!(work(&rt), count, "mounted layout cache hit");
+            assert_eq!(layout.len(), 1);
+            let line = layout.get(0).unwrap();
+            parent.resize(renderer.size(), f64::from(scale));
+            entry.sync_images(&mut parent);
+            parent
+                .prepare_hosted_workspace(entry.scene(), &workspace, entry.generation)
+                .unwrap();
+            let reference = parent
+                .text
+                .iter()
+                .find(|text| text.buffer.lines[0].text() == title.source)
+                .unwrap();
+            let venus = reference.buffer.layout_runs().next().unwrap();
+            assert_eq!([reference.left, reference.top], title.origin);
+            assert_eq!(reference.bounds(), title.clip);
+            assert!((0.0..=2.0).contains(&(line.metrics().baseline - venus.line_y.round())));
+            let db = parent.fonts.font_system.db();
+            let emoji_id = db.query(&glyphon::fontdb::Query {
+                families: &[Family::Name(emoji_family)],
+                ..Default::default()
+            });
+            let mut quads = Vec::new();
+            rt.text
+                .glyphs_for_layout(&layout, scale, title.origin, true, &mut quads);
+            assert!(line.items().all(|item| match item {
+                rune::text::parley::PositionedLayoutItem::GlyphRun(run) =>
+                    run.glyphs().all(|glyph| glyph.id != 0),
+                _ => false,
+            }));
+            for venus_glyph in venus.glyphs {
+                let byte = venus_glyph.start;
+                let cluster = &title.source[byte..venus_glyph.end];
+                let run = line
+                    .runs()
+                    .find(|run| run.text_range().contains(&byte))
+                    .unwrap();
+                if matches!(cluster, "😀" | "🎉" | "👩‍💻" | "👨‍👩‍👧‍👦" | "🏳️‍🌈")
+                {
+                    let id = if cluster == "😀" {
+                        emoji_id
+                    } else {
+                        Some(venus_glyph.font_id)
+                    };
+                    assert_eq!(
+                        id.and_then(|id| db.with_face_data(id, |data, index| (
+                            data == run.font().data.as_ref(),
+                            index == run.font().index
+                        ))),
+                        Some((true, true)),
+                        "face for {cluster}"
+                    );
+                    let mut color = quads
+                        .iter()
+                        .filter(|quad| quad.byte as usize == byte && quad.color != 0);
+                    let quad = color.next().unwrap();
+                    assert!(color.next().is_none(), "split color cluster {cluster}");
+                    let [left, top, _, _] = quad.rect;
+                    rt.text
+                        .color_glyph(quad.color)
+                        .with_rgba(|width, _, rgba| {
+                            let mut count = 0;
+                            for (i, pixel) in rgba.as_chunks::<4>().0.iter().enumerate() {
+                                if pixel[3] != 0 {
+                                    count += 1;
+                                    assert!(
+                                        title.clip.contains(
+                                            left + (i as u32 % width) as f32 + 0.5,
+                                            top + (i as u32 / width) as f32 + 0.5
+                                        ),
+                                        "{scale}× {cluster}: ink past shared clip"
+                                    );
+                                }
+                            }
+                            assert!(count > 0);
+                        })
+                        .unwrap();
+                } else {
+                    assert_eq!(run.font().index, 0);
+                    assert_eq!(run.font().data.as_ref(), bytes);
+                }
+            }
+            assert!(
+                line.metrics().advance <= title.clip.right() - title.origin[0] + 1.0 / 256.0,
+                "{scale}× step {step} {:?}: advance {} beyond clip {:?}, origin {:?}",
+                title.source,
+                line.metrics().advance,
+                title.clip,
+                title.origin
+            );
+            let mut marked = 0;
+            for instance in rt
+                .instances
+                .iter()
+                .zip(&rt.marks)
+                .filter_map(|(i, &mark)| (mark == header_pilot::TITLE).then_some(i))
+            {
+                marked += 1;
+                assert_eq!(
+                    instance.clip,
+                    [
+                        title.clip.left,
+                        title.clip.top,
+                        title.clip.right(),
+                        title.clip.bottom()
+                    ]
+                );
+            }
+            assert!(marked > 0);
+            entry.advance();
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs a real GPU adapter and the closure fonts"]
+fn rune_header_pilot_outline_and_grid_match_venus() {
+    let gpu = rune::render::Gpu::headless();
+    eprintln!("adapter: {:?}", gpu.adapter.get_info());
+    let mut probe = Probe {
+        out: std::env::var_os("EON_RUNE_PROOF_DIR").map(Into::into),
+        failures: Vec::new(),
+    };
+    let look = HostedLook {
+        background_opacity: 0.8,
+        panel_heading: PanelHeading::Notch,
+        pane_frames: true,
+        border_width: 2,
+        focus_border_width: 2,
+        ..HOSTED_LOOK
+    };
+    for (points, scale, look) in [
+        ((1280.0, 800.0), 1.0, look),
+        ((1280.0, 800.0), 2.0, look),
+        ((320.0, 180.0), 1.25, HOSTED_LOOK),
+    ] {
+        let size = ((points.0 * scale) as u32, (points.1 * scale) as u32);
+        let mut fonts = packaged_fonts();
+        let path = std::env::var_os("EON_VENUS_TEST_SANS_FONT");
+        let family = header_pilot::fonts(&mut fonts, true, path.clone()).unwrap();
+        let failure = Failure::default();
+        let mut compositor = rune_host::GridCompositor::new(fonts, failure.clone(), None);
+        compositor.look = look;
+        let mut ui = rune_renderer(&gpu);
+        let mut rt = candidate_runtime(rune_host::view, points, scale);
+        rt.transparent = look.background_opacity < 1.0;
+        rt.update(|state, _| state.header = Some((family, None)));
+
+        let mut fonts = packaged_fonts();
+        header_pilot::fonts(&mut fonts, false, path).unwrap();
+        let mut parent = Renderer::hosted_with_look(
+            gpu.device.clone(),
+            gpu.queue.clone(),
+            OFFSCREEN,
+            size,
+            f64::from(scale),
+            fonts,
+            look,
+        )
+        .unwrap();
+        let target = rune::render::Offscreen::with_format(&gpu.device, size.0, size.1, OFFSCREEN);
+        let mut entry = Entry::new().unwrap();
+        for index in 0..=STEP_COUNT {
+            let step = index % STEP_COUNT;
+            let mut candidate = Vec::new();
+            let before = rt.state.follow_ups;
+            let text_work = (rt.text.shaped, rt.text.rebroken);
+            let passes = if index == 0 { 2 } else { 1 };
+            for _ in 0..passes {
+                rt.frame(0.0);
+                candidate = candidate_frame(&gpu, &mut ui, &mut rt, size, |f| compositor.render(f));
+                assert_eq!(failure.get(), None);
+                assert_eq!(compositor.hook_calls, 1);
+                if rt.state.drawn.is_some() {
+                    break;
+                }
+            }
+            assert_eq!(
+                rt.state.drawn.map(|(cycle, step, _)| (cycle, step)),
+                Some((u64::from(index == STEP_COUNT), step)),
+                "first warm frame must present the current title at {scale}× {step}"
+            );
+            let subsequent = rt.state.follow_ups - before;
+            assert!(subsequent <= u64::from(index == 0));
+            if [1, 4].contains(&step) {
+                assert_eq!((rt.text.shaped, rt.text.rebroken), text_work);
+            }
+            let workspace = fixtures::header_workspace(&mut parent, step);
+            entry.sync_images(&mut parent);
+            parent
+                .prepare_hosted_workspace(entry.scene(), &workspace, entry.generation)
+                .unwrap();
+            let expected = read_parent(&gpu, &mut parent, &target, true);
+            if index == 0 {
+                parent.enable_header_pilot(false);
+                parent
+                    .prepare_hosted_workspace(entry.scene(), &workspace, entry.generation)
+                    .unwrap();
+                assert_eq!(read_parent(&gpu, &mut parent, &target, true), expected);
+            }
+            let case = format!("header-{scale}-{index}");
+            if let Some(out) = &probe.out {
+                for (name, pixels) in [("rune", &candidate), ("venus", &expected)] {
+                    rune::render::write_png(
+                        &out.join(format!("{case}-{name}-original.png")),
+                        size.0,
+                        size.1,
+                        pixels,
+                    )
+                    .unwrap();
+                }
+            }
+            if let Some((_, Some(title))) = &rt.state.header {
+                let clip = title.clip;
+                let instances = std::mem::take(&mut rt.instances);
+                let marks = std::mem::take(&mut rt.marks);
+                for (&instance, &mark) in instances.iter().zip(&marks) {
+                    if mark != header_pilot::TITLE {
+                        rt.instances.push(instance);
+                        rt.marks.push(mark);
+                    }
+                }
+                let without_title = read_candidate(&gpu, &mut ui, &mut rt, size, &target, |f| {
+                    compositor.render(f)
+                });
+                rt.instances = instances;
+                rt.marks = marks;
+                let (_, Some(title)) = rt.state.header.as_ref().unwrap() else {
+                    unreachable!()
+                };
+                parent.text.retain(|text| {
+                    text.bounds() != clip || text.buffer.lines[0].text() != title.source
+                });
+                parent
+                    .text_renderer
+                    .prepare_with_custom(
+                        &parent.device,
+                        &parent.queue,
+                        &mut parent.fonts.font_system,
+                        &mut parent.atlas,
+                        &parent.viewport,
+                        text_areas(&parent.text, parent.text_overlay.as_ref()),
+                        &mut parent.swash_cache,
+                        |request| rasterize_bar_icon(request, None),
+                    )
+                    .unwrap();
+                let venus_without_title = read_parent(&gpu, &mut parent, &target, true);
+                probe.compare(&case, size, &without_title, &venus_without_title);
+                for (index, ((rune, venus), context)) in candidate
+                    .as_chunks::<4>()
+                    .0
+                    .iter()
+                    .zip(expected.as_chunks::<4>().0)
+                    .zip(without_title.as_chunks::<4>().0)
+                    .enumerate()
+                {
+                    if rune != context || venus != context {
+                        let x = (index % size.0 as usize) as f32 + 0.5;
+                        let y = (index / size.0 as usize) as f32 + 0.5;
+                        assert!(
+                            clip.contains(x, y),
+                            "{case}: title affected pixel ({x}, {y}) past clip"
+                        );
+                    }
+                }
+            } else {
+                probe.compare(&case, size, &candidate, &expected);
+            }
+            entry.advance();
+            rt.update(|state, _| {
+                state.advance();
+                state.drawn = None;
+            });
+        }
+    }
+    assert!(probe.failures.is_empty(), "{:?}", probe.failures);
+}
+
+#[test]
+fn rune_header_pilot_checks_compact_and_surface_geometry() {
+    let (device, queue) = wgpu::Device::noop(&DeviceDescriptor::default());
+    let size = (96, 180);
+    let mut renderer =
+        Renderer::hosted(device, queue, OFFSCREEN, size, 1.0, packaged_fonts()).unwrap();
+    renderer.enable_header_pilot(true);
+    let mut rt = candidate_runtime(rune_host::view, (96.0, 180.0), 1.0);
+    let entry = Entry::new().unwrap();
+    let scene = entry.scene();
+    let mut out = Vec::new();
+    for (height, visible) in [(180, true), (80, false)] {
+        renderer.resize(PhysicalSize::new(96, height), 1.0);
+        let workspace = fixtures::header_workspace(&mut renderer, 3);
+        renderer
+            .prepare_hosted_workspace(scene, &workspace, entry.generation)
+            .unwrap();
+        assert!(renderer.workspace_title_tabs(&workspace)[0].is_none());
+        let paint = &renderer.header_paint;
+        assert_eq!(paint.title.is_some(), visible);
+        assert_eq!(!paint.outline.is_empty(), visible);
+        if visible {
+            rt.update(|state, _| state.header = Some(("DejaVu Sans", paint.title.clone())));
+            rt.frame(0.0);
+        }
+        let title_mark = header_pilot::TITLE;
+        let marked = rt.marks.iter().filter(|&&mark| mark == title_mark).count();
+        assert!(marked > 0);
+        assert!(header_pilot::splice(&rt, Some(paint), &mut out));
+        let triangles = 2 * paint.outline.len();
+        let count = out.iter().filter(|i| i.params[1] == KIND_TRIANGLE).count();
+        assert_eq!(count, triangles);
+        let hidden = if visible { 0 } else { marked };
+        assert_eq!(out.len() + hidden, rt.instances.len() - 1 + triangles);
+        assert!(header_pilot::splice(&rt, None, &mut out));
+        assert_eq!(out.len(), rt.instances.len() - 1 - marked);
+    }
+    rt.marks.pop();
+    assert!(!header_pilot::splice(&rt, None, &mut out));
+    assert!(out.is_empty());
+
+    let device = &renderer.device;
+    let format = wgpu::TextureFormat::Rgba8Unorm;
+    let target = rune::render::Offscreen::with_format(device, size.0, size.1, format);
+    let mut ui = rune::render::Renderer::new(device, format);
+    let mut frame = rune::Frame {
+        device,
+        queue: &renderer.queue,
+        encoder: &mut device.create_command_encoder(&Default::default()),
+        target: &target.view,
+        format,
+        size,
+        dt: 0.0,
+        update_ms: 0.0,
+        rt: &mut rt,
+        ui: &mut ui,
+    };
+    let failure = Failure::default();
+    let mut comp = rune_host::GridCompositor::new(packaged_fonts(), failure.clone(), None);
+    assert!(comp.prepare(&mut frame).is_none());
+    assert!(failure.get().unwrap().contains("requires an sRGB target"));
 }
 
 const BEFORE: rune::Color = rune::Color {

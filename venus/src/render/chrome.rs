@@ -2,8 +2,9 @@
 //! header tooltip and the native dialog, plus the pointer state that highlights them.
 use crate::contour::{
     CardFill, FrameTitle, FrameTitleTab, PaneTitleTab, bottom_title_row, buffer_ink,
-    chrome_title_metrics, fit_header_text, heading_button_gap, pane_rule_gaps,
-    physical_outline_width, rounded_outline_rects, status_glyph_ink, title_tab_bands,
+    chrome_title_metrics, fit_compact_popup_title, fit_header_text, heading_button_gap,
+    pane_rule_gaps, physical_outline_width, rounded_outline_rects, status_glyph_ink,
+    title_tab_bands,
 };
 
 use super::{
@@ -31,6 +32,26 @@ use glyphon::{
 use winit::dpi::PhysicalSize;
 
 const OPENAI_BLOSSOM_ID: u16 = 1;
+
+#[cfg(feature = "candidate-rune")]
+pub(super) struct PopupPilot {
+    pub(super) move_draws: bool,
+    cached: Option<(
+        crate::contour::PopupTitleInput,
+        Option<FrameTitleTab>,
+        Option<FrameTitle>,
+    )>,
+}
+
+#[cfg(feature = "candidate-rune")]
+impl PopupPilot {
+    pub(super) fn new(move_draws: bool) -> Self {
+        Self {
+            move_draws,
+            cached: None,
+        }
+    }
+}
 const CLAUDE_SPLAT_ID: u16 = 2;
 const EON_ICON_ID: u16 = 3;
 const CLAUDE_CODE_ID: u16 = 4;
@@ -1590,6 +1611,51 @@ impl Renderer {
         &mut self,
         workspace: &WorkspaceScene,
     ) -> Vec<Option<FrameTitleTab>> {
+        #[cfg(feature = "candidate-rune")]
+        let card_stroke = self.card_stroke_width();
+        #[cfg(feature = "candidate-rune")]
+        if let Some(pilot) = &mut self.popup_pilot
+            && let Some(label) = workspace.popup_label()
+            && workspace.sidebar().is_none()
+        {
+            let stroke = physical_outline_width(self.border_width, self.metrics.scale);
+            let card = workspace.card_fill(workspace.chrome, self.metrics, card_stroke);
+            let input = crate::contour::PopupTitleInput {
+                label: label.into(),
+                row: workspace.popup_title_row(self.metrics),
+                card: card.bounds,
+                radius: card.radius,
+                clip: workspace.chrome,
+                frame_top: workspace
+                    .tab_viewport
+                    .bottom()
+                    .max(workspace.header.bottom()),
+                hide: workspace.heading_action(crate::HeadingAction::HidePopup),
+                metrics: self.metrics,
+                stroke,
+                heading: self.panel_heading,
+            };
+            if pilot.cached.as_ref().is_none_or(|(key, ..)| key != &input) {
+                let tab = FrameTitleTab::popup(
+                    &mut self.fonts.font_system,
+                    self.metrics,
+                    workspace,
+                    stroke,
+                )
+                .map(|tab| tab.with_heading(self.panel_heading));
+                let compact = input.row.filter(|_| tab.is_none()).map(|row| {
+                    fit_compact_popup_title(
+                        &mut self.fonts.font_system,
+                        self.metrics,
+                        label,
+                        row,
+                        input.hide,
+                    )
+                });
+                pilot.cached = Some((input, tab, compact));
+            }
+            return vec![pilot.cached.as_ref().and_then(|(_, tab, _)| tab.clone())];
+        }
         FrameTitleTab::workspace(
             &mut self.fonts.font_system,
             self.metrics,
@@ -2660,7 +2726,7 @@ impl Renderer {
                 .filter(|_| tab.is_none_or(|tab| tab.action.is_none()))
                 .map(|hide| heading_button_gap(hide, self.metrics));
             if self.pane_frames {
-                let card = crate::contour::CardFill {
+                let card = CardFill {
                     bounds: workspace.card_rect(area, self.metrics, self.card_stroke_width()),
                     radius: workspace.card_radius(),
                 };
@@ -3134,40 +3200,82 @@ impl Renderer {
                 workspace.card_fill(workspace.chrome, self.metrics, self.card_stroke_width());
             let mut clip = workspace.chrome;
             let mut gaps = Vec::new();
+            #[cfg(feature = "candidate-rune")]
+            let pilot = self.popup_pilot.as_ref().and_then(|pilot| {
+                pilot
+                    .cached
+                    .as_ref()
+                    .filter(|_| workspace.sidebar().is_none())
+                    .map(|(_, tab, compact)| (pilot.move_draws, tab.clone(), compact.clone()))
+            });
+            #[cfg(feature = "candidate-rune")]
+            let migrating = pilot.as_ref().is_some_and(|(move_draws, ..)| *move_draws);
+            #[cfg(feature = "candidate-rune")]
+            let mut compact_cut = None;
             if let Some(row) = workspace.popup_title_row(self.metrics) {
                 let hide = workspace.heading_action(crate::HeadingAction::HidePopup);
-                let title = if let Some(tab) = FrameTitleTab::popup(
-                    &mut self.fonts.font_system,
-                    self.metrics,
-                    workspace,
-                    stroke,
-                )
-                .map(|tab| tab.with_heading(self.panel_heading))
-                {
+                let mut fit_tab = || {
+                    FrameTitleTab::popup(
+                        &mut self.fonts.font_system,
+                        self.metrics,
+                        workspace,
+                        stroke,
+                    )
+                    .map(|tab| tab.with_heading(self.panel_heading))
+                };
+                #[cfg(feature = "candidate-rune")]
+                let tab = pilot
+                    .as_ref()
+                    .map_or_else(&mut fit_tab, |(_, tab, _)| tab.clone());
+                #[cfg(not(feature = "candidate-rune"))]
+                let tab = fit_tab();
+                let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
+                let title = if let Some(tab) = tab {
+                    #[cfg(feature = "candidate-rune")]
+                    if migrating {
+                        rectangles.pilot_cut = Some(cut);
+                    }
                     rectangles.push_title_tab_outline(
                         card,
                         &tab,
                         stroke,
                         palette::DARK.card_outline,
                     );
-                    let cut = card.bounds.top + super::rounded_radius(card.bounds, card.radius);
+                    #[cfg(feature = "candidate-rune")]
+                    {
+                        rectangles.pilot_cut = None;
+                    }
                     clip.top = cut;
                     clip.height = (workspace.chrome.bottom() - cut).max(0.0);
                     tab.title
                 } else {
                     // A compact title stops before the button, which sits in its own gap.
-                    let title = FrameTitle::fit(
-                        &mut self.fonts.font_system,
-                        self.metrics,
-                        label,
-                        (hide.map_or(row.width, |hide| hide.left - row.left)
-                            - self.metrics.padding * 2.0)
-                            .max(0.0),
-                    );
+                    let mut fit = || {
+                        fit_compact_popup_title(
+                            &mut self.fonts.font_system,
+                            self.metrics,
+                            label,
+                            row,
+                            hide,
+                        )
+                    };
+                    #[cfg(feature = "candidate-rune")]
+                    let title = pilot
+                        .as_ref()
+                        .and_then(|(_, _, compact)| compact.clone())
+                        .unwrap_or_else(&mut fit);
+                    #[cfg(not(feature = "candidate-rune"))]
+                    let title = fit();
+                    #[cfg(feature = "candidate-rune")]
+                    if migrating && !title.label.is_empty() {
+                        compact_cut = Some(cut);
+                    }
                     gaps.push(title.border_gap(row, self.metrics));
                     gaps.extend(hide.map(|hide| heading_button_gap(hide, self.metrics)));
                     title
                 };
+                #[cfg(feature = "candidate-rune")]
+                let before = self.text.len();
                 self.build_frame_title(
                     &title,
                     row,
@@ -3175,6 +3283,24 @@ impl Renderer {
                     palette::DARK.primary_text,
                     stroke,
                 );
+                #[cfg(feature = "candidate-rune")]
+                if migrating && self.text.len() > before {
+                    let text = self.text.pop().expect("popup title was just placed");
+                    rectangles.header_paint.title =
+                        Some(crate::rune_candidate::header_pilot::Title {
+                            source: title.label,
+                            origin: [text.left, text.top],
+                            clip: text.bounds(),
+                            scale: self.metrics.scale,
+                            size: text.buffer.metrics().font_size,
+                            weight: f32::from(
+                                text.buffer.lines[0].attrs_list().defaults().weight.0,
+                            ),
+                            line_height: chrome_title_metrics(self.metrics).text_height,
+                            color: palette::DARK.primary_text,
+                        });
+                    rectangles.header_paint.later_text = before;
+                }
                 self.push_heading_button(
                     workspace,
                     focus,
@@ -3190,6 +3316,10 @@ impl Renderer {
                 );
             }
             rectangles.clip = Some(clip);
+            #[cfg(feature = "candidate-rune")]
+            {
+                rectangles.pilot_cut = compact_cut;
+            }
             rectangles.push_card_outline(
                 card.bounds,
                 card.radius,
@@ -3197,6 +3327,10 @@ impl Renderer {
                 stroke,
                 palette::DARK.card_outline,
             );
+            #[cfg(feature = "candidate-rune")]
+            {
+                rectangles.pilot_cut = None;
+            }
             rectangles.clip = None;
         }
         let terminals = std::iter::once(workspace.terminal)
@@ -3837,7 +3971,7 @@ impl RectangleBatch {
         &mut self,
         bounds: SceneRect,
         padding: f32,
-        tab: Option<&(crate::contour::CardFill, FrameTitleTab)>,
+        tab: Option<&(CardFill, FrameTitleTab)>,
         stroke: f32,
     ) -> Vec<TextBounds> {
         if let Some((card, tab)) = tab {

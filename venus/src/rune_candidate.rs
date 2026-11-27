@@ -11,14 +11,15 @@
 //! - no Rune accessibility tree for the terminal (the VEN-C1 Rune-hosted gap);
 //! - the cursor stays visible, and the hosted renderer draws no cursor tail.
 
-mod fixtures;
+pub(crate) mod fixtures;
+pub(crate) mod header_pilot;
 
 #[cfg(test)]
 pub(crate) use fixtures::messages as fixture_messages;
 
 use crate::{
-    ImageKey, ModelEffect, Renderer, Scene, SessionModel,
-    render::{FontSettings, FontSetup, HOSTED_LOOK, PresentOutcome},
+    CellMetrics, ImageKey, ModelEffect, Renderer, Scene, SessionModel, WorkspaceScene,
+    render::{FontSettings, FontSetup, HOSTED_LOOK, HostedLook, PresentOutcome, RenderError},
 };
 use orbit_protocol::session::{decode_server_message, encode_server_message};
 use std::{
@@ -29,6 +30,7 @@ use std::{
 };
 
 type Result<T = ()> = std::result::Result<T, Box<dyn Error>>;
+type WorkspaceKey = (winit::dpi::PhysicalSize<u32>, CellMetrics, usize);
 
 /// Which host draws the fixtures.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -52,15 +54,33 @@ const RUNE_CLEAR: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
 /// Runs `host` until its window closes. Errors are render, GPU, geometry or admission
 /// failures.
 pub fn run(host: Host) -> Result {
+    run_fixture(host, false)
+}
+
+/// Runs the private measured popup fixture.
+pub fn run_header_pilot(host: Host) -> Result {
+    run_fixture(host, true)
+}
+
+fn run_fixture(host: Host, pilot: bool) -> Result {
     validate_fixtures()?;
     // The Darwin package sets this list; Linux gets its fonts from FONTCONFIG_FILE.
-    let fonts = FontSetup::with_directories(
+    let mut fonts = FontSetup::with_directories(
         &FontSettings::default(),
         std::env::var_os("EON_VENUS_FONT_DIRS").as_deref(),
     )?;
+    let (look, family) = if pilot {
+        let path = std::env::var_os("EON_VENUS_TEST_SANS_FONT");
+        (
+            header_pilot::look()?,
+            Some(header_pilot::fonts(&mut fonts, host == Host::Rune, path)?),
+        )
+    } else {
+        (HOSTED_LOOK, None)
+    };
     match host {
-        Host::Rune => rune_host::run(fonts),
-        Host::Venus => venus_host::run(fonts),
+        Host::Rune => rune_host::run(fonts, look, family),
+        Host::Venus => venus_host::run(fonts, look, pilot),
     }
 }
 
@@ -83,6 +103,7 @@ pub(crate) struct Entry {
     pub(crate) generation: u64,
     /// Image effects in message order, for the renderer to apply before the next draw.
     pending: Vec<ModelEffect>,
+    header_workspace: Option<(WorkspaceKey, WorkspaceScene)>,
 }
 
 impl Entry {
@@ -93,6 +114,7 @@ impl Entry {
             model: SessionModel::new(),
             generation: 0,
             pending: Vec::new(),
+            header_workspace: None,
         };
         entry.apply_step()?;
         Ok(entry)
@@ -129,6 +151,36 @@ impl Entry {
         self.model
             .scene()
             .expect("every fixture step ends with a frame")
+    }
+
+    fn title_step(&self) -> usize {
+        match self.step {
+            0 | 1 => 0,
+            2 => 2,
+            _ => 3,
+        }
+    }
+
+    fn prepare_header_workspace(&mut self, renderer: &mut Renderer) {
+        let title_step = self.title_step();
+        let key = (renderer.size(), renderer.metrics(), title_step);
+        if self
+            .header_workspace
+            .as_ref()
+            .is_none_or(|(cached, _)| *cached != key)
+        {
+            self.header_workspace = Some((key, fixtures::header_workspace(renderer, title_step)));
+        }
+    }
+
+    fn prepare_hosted_header(
+        &mut self,
+        renderer: &mut Renderer,
+    ) -> std::result::Result<(), RenderError> {
+        self.sync_images(renderer);
+        self.prepare_header_workspace(renderer);
+        let (_, workspace) = self.header_workspace.as_ref().unwrap();
+        renderer.prepare_hosted_workspace(self.scene(), workspace, self.generation)
     }
 
     /// (cycle, step, name) of the current step.
@@ -309,8 +361,17 @@ fn read_advances(mut advance: impl FnMut() + Send + 'static) {
 }
 
 /// The line each host prints once a step's frame is presented.
-fn report_drawn((cycle, step): (u64, usize)) {
-    println!("drawn {cycle} {step} {}", fixtures::STEPS[step]);
+type Receipt = (u64, usize, Option<SlotGeometry>);
+
+fn report_drawn((cycle, step, geometry): Receipt, follow_ups: u64) {
+    let name = fixtures::STEPS[step];
+    if let Some(geometry) = geometry {
+        let (width, height) = geometry.size();
+        let scale = geometry.scale();
+        println!("drawn {cycle} {step} {name} {width} {height} {scale} {follow_ups}");
+    } else {
+        println!("drawn {cycle} {step} {name}");
+    }
 }
 
 pub(crate) mod rune_host {
@@ -325,44 +386,92 @@ pub(crate) mod rune_host {
     /// Rune's app state: the entry, and the step the compositor last drew.
     pub(crate) struct State {
         pub(crate) entry: Entry,
-        pub(crate) drawn: Option<(u64, usize)>,
+        pub(crate) drawn: Option<Receipt>,
+        pub(crate) follow_ups: u64,
+        pub(crate) header: Option<(&'static str, Option<header_pilot::Title>)>,
+        renderer: Option<Renderer>,
+        early_workspace: Option<std::result::Result<(), RenderError>>,
     }
 
-    pub(crate) fn view(_: &State, _: &mut Cx<State>) -> El {
-        grid_view()
+    impl State {
+        pub(crate) fn new(entry: Entry, family: Option<&'static str>) -> Self {
+            Self {
+                entry,
+                drawn: None,
+                follow_ups: 0,
+                header: family.map(|name| (name, None)),
+                renderer: None,
+                early_workspace: None,
+            }
+        }
+
+        pub(crate) fn advance(&mut self) {
+            let previous = self.entry.title_step();
+            self.entry.advance();
+            self.early_workspace = None;
+            // Fit against the last drawable before Rune builds the next view.
+            if previous != self.entry.title_step()
+                && let (Some((_, title)), Some(renderer)) = (&mut self.header, &mut self.renderer)
+            {
+                let prepared = self.entry.prepare_hosted_header(renderer);
+                if prepared.is_ok() {
+                    *title = renderer.header_paint.title.clone();
+                }
+                self.early_workspace = Some(prepared);
+            }
+        }
     }
 
-    pub(crate) fn run(fonts: FontSetup) -> Result {
+    pub(crate) fn view(state: &State, _: &mut Cx<State>) -> El {
+        let grid = grid_view();
+        match &state.header {
+            Some((family, title)) => grid
+                .child(header_pilot::marker())
+                .children(title.iter().map(|title| title.view(family))),
+            None => grid,
+        }
+    }
+
+    pub(crate) fn run(fonts: FontSetup, look: HostedLook, family: Option<&'static str>) -> Result {
         let failure = Failure::default();
         let entry = Entry::new()?;
         let mut app = App::new(AppSpec::new(
             "Eon (Rune candidate)",
-            (1000.0, 640.0),
+            if family.is_some() {
+                (1280.0, 800.0)
+            } else {
+                (1000.0, 640.0)
+            },
             || unreachable!("App::init supplies the state"),
             view,
         ))
         .args(Vec::new())
         .srgb_blend(false)
-        .init(move || State { entry, drawn: None });
+        .init(move || State::new(entry, family));
+        if family.is_some() {
+            app = app.window_options(rune::WindowOptions {
+                transparent: look.background_opacity < 1.0,
+                min_size: Some((0.0, 0.0)),
+                ..Default::default()
+            });
+        }
         let handle = app.handle();
         let mut printed = None;
+        let mut compositor = GridCompositor::new(fonts, failure.clone(), Some(handle.clone()));
+        compositor.look = look;
         app = app
-            .compositor(GridCompositor::new(
-                fonts,
-                failure.clone(),
-                Some(handle.clone()),
-            ))
+            .compositor(compositor)
             .on_frame_drawn(move |rt: &rune::Runtime<State>| {
                 let state = &rt.state;
                 if let Some(drawn) = state.drawn
                     && printed != Some(drawn)
                 {
                     printed = Some(drawn);
-                    report_drawn(drawn);
+                    report_drawn(drawn, state.follow_ups);
                 }
             });
         let advancing = handle.clone();
-        read_advances(move || advancing.update(|state: &mut State, _| state.entry.advance()));
+        read_advances(move || advancing.update(|state: &mut State, _| state.advance()));
         app.try_run()?;
         failure.into_result()
     }
@@ -370,10 +479,12 @@ pub(crate) mod rune_host {
     /// Draws the hosted Venus renderer at the grid slot, inside Rune's frame pass.
     pub(crate) struct GridCompositor {
         fonts: Option<FontSetup>,
-        renderer: Option<(Renderer, FrameTarget)>,
+        target: Option<FrameTarget>,
         prepared: Option<SlotGeometry>,
         failure: Failure,
         quit: Option<AppHandle<State>>,
+        pub(crate) look: HostedLook,
+        instances: Vec<rune::render::Instance>,
         /// Effect-slot hook calls in the last frame, for the proofs.
         pub(crate) hook_calls: u32,
         /// Whether the last frame's hook drew the grid.
@@ -388,10 +499,12 @@ pub(crate) mod rune_host {
         ) -> Self {
             Self {
                 fonts: Some(fonts),
-                renderer: None,
+                target: None,
                 prepared: None,
                 failure,
                 quit,
+                look: HOSTED_LOOK,
+                instances: Vec::new(),
                 hook_calls: 0,
                 drew: false,
             }
@@ -406,34 +519,55 @@ pub(crate) mod rune_host {
 
         /// Admits the frame's device and format, and prepares the scene at the slot's
         /// geometry before any pass is open.
-        fn prepare(&mut self, f: &mut Frame<'_, State>) -> Option<SlotGeometry> {
-            let (geometry, target) =
-                match preflight(f, self.renderer.as_ref().map(|(_, target)| *target)) {
-                    Ok(preflight) => preflight,
+        pub(crate) fn prepare(&mut self, f: &mut Frame<'_, State>) -> Option<SlotGeometry> {
+            let pilot = f.rt.state.header.is_some();
+            if pilot && !f.format.is_srgb() {
+                self.fail("the measured header pilot requires an sRGB target".into());
+                return None;
+            }
+            if pilot && self.look.background_opacity < 1.0 && !f.rt.transparent {
+                self.fail("the measured header pilot requires a transparent surface".into());
+                return None;
+            }
+            let (geometry, target) = match preflight(f, self.target) {
+                Ok(preflight) => preflight,
+                Err(message) => {
+                    self.fail(message);
+                    return None;
+                }
+            };
+            if f.rt.state.renderer.is_none() {
+                match hosted_renderer(f, geometry, self.fonts.take()?, self.look) {
+                    Ok(mut renderer) => {
+                        if pilot {
+                            renderer.enable_header_pilot(true);
+                        }
+                        f.rt.state.renderer = Some(renderer);
+                        self.target = Some(target);
+                    }
                     Err(message) => {
                         self.fail(message);
                         return None;
                     }
-                };
-            if self.renderer.is_none() {
-                let fonts = self.fonts.take()?;
-                match hosted_renderer(f, geometry, fonts) {
-                    Ok(renderer) => self.renderer = Some((renderer, target)),
-                    Err(error) => {
-                        self.fail(error);
-                        return None;
-                    }
                 }
             }
-            let (renderer, _) = self.renderer.as_mut()?;
+            let state = &mut f.rt.state;
+            let renderer = state.renderer.as_mut()?;
             if self.prepared != Some(geometry) {
                 resize_to(renderer, geometry);
+                state.early_workspace = None;
             }
-            let entry = &mut f.rt.state.entry;
-            entry.sync_images(renderer);
-            if let Err(error) =
+            let entry = &mut state.entry;
+            let result = if pilot {
+                state
+                    .early_workspace
+                    .take()
+                    .unwrap_or_else(|| entry.prepare_hosted_header(renderer))
+            } else {
+                entry.sync_images(renderer);
                 renderer.prepare_hosted(entry.scene(), (None, 0.0), true, entry.generation, "", "")
-            {
+            };
+            if let Err(error) = result {
                 self.fail(error.to_string());
                 return None;
             }
@@ -444,10 +578,31 @@ pub(crate) mod rune_host {
 
     impl Compositor<State> for GridCompositor {
         fn render(&mut self, f: &mut Frame<'_, State>) {
+            f.rt.state.drawn = None;
             let prepared = self.prepare(f);
-            let renderer =
-                prepared.and_then(|_| self.renderer.as_ref().map(|(renderer, _)| renderer));
-            let drawn = draw_slot(f, renderer.zip(prepared), Fit::Exact);
+            let mut follow_up = None;
+            let submission = if let Some((_, mounted)) = &f.rt.state.header {
+                let paint = prepared
+                    .and(f.rt.state.renderer.as_ref())
+                    .map(|r| &r.header_paint);
+                if let Some(paint) = paint.filter(|paint| &paint.title != mounted) {
+                    follow_up = Some(paint.title.clone());
+                }
+                if !header_pilot::splice(
+                    f.rt,
+                    paint.filter(|_| follow_up.is_none()),
+                    &mut self.instances,
+                ) {
+                    (self.hook_calls, self.drew) = (0, false);
+                    self.fail("the measured header pilot frame is missing instance marks".into());
+                    return;
+                }
+                Some((self.instances.as_slice(), [0.0; 4]))
+            } else {
+                None
+            };
+            let mut renderer = f.rt.state.renderer.take();
+            let drawn = draw_instances(f, renderer.as_ref().zip(prepared), Fit::Exact, submission);
             self.hook_calls = drawn.hook_calls;
             self.drew = drawn.slot.is_some();
             // The fixtures' window never resizes, so a moved slot stays a refusal here.
@@ -458,12 +613,23 @@ pub(crate) mod rune_host {
             }) {
                 self.fail(refusal);
             }
-            if let Some((renderer, _)) = self.renderer.as_mut() {
+            if let Some(renderer) = renderer.as_mut() {
                 renderer.end_frame_hosted();
             }
-            if self.drew {
+            f.rt.state.renderer = renderer;
+            if let Some(next) = follow_up {
+                if f.rt.update_if(|state, _| {
+                    state.header.as_mut().unwrap().1 = next;
+                    state.follow_ups += 1;
+                    true
+                }) && let Some(handle) = &self.quit
+                {
+                    handle.wake();
+                }
+            } else if self.drew {
                 let entry = &f.rt.state.entry;
-                f.rt.state.drawn = Some((entry.cycle, entry.step));
+                let geometry = prepared.filter(|_| f.rt.state.header.is_some());
+                f.rt.state.drawn = Some((entry.cycle, entry.step, geometry));
             }
         }
     }
@@ -506,14 +672,16 @@ pub(crate) mod rune_host {
         f: &Frame<'_, S>,
         geometry: SlotGeometry,
         fonts: FontSetup,
+        look: HostedLook,
     ) -> std::result::Result<Renderer, String> {
-        Renderer::hosted(
+        Renderer::hosted_with_look(
             f.device.clone(),
             f.queue.clone(),
             f.format,
             geometry.size(),
             f64::from(geometry.scale()),
             fonts,
+            look,
         )
         .map_err(|error| error.to_string())
     }
@@ -549,13 +717,17 @@ pub(crate) mod rune_host {
         prepared: Option<(&Renderer, SlotGeometry)>,
         fit: Fit,
     ) -> Drawn {
-        f.ui.prepare(
-            f.device,
-            f.queue,
-            &mut f.rt.text.atlas,
-            &f.rt.instances,
-            f.size,
-        );
+        draw_instances(f, prepared, fit, None)
+    }
+
+    fn draw_instances<S: 'static>(
+        f: &mut Frame<'_, S>,
+        prepared: Option<(&Renderer, SlotGeometry)>,
+        fit: Fit,
+        submission: Option<(&[rune::render::Instance], [f32; 4])>,
+    ) -> Drawn {
+        let (instances, clear) = submission.unwrap_or((&f.rt.instances, RUNE_CLEAR));
+        f.ui.prepare(f.device, f.queue, &mut f.rt.text.atlas, instances, f.size);
         let target_format = f.format;
         let mut refusal = None;
         let mut moved = None;
@@ -563,41 +735,43 @@ pub(crate) mod rune_host {
         let mut slot = None;
         #[cfg(test)]
         let mut clip = None;
-        f.ui.draw_with(f.encoder, f.target, RUNE_CLEAR, &mut |pass,
-                                                              site: &EffectSite<
-            '_,
-        >| {
-            calls += 1;
-            let Some((renderer, prepared)) = prepared else {
-                return;
-            };
-            if site.mark != GRID_MARK {
-                return;
-            }
-            let at = SlotGeometry::new(site.instance.rect, site.scale);
-            if site.format != target_format || site.in_layer || site.srgb_blend {
-                refusal = Some(format!(
-                    "incompatible Venus grid pass ({:?}, in a layer: {}, sRGB blend: {})",
-                    site.format, site.in_layer, site.srgb_blend
-                ));
-                return;
-            }
-            let Some([left, top, width, height]) =
-                prepared.viewport(at, fit, site.origin, site.size)
-            else {
-                moved = Some(at);
-                return;
-            };
-            pass.set_viewport(left, top, width, height, 0.0, 1.0);
-            match renderer.draw_hosted(pass) {
-                Ok(()) => slot = Some(at),
-                Err(error) => refusal = Some(error.to_string()),
-            }
-            #[cfg(test)]
-            if slot == Some(at) {
-                clip = Some(site.instance.clip);
-            }
-        });
+        f.ui.draw_with(
+            f.encoder,
+            f.target,
+            clear,
+            &mut |pass, site: &EffectSite<'_>| {
+                calls += 1;
+                let Some((renderer, prepared)) = prepared else {
+                    return;
+                };
+                if site.mark != GRID_MARK {
+                    return;
+                }
+                let at = SlotGeometry::new(site.instance.rect, site.scale);
+                if site.format != target_format || site.in_layer || site.srgb_blend {
+                    refusal = Some(format!(
+                        "incompatible Venus grid pass ({:?}, in a layer: {}, sRGB blend: {})",
+                        site.format, site.in_layer, site.srgb_blend
+                    ));
+                    return;
+                }
+                let Some([left, top, width, height]) =
+                    prepared.viewport(at, fit, site.origin, site.size)
+                else {
+                    moved = Some(at);
+                    return;
+                };
+                pass.set_viewport(left, top, width, height, 0.0, 1.0);
+                match renderer.draw_hosted(pass) {
+                    Ok(()) => slot = Some(at),
+                    Err(error) => refusal = Some(error.to_string()),
+                }
+                #[cfg(test)]
+                if slot == Some(at) {
+                    clip = Some(site.instance.clip);
+                }
+            },
+        );
         Drawn {
             hook_calls: calls,
             slot,
@@ -625,14 +799,16 @@ mod venus_host {
         entry: Entry,
         window: Option<Arc<Window>>,
         renderer: Option<Renderer>,
-        drawn: Option<(u64, usize)>,
+        drawn: Option<Receipt>,
         failure: Failure,
+        pilot: bool,
+        look: HostedLook,
     }
 
     /// Wakes the loop for one advance.
     struct Advance;
 
-    pub(super) fn run(fonts: FontSetup) -> Result {
+    pub(super) fn run(fonts: FontSetup, look: HostedLook, pilot: bool) -> Result {
         let mut builder = EventLoop::<Advance>::with_user_event();
         // Linux: Wayland only (the binary has already refused without it). macOS: the
         // native AppKit loop, the builder's default.
@@ -651,6 +827,8 @@ mod venus_host {
             renderer: None,
             drawn: None,
             failure: failure.clone(),
+            pilot,
+            look,
         };
         event_loop.run_app(&mut parent)?;
         failure.into_result()
@@ -661,9 +839,15 @@ mod venus_host {
             if self.window.is_some() {
                 return;
             }
+            let size = if self.pilot {
+                (1280.0, 800.0)
+            } else {
+                (1000.0, 640.0)
+            };
             let attributes = Window::default_attributes()
                 .with_title("Eon (Venus parent)")
-                .with_inner_size(winit::dpi::LogicalSize::new(1000.0, 640.0));
+                .with_inner_size(winit::dpi::LogicalSize::new(size.0, size.1))
+                .with_transparent(self.look.background_opacity < 1.0);
             let window = match event_loop.create_window(attributes) {
                 Ok(window) => Arc::new(window),
                 Err(error) => {
@@ -675,7 +859,7 @@ mod venus_host {
             let Some(fonts) = self.fonts.take() else {
                 return;
             };
-            let look = HOSTED_LOOK;
+            let look = self.look;
             match pollster::block_on(Renderer::new(
                 Arc::clone(&window),
                 event_loop,
@@ -692,7 +876,12 @@ mod venus_host {
                 None,
                 fonts,
             )) {
-                Ok(renderer) => self.renderer = Some(renderer),
+                Ok(mut renderer) => {
+                    if self.pilot {
+                        renderer.enable_header_pilot(false);
+                    }
+                    self.renderer = Some(renderer);
+                }
                 Err(error) => {
                     self.failure.set(error.to_string());
                     event_loop.exit();
@@ -737,11 +926,19 @@ mod venus_host {
                 return;
             };
             self.entry.sync_images(renderer);
+            if self.pilot {
+                self.entry.prepare_header_workspace(renderer);
+            }
+            let workspace = self
+                .entry
+                .header_workspace
+                .as_ref()
+                .map(|(_, workspace)| workspace);
             let outcome = renderer.render(
                 Some(self.entry.scene()),
                 None,
                 0.0,
-                None,
+                workspace,
                 &[],
                 None,
                 crate::WorkspaceFocus::Terminal,
@@ -752,10 +949,17 @@ mod venus_host {
             );
             match outcome {
                 Ok(PresentOutcome::Presented(_)) => {
-                    let position = (self.entry.cycle, self.entry.step);
+                    let geometry = self.pilot.then(|| {
+                        let size = renderer.size();
+                        SlotGeometry::new(
+                            [0.0, 0.0, size.width as f32, size.height as f32],
+                            renderer.metrics().scale,
+                        )
+                    });
+                    let position = (self.entry.cycle, self.entry.step, geometry);
                     if self.drawn != Some(position) {
                         self.drawn = Some(position);
-                        report_drawn(position);
+                        report_drawn(position, 0);
                     }
                 }
                 Ok(_) => {

@@ -1,4 +1,4 @@
-//! Venus-owned title fitting, contours, coverage and header bands shared by every host.
+//! Host-neutral title fitting, contours, coverage and header bands owned by Venus.
 
 use crate::render::{shaping, uncovered};
 use crate::scene::{
@@ -8,6 +8,11 @@ use crate::scene::{
 use crate::{CellMetrics, DialogScene, PanelHeading, SceneRect, WorkspaceScene};
 use glyphon::{Attrs, Buffer, Family, FontSystem, Metrics, SwashCache, Wrap};
 use std::ops::Range;
+
+#[cfg(all(test, feature = "candidate-rune"))]
+thread_local! {
+    pub(crate) static TITLE_FIT_WORK: std::cell::Cell<[usize; 3]> = const { std::cell::Cell::new([0; 3]) };
+}
 
 /// The single outer shape shared by a card's backdrop and terminal paint.
 #[derive(Clone, Copy)]
@@ -42,6 +47,37 @@ pub(crate) struct FrameTitleTab {
     pub(crate) title: FrameTitle,
     /// `start` of the mirrored action notch at the card's right, on headings that hold a button.
     pub(crate) action: Option<f32>,
+}
+
+/// Geometry the popup fitter reads from the workspace.
+#[cfg(feature = "candidate-rune")]
+#[derive(Clone, PartialEq)]
+pub(crate) struct PopupTitleInput {
+    pub label: String,
+    pub row: Option<SceneRect>,
+    pub card: SceneRect,
+    pub radius: f32,
+    pub clip: SceneRect,
+    pub frame_top: f32,
+    pub hide: Option<SceneRect>,
+    pub metrics: CellMetrics,
+    pub stroke: f32,
+    pub heading: PanelHeading,
+}
+
+pub(crate) fn fit_compact_popup_title(
+    fonts: &mut FontSystem,
+    metrics: CellMetrics,
+    label: &str,
+    row: SceneRect,
+    hide: Option<SceneRect>,
+) -> FrameTitle {
+    FrameTitle::fit(
+        fonts,
+        metrics,
+        label,
+        (hide.map_or(row.width, |hide| hide.left - row.left) - metrics.padding * 2.0).max(0.0),
+    )
 }
 
 #[derive(Clone)]
@@ -395,7 +431,11 @@ impl FrameTitle {
         label: &str,
         available: f32,
     ) -> Self {
+        #[cfg(all(test, feature = "candidate-rune"))]
+        TITLE_FIT_WORK.set([TITLE_FIT_WORK.get()[0] + 1, TITLE_FIT_WORK.get()[1], 1]);
         let (label, width) = fit_header_text(fonts, metrics, label, available);
+        #[cfg(all(test, feature = "candidate-rune"))]
+        TITLE_FIT_WORK.set([TITLE_FIT_WORK.get()[0], TITLE_FIT_WORK.get()[1], 0]);
         Self { label, width }
     }
 
@@ -901,6 +941,12 @@ pub(crate) fn fit_header_text_after(
     buffer.set_size(None, Some(title.text_height));
     buffer.set_wrap(Wrap::None);
     let measure = |buffer: &mut Buffer, fonts: &mut FontSystem, text: &str| {
+        #[cfg(all(test, feature = "candidate-rune"))]
+        TITLE_FIT_WORK.set([
+            TITLE_FIT_WORK.get()[0],
+            TITLE_FIT_WORK.get()[1] + TITLE_FIT_WORK.get()[2],
+            TITLE_FIT_WORK.get()[2],
+        ]);
         buffer.set_text(
             text,
             &Attrs::new().family(Family::SansSerif),

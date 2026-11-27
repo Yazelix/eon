@@ -18,6 +18,7 @@ let
     "LicenseRef-Codex-Identification-Use"
     "LicenseRef-Google-Brand-Terms"
     "Sublime Packages license" "OLDAP-2.8" "GPL-2.0-only WITH GCC-exception-2.0" "Unicode-DFS-2016"
+    "bzip2-1.0.6" "libpng-2.0"
   ];
   omitted = builtins.fromJSON (builtins.readFile ./omitted-grammars.json);
   grammarEvidence = builtins.fromJSON (builtins.readFile ./grammar-evidence.json);

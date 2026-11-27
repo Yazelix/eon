@@ -762,7 +762,7 @@ impl Host {
         let geometry = slot_for_target(geometry, f.size);
         if f.rt.state.identity.is_none() {
             let fonts = f.rt.state.fonts.take()?;
-            match hosted_renderer(f, geometry, fonts) {
+            match hosted_renderer(f, geometry, fonts, crate::render::HOSTED_LOOK) {
                 Ok(renderer) => {
                     f.rt.state.identity = Some(target);
                     f.rt.state.create_window(renderer, geometry);

@@ -623,6 +623,7 @@
           };
 
           venusRuntimeLibraries = [
+            pkgs.fontconfig
             pkgs.libxkbcommon
             pkgs.vulkan-loader
             pkgs.wayland

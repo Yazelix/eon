@@ -13,6 +13,103 @@ use orbit_protocol::{
 /// The steps, in order. A new cycle starts again at the first as a fresh attachment.
 pub(crate) const STEPS: [&str; 5] = ["text", "cell", "full", "resize", "image"];
 
+pub(crate) fn header_workspace(
+    renderer: &mut crate::Renderer,
+    step: usize,
+) -> crate::WorkspaceScene {
+    use crate::{HeaderText, WorkspaceScene};
+    use eon_workspace_protocol::v51::{
+        ALT, Popup, PopupEntry, PopupGeometry, PopupKey, SHIFT, Shortcut, Sidebar, Snapshot, Tab,
+        WorkspaceInfo,
+    };
+
+    let label = match step {
+        0 | 1 => "1  Ågjpqy · measured popup".into(),
+        2 => "1  ".to_owned() + &"Long affinity ﬁte A\u{301} family 👨‍👩‍👧‍👦 🏳️‍🌈 ".repeat(16) + "end",
+        _ => "1  Ågjpqy 😀 🎉 👩‍💻 👨‍👩‍👧‍👦 🏳️‍🌈 end".into(),
+    };
+    let build = "g1-00000000000000000000000000000001";
+    let snapshot = Snapshot {
+        focus: None,
+        released_shortcuts: Default::default(),
+        input_locked: false,
+        input_lock: Shortcut {
+            modifiers: ALT | SHIFT,
+            key: "KeyI".into(),
+        },
+        generation: build.into(),
+        created_build: build.into(),
+        active_build: build.into(),
+        workspace: "s1".into(),
+        active_workspace: "s1".into(),
+        active_tab: "t1".into(),
+        workspaces: vec![WorkspaceInfo {
+            id: "s1".into(),
+            persistent_id: Some("s1".into()),
+            registration_error: None,
+            name: None,
+            tab_count: 1,
+            attention: None,
+            recency: 0,
+        }],
+        tabs: vec![Tab {
+            id: "t1".into(),
+            directory: b"/tmp".to_vec(),
+            pending: false,
+            selected_pane: None,
+            selected_popup: Some("u1".into()),
+            columns: vec![],
+            attention_rollup: None,
+            popups: vec![Popup {
+                id: "u1".into(),
+                entry: "agent".into(),
+                session: "popup".into(),
+                endpoint: b"/tmp/popup.sock".to_vec(),
+                attention: None,
+            }],
+        }],
+        geometry: PopupGeometry {
+            side_margin: 8.0,
+            vertical_margin: 8.0,
+        },
+        entries: vec![PopupEntry {
+            id: "agent".into(),
+            label,
+            shortcut: PopupKey::Unbound,
+        }],
+        codex_quota: None,
+        claude_quota: None,
+        google_quota: None,
+        google_quota_failure: None,
+        codex_quota_failure: None,
+        claude_quota_failure: None,
+        running: None,
+        busy: None,
+        sidebar: Sidebar::Closed,
+        attention_queue: vec![],
+    };
+    WorkspaceScene::from_snapshot_with_zoom(
+        &snapshot,
+        Default::default(),
+        renderer.size(),
+        renderer.metrics(),
+        0.0,
+        0.0,
+        |kind, label| match kind {
+            HeaderText::Tab(_) => renderer.fit_tab_text(label),
+            HeaderText::Reading => (label.into(), renderer.reading_width()),
+            HeaderText::Fact => renderer.measure_header_text(label),
+            HeaderText::Fit(width) => renderer.fit_header_text(label, width),
+            HeaderText::After(prefix, width) => {
+                renderer.fit_header_text_after(label, prefix, width)
+            }
+        },
+        None,
+        false,
+        Default::default(),
+    )
+}
+
 const IMAGE_RESOURCE: u64 = 1;
 const IMAGE_SIDE: u32 = 64;
 const BACKGROUND: Rgb = Rgb {

@@ -10,6 +10,13 @@ use super::{
 impl Renderer {
     /// Writes the backdrop for `scene`. The first call makes its buffer.
     pub(super) fn prepare_hosted_backdrop(&mut self, scene: &Scene) {
+        if self
+            .hosted_backdrop
+            .as_ref()
+            .is_none_or(|(_, count)| *count == 0)
+        {
+            self.content_key = None;
+        }
         let mut backdrop = RectangleBatch::new(self.config.width, self.config.height);
         backdrop.push(
             0.0,
@@ -32,6 +39,15 @@ impl Renderer {
         });
         *count = vertex_count(&backdrop.bytes);
         self.queue.write_buffer(buffer, 0, &backdrop.bytes);
+    }
+
+    pub(super) fn clear_standalone_backdrop(&mut self) {
+        if let Some((_, count)) = &mut self.hosted_backdrop
+            && *count != 0
+        {
+            *count = 0;
+            self.content_key = None;
+        }
     }
 
     /// Draws the prepared backdrop under the terminal.

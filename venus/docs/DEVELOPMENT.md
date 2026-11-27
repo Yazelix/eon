@@ -172,6 +172,28 @@ VK_ICD_FILENAMES=<mesa>/share/vulkan/icd.d/lvp_icd.x86_64.json \
   --lib rune_hosted_grid_matches_the_venus_parent -- --ignored
 ```
 
+### Measured popup header pilot
+
+`venus-rune-candidate --fixture header-pilot --host rune|venus` opens the
+private popup comparison at 1280 × 800 logical pixels. Set
+`EON_VENUS_TEST_SANS_FONT` to the packaged DejaVu Sans regular TTF. Both
+hosts shape the popup geometry with the same Venus font setup. Rune draws the
+fitted title and upper outline through its public text and compositor APIs.
+Use `EON_VENUS_TEST_HEADER_LOOK=notch|connected` to select the translucent
+Notch or opaque Connected fixture.
+
+Each stdin line advances the shared fixture. A completed presentation prints
+`drawn CYCLE STEP NAME WIDTH HEIGHT SCALE FOLLOW_UPS`. The dimensions are
+device pixels and the follow-up count is cumulative. A resize can produce a
+receipt for the current step at the newly painted geometry.
+
+For the Linux comparison, use a closure-only `FONTCONFIG_FILE` containing
+the package's font directories and the preview wrapper's library paths.
+Darwin uses the packaged font directories and native color emoji. Run the
+mounted layout test with `eon-test --run-ignored only` and the ignored
+`rune_header_pilot_outline_and_grid_match_venus` test on the headless Vulkan
+or Metal adapter used for the grid proof.
+
 ### Generated active-terminal parity
 
 The feature-on `eon-test` suite runs `rune_differential_noop` to check

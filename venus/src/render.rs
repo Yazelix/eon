@@ -3,6 +3,8 @@ use crate::contour::{
     fit_header_text, physical_outline_width, rounded_outline_rects, rounded_radius, span_rects,
     title_tab_bands, title_tab_outline_rects,
 };
+#[cfg(feature = "candidate-rune")]
+use crate::rune_candidate::header_pilot::HeaderPaint;
 use crate::{
     Color as SceneColor, DialogScene, DrawRow, DrawStyle, GlyphRun, ImageKey, ImageResource, Scene,
     ScenePlacement, ScenePreview, SceneRect, WorkspaceFocus, WorkspaceScene, scene::tokens,
@@ -468,6 +470,18 @@ struct PlacedText {
     bound_left: i32,
     bound_top: i32,
     color: Color,
+}
+
+#[cfg(feature = "candidate-rune")]
+impl PlacedText {
+    fn bounds(&self) -> SceneRect {
+        SceneRect {
+            left: self.bound_left as f32,
+            top: self.bound_top as f32,
+            width: (self.right - self.bound_left) as f32,
+            height: (self.bottom - self.bound_top) as f32,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1507,6 +1521,10 @@ pub struct Renderer {
     hint_popup_hit: Option<chrome::HintPopupHit>,
     content_key: Option<ContentKey>,
     pane_titles: Option<PaneTitleCache>,
+    #[cfg(feature = "candidate-rune")]
+    popup_pilot: Option<chrome::PopupPilot>,
+    #[cfg(feature = "candidate-rune")]
+    pub(crate) header_paint: HeaderPaint,
     notice_lines: usize,
     terminal: TerminalLayer,
     header: HeaderInteraction,
@@ -1703,6 +1721,26 @@ impl Renderer {
         scale_factor: f64,
         fonts: FontSetup,
     ) -> Result<Self, RenderError> {
+        Self::hosted_with_look(
+            device,
+            queue,
+            format,
+            size,
+            scale_factor,
+            fonts,
+            HOSTED_LOOK,
+        )
+    }
+
+    pub(crate) fn hosted_with_look(
+        device: wgpu::Device,
+        queue: wgpu::Queue,
+        format: wgpu::TextureFormat,
+        size: (u32, u32),
+        scale_factor: f64,
+        fonts: FontSetup,
+        look: HostedLook,
+    ) -> Result<Self, RenderError> {
         let config = SurfaceConfiguration {
             usage: wgpu::TextureUsages::RENDER_ATTACHMENT,
             format,
@@ -1714,7 +1752,6 @@ impl Renderer {
             alpha_mode: CompositeAlphaMode::Opaque,
             view_formats: Vec::new(),
         };
-        let look = HOSTED_LOOK;
         Self::assemble(
             None,
             device,
@@ -1760,6 +1797,37 @@ impl Renderer {
             status,
             blink_visible,
             preedit,
+            generation,
+        )
+        .map(|_| ())
+    }
+
+    #[cfg(feature = "candidate-rune")]
+    pub(crate) fn enable_header_pilot(&mut self, move_draws: bool) {
+        self.popup_pilot = Some(chrome::PopupPilot::new(move_draws));
+        self.content_key = None;
+    }
+
+    #[cfg(feature = "candidate-rune")]
+    pub(crate) fn prepare_hosted_workspace(
+        &mut self,
+        scene: &Scene,
+        workspace: &WorkspaceScene,
+        generation: u64,
+    ) -> Result<(), RenderError> {
+        self.clear_standalone_backdrop();
+        let paint = self.workspace_for_paint(Some(scene), Some(workspace), &[]);
+        self.prepare_frame(
+            Some(scene),
+            None,
+            0.0,
+            paint.as_deref().or(Some(workspace)),
+            &[],
+            None,
+            WorkspaceFocus::Terminal,
+            "",
+            true,
+            "",
             generation,
         )
         .map(|_| ())
@@ -1924,6 +1992,10 @@ impl Renderer {
             hint_popup_hit: None,
             content_key: None,
             pane_titles: None,
+            #[cfg(feature = "candidate-rune")]
+            popup_pilot: None,
+            #[cfg(feature = "candidate-rune")]
+            header_paint: HeaderPaint::default(),
             notice_lines: 1,
             terminal: TerminalLayer {
                 hyperlink: None,
@@ -1999,6 +2071,20 @@ impl Renderer {
             dialog,
             blink_visible,
         );
+        #[cfg(feature = "candidate-rune")]
+        if self.header_paint.overlap
+            || (!self.header_paint.outline.is_empty()
+                && !cursors.bytes.is_empty()
+                && workspace.is_none_or(|workspace| {
+                    std::iter::once(workspace.terminal)
+                        .chain(workspace.other_columns.iter().map(|column| column.terminal))
+                        .any(|terminal| self.header_paint.overlaps(terminal, false))
+                }))
+        {
+            return Err(RenderError(
+                "retained Venus paint overlaps the migrated popup title or outline".into(),
+            ));
+        }
         self.upload_dynamic_vertices(&cursors.bytes);
         if content_changed {
             #[cfg(test)]
@@ -2242,9 +2328,7 @@ impl Renderer {
     ) -> Result<PresentOutcome, RenderError> {
         ensure_device_available(&self.device_lost)?;
         let started = crate::transport::frame_time();
-        let paint = workspace
-            .filter(|workspace| self.pane_frames || workspace.popup_label().is_some())
-            .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics));
+        let paint = self.workspace_for_paint(scene, workspace, columns);
         let workspace = paint.as_deref().or(workspace);
         let (content_changed, rebuild_ns, prepare_ns) = self.prepare_frame(
             scene,
@@ -2397,6 +2481,17 @@ impl Renderer {
                 full_rebuild: content_changed,
             }
         })))
+    }
+
+    fn workspace_for_paint<'a>(
+        &self,
+        scene: Option<&Scene>,
+        workspace: Option<&'a WorkspaceScene>,
+        columns: &[Option<&Scene>],
+    ) -> Option<Cow<'a, WorkspaceScene>> {
+        workspace
+            .filter(|workspace| self.pane_frames || workspace.popup_label().is_some())
+            .map(|workspace| workspace_paint(workspace, scene, columns, self.metrics))
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2738,6 +2833,36 @@ impl Renderer {
         }
         if let Some(dialog) = dialog {
             self.build_dialog(dialog, &mut rectangles);
+        }
+        #[cfg(feature = "candidate-rune")]
+        {
+            let mut paint = std::mem::take(&mut rectangles.header_paint);
+            paint.overlap |= (!paint.outline.is_empty() || paint.title.is_some())
+                && self.text.iter().enumerate().any(|(index, text)| {
+                    let later = index >= paint.later_text;
+                    let clip = text.bounds();
+                    if !paint.overlaps(clip, later) {
+                        return false;
+                    }
+                    if text.custom_glyph.is_some() {
+                        return true;
+                    }
+                    crate::contour::buffer_ink(
+                        &mut self.fonts.font_system,
+                        &mut self.swash_cache,
+                        &text.buffer,
+                    )
+                    .and_then(|(x0, y0, x1, y1)| {
+                        clip.intersection(SceneRect {
+                            left: text.left.floor() + x0 as f32 - 1.0,
+                            top: text.top.floor() + y0 as f32 - 1.0,
+                            width: (x1 - x0) as f32 + 2.0,
+                            height: (y1 - y0) as f32 + 2.0,
+                        })
+                    })
+                    .is_some_and(|ink| paint.overlaps(ink, later))
+                });
+            self.header_paint = paint;
         }
         self.row_text.finish();
         self.cursor_vertex_boundary = cursor_vertex_boundary;
@@ -3546,6 +3671,10 @@ struct RectangleBatch {
     /// Image draws in stream order and their own vertices.
     images: Vec<ImageDraw>,
     image_bytes: Vec<u8>,
+    #[cfg(feature = "candidate-rune")]
+    pilot_cut: Option<f32>,
+    #[cfg(feature = "candidate-rune")]
+    header_paint: HeaderPaint,
 }
 
 impl RectangleBatch {
@@ -3775,6 +3904,10 @@ impl RectangleBatch {
             card_clip: None,
             images: Vec::new(),
             image_bytes: Vec::new(),
+            #[cfg(feature = "candidate-rune")]
+            pilot_cut: None,
+            #[cfg(feature = "candidate-rune")]
+            header_paint: HeaderPaint::default(),
         }
     }
 
@@ -3790,6 +3923,23 @@ impl RectangleBatch {
                 return;
             };
             rect = clipped;
+        }
+        #[cfg(feature = "candidate-rune")]
+        if let Some(cut) = self.pilot_cut
+            && rect.top < cut
+            && valid_rect(rect)
+        {
+            let height = rect.bottom().min(cut) - rect.top;
+            if let Some(moved) = (SceneRect { height, ..rect }).intersection(SceneRect {
+                left: 0.0,
+                top: 0.0,
+                width: self.width as f32,
+                height: self.height as f32,
+            }) {
+                self.header_paint.outline.push((moved, color, alpha));
+            }
+            rect.height = (rect.bottom() - cut).max(0.0);
+            rect.top = cut;
         }
         if rect.width <= 0.0 || rect.height <= 0.0 {
             return;
@@ -3894,6 +4044,12 @@ impl RectangleBatch {
     }
 
     fn write_points(&mut self, points: &[CursorPoint], color: SceneColor, alpha: f32) {
+        #[cfg(feature = "candidate-rune")]
+        if !self.header_paint.outline.is_empty() {
+            self.header_paint.overlap |= self
+                .header_paint
+                .overlaps_points(points.iter().map(|p| [p.x, p.y]));
+        }
         let to_x = |value: f32| value / self.width as f32 * 2.0 - 1.0;
         let to_y = |value: f32| 1.0 - value / self.height as f32 * 2.0;
         let rgba = [

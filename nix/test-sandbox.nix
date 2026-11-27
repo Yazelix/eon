@@ -246,7 +246,7 @@ pkgs.writeShellApplication {
       esac
     done
 
-    environment=(--clearenv --setenv PATH "$path")
+    environment=(--clearenv --setenv PATH "$path" --setenv LD_LIBRARY_PATH "${pkgs.lib.getLib pkgs.fontconfig}/lib")
     while read -r -d "" entry; do
       name=''${entry%%=*}
       case $name in
