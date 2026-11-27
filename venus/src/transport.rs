@@ -2143,15 +2143,12 @@ mod tests {
     #[test]
     fn workspace_worker_refreshes_without_a_queued_action() {
         let socket = TestSocket::new();
-        let listener = UnixListener::bind(&socket.path).unwrap();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
         let first = workspace_snapshot();
         let mut second = first.clone();
         second.active_tab = "t2".into();
         second.tabs.push(second_workspace_tab());
         second.workspaces[0].tab_count = second.tabs.len();
-        let snapshots = vec![first, second];
-        let expected = snapshots.clone();
-        let (server, hold) = serve_inspects(listener, snapshots);
         let (wakes, receiver) = mpsc::channel();
         let transport = WorkspaceTransport::start_with_refresh(
             socket.path.clone(),
@@ -2161,18 +2158,13 @@ mod tests {
             },
         );
 
-        for snapshot in expected {
+        for snapshot in [first, second] {
+            eon.answer_refresh(&snapshot);
             receiver.recv_timeout(Duration::from_secs(5)).unwrap();
-            assert_eq!(
-                transport.drain_events(),
-                [WorkspaceEvent::Response(WorkspaceResponse::Snapshot(
-                    snapshot
-                ))]
-            );
+            assert_eq!(transport.drain_events(), [snapshot_event(&snapshot)]);
         }
         drop(transport);
-        drop(hold);
-        server.join().unwrap();
+        drop(eon);
     }
 
     #[test]
@@ -2459,32 +2451,6 @@ mod tests {
         }
     }
 
-    /// Answers one Inspect with each of `snapshots` in turn, then keeps the socket open until
-    /// the returned sender drops, so no later refresh of the test's fails.
-    fn serve_inspects(
-        listener: UnixListener,
-        snapshots: Vec<Snapshot>,
-    ) -> (thread::JoinHandle<()>, mpsc::Sender<()>) {
-        let (hold, held) = mpsc::channel::<()>();
-        let server = thread::spawn(move || {
-            for snapshot in snapshots {
-                let (mut stream, action) = accept_workspace_action(&listener);
-                assert_eq!(
-                    action,
-                    WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect)
-                );
-                stream
-                    .write_all(
-                        &workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot))
-                            .unwrap(),
-                    )
-                    .unwrap();
-            }
-            let _ = held.recv();
-        });
-        (server, hold)
-    }
-
     fn refused(name: &str) -> io::Error {
         io::Error::other(format!("{name} refused by the test"))
     }
@@ -2507,15 +2473,13 @@ mod tests {
     #[test]
     fn a_subscription_that_cannot_start_is_reported_and_refreshes_continue() {
         let socket = TestSocket::new();
-        let listener = UnixListener::bind(&socket.path).unwrap();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
         let first = workspace_snapshot();
         let mut second = first.clone();
         second.active_tab = "t2".into();
         second.tabs.push(second_workspace_tab());
         second.workspaces[0].tab_count = second.tabs.len();
-        let last = WorkspaceEvent::Response(WorkspaceResponse::Snapshot(second.clone()));
-        // Each snapshot answers its own Inspect, so the second proves a later refresh.
-        let (server, hold) = serve_inspects(listener, vec![first, second]);
+        let last = snapshot_event(&second);
         let (transport, receiver) = start_checked(
             &socket.path,
             Waits::refreshing(Duration::from_millis(10)),
@@ -2528,6 +2492,9 @@ mod tests {
             },
         );
 
+        // Each snapshot answers its own Inspect, so the second proves a later refresh.
+        eon.answer_refresh(&first);
+        eon.answer_refresh(&second);
         // The report and the snapshots come from different threads, in either order.
         let is_degraded = |event: &WorkspaceEvent| matches!(event, WorkspaceEvent::Degraded { .. });
         let events = take_until(&transport, &receiver, |events| {
@@ -2551,8 +2518,7 @@ mod tests {
         );
         assert!(!events.iter().any(is_unavailable), "{events:?}");
         drop(transport);
-        drop(hold);
-        server.join().unwrap();
+        drop(eon);
     }
 
     #[test]
@@ -3204,13 +3170,14 @@ mod tests {
             drop(subscription);
             // Refreshes go on while Venus waits a second before it subscribes again.
             let closed = Instant::now();
+            let deadline = closed + Duration::from_secs(5);
             let mut refreshes = 0;
             while eon.subscriptions.is_empty() {
                 if let Some((mut stream, _)) = eon.exchanges.pop_front() {
                     write_response(&mut stream, &snapshot);
                     refreshes += 1;
-                } else if !eon.accept() {
-                    assert!(closed.elapsed() < Duration::from_secs(5));
+                } else if !eon.accept(deadline) {
+                    assert!(Instant::now() < deadline);
                     thread::sleep(Duration::from_millis(1));
                 }
             }
@@ -3247,7 +3214,7 @@ mod tests {
             if let Some((mut stream, _)) = eon.exchanges.pop_front() {
                 write_response(&mut stream, &workspace_snapshot());
                 last = Instant::now();
-            } else if !eon.accept() {
+            } else if !eon.accept(dropped + Duration::from_secs(5)) {
                 thread::sleep(Duration::from_millis(1));
             }
         }
@@ -3305,20 +3272,25 @@ mod tests {
             }
         }
 
-        /// Accepts one waiting client; false when none waits.
-        fn accept(&mut self) -> bool {
+        /// Accepts one waiting client before `deadline`; false when none waits.
+        fn accept(&mut self, deadline: Instant) -> bool {
+            self.try_accept(deadline)
+                .expect("accept workspace client before deadline")
+        }
+
+        fn try_accept(&mut self, deadline: Instant) -> io::Result<bool> {
             match self.listener.accept() {
                 Ok((stream, _)) => {
-                    let (stream, action) = read_workspace_action(stream);
+                    let (stream, action) = read_workspace_action(stream, Some(deadline))?;
                     if matches!(action, WorkspaceAction::Subscribe { .. }) {
                         self.subscriptions.push_back(stream);
                     } else {
                         self.exchanges.push_back((stream, action));
                     }
-                    true
+                    Ok(true)
                 }
-                Err(error) if error.kind() == ErrorKind::WouldBlock => false,
-                Err(error) => panic!("{error}"),
+                Err(error) if error.kind() == ErrorKind::WouldBlock => Ok(false),
+                Err(error) => Err(error),
             }
         }
 
@@ -3328,7 +3300,7 @@ mod tests {
                 if let Some(item) = next(self) {
                     return item;
                 }
-                if !self.accept() {
+                if !self.accept(deadline) {
                     assert!(Instant::now() < deadline, "no client within 5 s");
                     thread::sleep(Duration::from_millis(1));
                 }
@@ -3418,28 +3390,92 @@ mod tests {
         session::decode_client_message(&bytes).unwrap()
     }
 
+    #[test]
+    fn fake_eon_times_out_an_accepted_incomplete_request() {
+        let socket = TestSocket::new();
+        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+        let request = workspace::encode_request(&WorkspaceRequest {
+            id: "req-1".into(),
+            caller: None,
+            action: WorkspaceAction::Workspace(workspace::WorkspaceAction::Inspect),
+        })
+        .unwrap();
+        for prefix in [0, 2, workspace::HEADER_BYTES] {
+            let mut stalled = UnixStream::connect(&socket.path).unwrap();
+            stalled.write_all(&request[..prefix]).unwrap();
+            let error = eon
+                .try_accept(Instant::now() + Duration::from_millis(50))
+                .expect_err("incomplete peer must fail within the fake server deadline");
+            assert!(
+                matches!(error.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut),
+                "{error:?}"
+            );
+        }
+    }
+
     /// The next exchange; this fake refuses each subscription by closing it.
     fn accept_workspace_action(listener: &UnixListener) -> (UnixStream, WorkspaceAction) {
         loop {
             let (stream, _) = listener.accept().unwrap();
-            let (stream, action) = read_workspace_action(stream);
+            let (stream, action) = read_workspace_action(stream, None).unwrap();
             if !matches!(action, WorkspaceAction::Subscribe { .. }) {
                 return (stream, action);
             }
         }
     }
 
-    fn read_workspace_action(mut stream: UnixStream) -> (UnixStream, WorkspaceAction) {
-        stream.set_nonblocking(false).unwrap();
+    fn read_workspace_action(
+        mut stream: UnixStream,
+        deadline: Option<Instant>,
+    ) -> io::Result<(UnixStream, WorkspaceAction)> {
+        stream.set_nonblocking(false)?;
         let mut header = [0; workspace::HEADER_BYTES];
-        stream.read_exact(&mut header).unwrap();
+        read_exact_before(&mut stream, &mut header, deadline)?;
         let length = workspace::declared_message_len(&header).unwrap();
         let mut request = Vec::from(header);
         request.resize(length, 0);
-        stream
-            .read_exact(&mut request[workspace::HEADER_BYTES..])
-            .unwrap();
-        (stream, workspace::decode_request(&request).unwrap().action)
+        read_exact_before(
+            &mut stream,
+            &mut request[workspace::HEADER_BYTES..],
+            deadline,
+        )?;
+        if deadline.is_some() {
+            bound_read(&stream, None)?;
+        }
+        Ok((stream, workspace::decode_request(&request).unwrap().action))
+    }
+
+    fn bound_read(stream: &UnixStream, timeout: Option<Duration>) -> io::Result<()> {
+        match stream.set_read_timeout(timeout) {
+            Ok(()) => Ok(()),
+            // Darwin rejects socket options once the peer closes; a closed peer will not block.
+            Err(error) if error.kind() == ErrorKind::InvalidInput => Ok(()),
+            Err(error) => Err(error),
+        }
+    }
+
+    fn read_exact_before(
+        stream: &mut UnixStream,
+        mut buf: &mut [u8],
+        deadline: Option<Instant>,
+    ) -> io::Result<()> {
+        let Some(deadline) = deadline else {
+            return stream.read_exact(buf);
+        };
+        while !buf.is_empty() {
+            let remaining = deadline
+                .checked_duration_since(Instant::now())
+                .filter(|remaining| !remaining.is_zero())
+                .ok_or_else(|| io::Error::from(ErrorKind::TimedOut))?;
+            bound_read(stream, Some(remaining.max(Duration::from_millis(1))))?;
+            match stream.read(buf) {
+                Ok(0) => return Err(ErrorKind::UnexpectedEof.into()),
+                Ok(n) => buf = &mut buf[n..],
+                Err(error) if error.kind() == ErrorKind::Interrupted => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(())
     }
 
     fn workspace_snapshot() -> Snapshot {
