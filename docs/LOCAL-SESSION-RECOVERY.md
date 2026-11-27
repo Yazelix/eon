@@ -1,29 +1,30 @@
 # Slice 2b: recover original local sessions and layout
 
-**Draft for review, revised 2026-11-14.** This proposes amendments, not changes
+**Draft for review, revised 2026-11-27.** This proposes amendments, not changes
 to accepted [CONTRACTS.md](CONTRACTS.md). Yu approved visible safe degraded
 recovery, original structure and safe selected state, and local same-boot
 recovery without cross-version takeover. This revision incorporates Lucca's
 [review](https://github.com/Yazelix/eon/pull/7#issuecomment-6768242579) and
 [shared-checkpoint request](https://github.com/Yazelix/eon/pull/7#issuecomment-6838320943).
 This revision also incorporates the [inline review](https://github.com/Yazelix/eon/pull/7#pullrequestreview-5896772508).
-Exact text still requires Lucca's approval. Nothing here implements recovery
-or authorizes starting its implementation children. All runtime acceptance
-rows are **NOT RUN**.
+The startup, Stop and archive clauses below incorporate
+[Lucca's decisions on the private store](https://github.com/Yazelix/eon/pull/13#issuecomment-7191553933).
+How the CLI proves the outcome of its own Stop during competing cleanup
+remains open. Production wiring waits for the reviewed amendment on `edge`.
+The full slice 2b acceptance rows below are **NOT RUN**.
 
 ## Verified baseline and ownership
 
-Inspected `edge` at `c1b89205c7e4cfff77cf1cf6dd165222e7c83c7d`, EONW **v44**.
+The November 14 design used EONW v44. This revision was checked against
+`edge` at `2a2224a3f0d0996474aea0ffb24b42a182d923dc` (EONW v51).
 The owning epic is `eon-remote-workspaces-52i4.6`; contract approval is `.11`
 under `eon-remote-workspaces-52i4`, followed by `.6.1` checkpoint, `.6.2`
 restore/reconcile and `.6.3` degraded/CLI/proof. Their existing splits and
 assignment rules remain authoritative. Slice 2a is landed; the `eon-hyil8`
 dependency has been removed. This slice needs neither a global session manager
-nor migration between windows. Checkpoint implementation and its runtime acceptance
-are additionally gated on the private identity writer/retention work
-`eon-t3fyd.14`, still open at this baseline. S2a identity/codec fields alone
-do not satisfy that prerequisite. The owning implementation handoff must
-carry this gate; this draft does not edit the upstream dependency graph.
+nor migration between windows. The private identity writer and retention
+prerequisite (`eon-t3fyd.14`) has landed. Draft PR #13 exercises the private
+store and worker. The production supervisor still recovers a flat workspace.
 
 Runtime owns **one checkpoint format and writer** for recoverable window
 state. C38 owns registrations and names, not membership/layout. Orbit alone
@@ -178,13 +179,13 @@ is replied. Runtime serializes revisions on bounded off-control-loop I/O;
 stale completion cannot overwrite newer state or republish a closed target.
 Terminal I/O, Inspect, navigation and canonical Stop remain serviceable.
 
-Two independent gates precede every new Start: the target session's exact C38
-registration must be confirmed, and its new checkpoint intent must be durable.
+Before Start, confirm the target session's exact C38 registration where
+applicable and wait for the checkpoint commit described below.
 A writable checkpoint does not satisfy registration. Pending/failed recovered
 registration leaves validated existing terminals usable but refuses new Starts
 with the existing registry outcome/diagnostic; it neither spawns nor substitutes
 a new identity. New-session creation keeps C38's validation-before-registration
-order. After confirmed registration, a Start reserves its exact slot, terminal ID and opaque run ID and
+order. A Start for a durable slot reserves its exact slot, terminal ID and opaque run ID and
 commits that intent. Only then may Runtime create the empty management record
 and spawn. Orbit publishes Ready, not Runtime. Confirming the same run updates
 the checkpoint; recovery never repeats Start. Failure before durable intent
@@ -192,6 +193,13 @@ has no spawn effect. Failure after a process/registry effect reports the
 actual effect with `durability: "failed" | "uncertain"`, exit 1 and
 `code: "checkpoint-failed"`; it never claims rollback or invites blind retry.
 A lost reply remains unknown outcome under C10, exit 4.
+
+For the pending Files picker and a `keep_alive = false` popup, reserve the
+terminal ID and commit a core whose `terminal_id_high_water` covers it.
+Omit the temporary slot from the core. The registration gate still applies.
+Even if the renamed checkpoint is already readable, Runtime must wait for
+successful parent-directory sync before creating an Orbit management record
+or spawning. A failed or uncertain commit leaves both operations undone.
 
 Structural commits cover tab/pane/popup create and close, pane rename/pin/tag,
 tab/pane reorder and cross-column pane moves (including resulting column
@@ -233,7 +241,21 @@ Recovery promises the last committed selection, not the last visible click.
    Recovered session after the original sessions**. Registration failure or
    pending registration leaves its persistent ID null and visible registry
    diagnostic. Old registrations remain untouched; the new session does not
-   impersonate them.
+   impersonate them. Classify the acquired set before scheduling registration.
+   An exact restore looks up the original IDs and creates zero registrations.
+   Extras share one new registration. Degraded recovery likewise needs only one.
+   If two saved runs match and a third healthy run is present, all three must
+   remain usable. Ship the all-live and extra-run slices together if the
+   intermediate implementation cannot present all three safely.
+
+   In checkpoint recovery, this includes a validated picker or transient
+   popup that outlived the supervisor. A Files layout marker (`.sock.pending`)
+   identifies its former UI role. Expire the request and keep the acquired
+   process, including when the picker is the sole survivor. Its PID and run ID
+   appear once in Recovered. Do not stop it or start a replacement pane. An
+   exited temporary popup has no replay slot or stopped placeholder. This is
+   the C18 amendment for 2b. The existing picker cleanup and directory fallback
+   still apply on the independently established legacy flat path below.
 5. Restore inert pane-free tabs as `content_state: "inert"`,
    `inert_reason: "saved-without-live-target"`, not as pending pickers. Normal
    tabs use `content_state: "normal"`, `inert_reason: null`. A saved picker is
@@ -289,6 +311,18 @@ independently of build (in-place update S2b, `eon-t3fyd.3`), crash recovery admi
 the **recorded active build**, even when `created_build` differs; generation is
 a lifetime, not a build digest. This grants no cross-build takeover.
 
+When degraded recovery replaces a valid, owned checkpoint with fresh flat
+topology, create a same-directory hard link named
+`recovery.checkpoint.preserved.<nonce>` to its original inode, without
+overwriting an existing name. Sync the directory before publishing the fresh
+checkpoint by temp-file write, file sync, rename and directory sync.
+If preservation or its sync fails, leave the canonical
+file in place. Whenever recovery has a valid checkpoint, carry forward at
+least the greater of its saved high-water mark and the largest acquired
+terminal number. Initialize the live allocator from that same bound.
+If terminal 8 was reserved and only 7 survives, the next
+Start must allocate above 8. An acquired number above the saved bound also wins.
+
 An unknown version means valid `EONR` magic and a readable version other than 1;
 it or an unknown required section refuses with exit 1, `checkpoint-unavailable`,
 leaving the file untouched. Any other bad header is corrupt, including bad
@@ -307,8 +341,8 @@ current flat recovery behavior; mere file absence does not prove legacy.
 More than 256 live runs or any C15 acquisition violation still refuses the
 whole recovery, never truncates it.
 
-Preserve the unusable checkpoint by a no-overwrite rename to a unique sibling
-`recovery.checkpoint.preserved.<nonce>`, syncing the parent. Keep it, never
+Preserve a damaged or unreadable checkpoint by a no-overwrite rename to a
+unique sibling `recovery.checkpoint.preserved.<nonce>`, syncing the parent. Keep it, never
 delete it. Then commit a fresh checkpoint for the synthetic topology before
 allowing new durable structure/Start. A missing file needs no rename. If
 preservation or fresh commit fails, keep the diagnostic and write refusal;
@@ -325,6 +359,59 @@ failed/was uncertain (true only after durable removal). **No persistence-retry
 supervisor remains.** Only unfinished process cleanup keeps C15's current
 cleanup owner/lease and retry rules. A stale surviving checkpoint never starts
 those stopped processes again. No one else's registration is removed.
+
+### Stop completion and archive-only lifetimes (C15/C10)
+
+Under the lifecycle lock, finish stopping the processes, close the writer to
+new work and drain its completions. Unlink `recovery.checkpoint` (already
+absent is acceptable) and sync the generation directory. If either operation
+fails, keep `identity` through supervisor exit. The exit cleanup may remove
+dead sockets but must preserve this evidence. If the clear succeeded, the
+stopping supervisor checks all entries under the same lock. If only its own
+verified supervisor sockets, eligible metadata and validated archives remain,
+it revalidates the parent and inspected objects, unlinks `identity` and `eon`,
+and syncs the directory before replying on the still-open Stop connection.
+Other residue or an inspection error keeps the metadata. A completed process Stop
+returns the existing Reserved Stop bytes, `Stopped { generation, terminals }`,
+then the supervisor finishes socket teardown and removes the directory if empty.
+
+An independent cleaner must enumerate the entire directory under the lifecycle
+lock and establish that both supervisor sockets are absent or safely removed
+as dead. Apart from `identity` and `eon`, every entry must match the archive writer's exact preserved-name
+grammar and pass `lstat` as a user-owned mode-0600 regular file. Revalidate
+the parent and inspected objects before unlinking metadata. Retain the
+archive directory and files. A live host, the canonical checkpoint, a temp
+or pending marker, `snapshots/`, an unknown entry, or any inspection error
+blocks release. Build lookup must apply the same test to an identity-less
+directory before ignoring it as an archive. Test with the directory actually
+named for build B: an occupied B blocks A→B, a stopped B holding only valid
+archives permits it, and an identity-less B holding an archive and an unknown
+entry still blocks it.
+
+**Open decision for Lucca — observing one Stop across cleanup.** After
+`Stopped`, the CLI takes the released lifecycle lock and checks the exact
+generation. A present checkpoint or identity, other residue or an inspection
+error yields `checkpoint_cleared: false`. A missing directory, or both names
+absent with only validated archives remaining, can prove success only if
+another cleanup could not have removed this Stop's evidence first.
+
+Consider a generation with no archives. Unlink succeeds, directory sync
+fails, and the supervisor leaves `identity` and exits. Before the CLI takes
+the lock, an older `window attach` takes it and removes the dead generation's
+remaining metadata and empty directory. The CLI now sees the same `ENOENT`
+as after a durable clear. The current lifecycle lock orders the inspections
+but cannot distinguish those two histories. Holding `launch.lock` while
+waiting for the lifecycle lock would violate C10's lock order.
+
+We propose reserving the observation before sending Stop, so exit cleanup,
+attach/discovery cleanup, inventory sweeps and lifetime reuse cannot erase
+its evidence before the CLI reads it. A cooperating cleaner would defer
+deletion of that generation. An older cleaner has no such obligation.
+For supported mixed builds, should a CLI without positive evidence report
+`false` even for a possibly successful clear, or must it obtain affirmative
+confirmation of that individual Stop? This needs a decision before production
+wiring. R9 must distinguish the failed-sync race from an observed durable
+success, with one Stop request, the existing reply bytes and no retry owner.
 
 ## Proposed C10/C39 projection and outcomes
 
@@ -416,15 +503,15 @@ installed platform, commands, artifacts and observed identities/counters.
 | ID | Required observation |
 | --- | --- |
 | R1 | Three registered sessions, tabs/columns, pin, tag, popup and selection survive exact supervisor SIGKILL and separately exit without Stop; identical run/PID/start identities and advancing counters |
-| R2 | Crashes before intent commit, before record creation, after empty record creation, after Ready and after confirmation; absence evidence vs whole-set unsafe-record refusal; no duplicate Start |
+| R2 | Crashes before intent commit, before record creation, after empty record creation, after Ready and after confirmation; absence evidence vs whole-set unsafe-record refusal; no duplicate Start. For a temporary popup, pause after rename but before directory sync and observe zero management records and spawns. Successful sync permits one Start. |
 | R3 | Matching-build corrupt/unreadable/missing/wrong-owner/path checkpoint: all safely acquired runs usable; preserved original bytes/path, fresh registration and fresh writable checkpoint; failed rename/fsync stays write-refused |
 | R4 | Valid topology plus extras exceeds capacity: same degraded path; too many live runs refuses whole set; no truncation, loss or extra Stop |
-| R5 | Restored ended/start-unconfirmed placeholders, inert tabs and catalog-missing live popups; no picker/command replay; close placeholder sends no Stop |
+| R5 | Restored ended/start-unconfirmed placeholders, inert tabs and catalog-missing live popups; the sole surviving Files picker keeps its PID/run in Recovered with no replacement pane; no picker/command replay; close placeholder sends no Stop |
 | R6 | Sibling exit preserves stopped slots; final live exit ends window; no-live acquisition opens no recovered window and preserves diagnostic |
 | R7 | Inject failures at file write/fsync/rename/parent-sync and registry-then-checkpoint; report real effects/durability; stale worker/picker completion cannot republish after Stop |
 | R8 | Every enumerated structural action commits before success; selection coalescing bounded under continuous changes; control-loop I/O, Inspect and Stop stay serviceable |
-| R9 | Full/partial canonical Stop and failed checkpoint clearing: exact stopped targets, checkpoint_cleared, retained owner only for unfinished process cleanup |
-| R10 | Invalid/missing/mixed run kinds and fields, confirmation crash before/after commit, duplicate/cross-session refs, wrong generation, exhausted revision/IDs/size, replacement local-ID ranges and terminal intent high-water; no old ID retargeting |
+| R9 | Full/partial Stop, exact stopped targets, retained owner only for unfinished process cleanup. Pause an in-flight publication after rename: no unlink or reply until drain. Then fail directory sync after unlink and race attach cleanup before CLI inspection: false. Observed durable clear: true. Reserved Stop bytes remain identical. |
+| R10 | Invalid/missing/mixed run kinds and fields, confirmation crash before/after commit, duplicate/cross-session refs, wrong generation, exhausted revision/IDs/size, replacement local-ID ranges and terminal intent high-water. Exercise a real next Start with the saved high-water above and below the highest acquired number. Neither case reuses an ID. |
 | R11 | Registry pending/failure/retry preserves exact IDs and old registrations; extras follow originals; failed/pending registration with a successfully written fresh checkpoint still refuses Start while existing terminals remain usable; only exact registration confirmation opens Start; lost launch-directory evidence cannot certify C42 worktree non-use |
 | R12 | Inspect/list, initial/gap/live C39 projection and exit codes agree; null stopped endpoints, distinct diagnostics, fresh STREAM and no event/input replay |
 | R13 | Shared v1 envelope review with Update owners; unknown optional section survives a rewrite unchanged; unknown required section/version refuses without touching the file; checkpoint/reader/private-record active-build disagreement refuses without preserve-and-replace; creation A / active B once lifetimes allocate independently of build (in-place update S2b, `eon-t3fyd.3`) admits reader B and refuses reader A; independent Update transition/dedup proofs remain pending and cannot be claimed by 2b proof |
