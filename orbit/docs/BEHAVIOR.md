@@ -95,7 +95,10 @@ under a lock on its private directory, so one of two racing starts wins
 claim already in progress at PATH" while the lock is held, or "server already
 listening at PATH". The real-PTY stale-socket check replaces a stale pathname,
 gets each message from a start beside the live server, and finds that server
-keeps its pathname and exits with its child's code.
+keeps its pathname and exits with its child's code. The socket unit test
+`listener_keeps_a_live_socket_whose_accept_queue_is_full` refuses a start beside
+a listener with a full accept queue without stalling, keeps its pathname, and
+replaces it once that listener closes; Darwin workspace tests run it on macOS.
 
 ## Terminal identity
 

@@ -36,7 +36,8 @@ The default socket is `$XDG_RUNTIME_DIR/yazelix-orbit/orbit.sock`, falling back
 to `/tmp/yazelix-orbit-$UID/orbit.sock`. Its directory is private and user-owned;
 the socket mode is `0600`. Orbit:
 
-- removes a connection-refused stale socket but never replaces a non-socket path;
+- removes a stale socket nobody listens on, keeps a live listener even while its
+  accept queue is full, and never replaces a non-socket path;
 - serializes concurrent stale-socket claims and admits one input client and one
   metadata observer, rejecting excess roles with `Busy`;
 - retains the last PTY size while detached, reaps an exited child, and removes

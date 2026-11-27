@@ -8,6 +8,10 @@ installation, and proven contract changes.
 - Claude quota keeps updating when CodexBar reports a Sonnet or Opus weekly
   lane, and a model-only weekly lane is no longer shown as the all-models
   Claude week (`eon-kgmlz`, EON-C27).
+- On macOS, Orbit keeps a live terminal's socket when its connection queue is
+  full, so a second start beside it fails with "server already listening"
+  instead of removing the socket. On Linux that start no longer waits for the
+  live Orbit to accept (`eon-260mh.18`).
 - Venus pane labels adapt to light and dark terminal backgrounds set with
   OSC 11 (`eon-4vtmu`).
 - The Agents sidebar keeps the tab's terminal background when its leftmost

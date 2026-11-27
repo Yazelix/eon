@@ -21,10 +21,16 @@ package(/^yazelix-orbit$/) & (
     | test(=socket::tests::nonreading_observer_converges_on_the_latest_metadata)
     | test(=socket::tests::observer_pressure_is_metadata_its_queue_cannot_take)
     | test(=socket::tests::listener_enforces_private_exact_socket_cleanup)
+    | test(=socket::tests::listener_keeps_a_live_socket_whose_accept_queue_is_full)
     | test(=socket::tests::worker_bound_admits_a_maximum_scroll_outcome_behind_a_started_maximum_frame)
 )
 '''
 test-group = "orbit-fork-and-socket"
+
+# A blocking stale-socket probe would wait in connect(2) on Linux; fail it.
+[[profile.default.overrides]]
+filter = 'package(/^yazelix-orbit$/) & test(=socket::tests::listener_keeps_a_live_socket_whose_accept_queue_is_full)'
+slow-timeout = { period = "15s", terminate-after = 2 }
 
 [[profile.default.overrides]]
 filter = 'package(/^eon$/) & test(/^update::tests::(confirmation_|a_backend_that_hangs_is_stopped$)/)'

@@ -22,7 +22,7 @@ use std::{
         fd::{AsRawFd, RawFd},
         unix::{
             fs::{FileTypeExt, MetadataExt, PermissionsExt},
-            net::{UnixListener, UnixStream},
+            net::{UnixDatagram, UnixListener, UnixStream},
         },
     },
     path::{Path, PathBuf},
@@ -119,8 +119,9 @@ impl Listener {
     }
 
     /// Removes a socket pathname a server left behind: a private socket that
-    /// nobody listens on. A live server's pathname, or anything that is not
-    /// an exact user-owned 0600 socket, is refused and left alone.
+    /// nobody listens on. A live server's pathname, even with a full accept
+    /// queue, or anything that is not an exact user-owned 0600 socket, is
+    /// refused and left alone.
     fn remove_stale(path: &Path, uid: u32) -> io::Result<()> {
         let metadata = match fs::symlink_metadata(path) {
             Ok(metadata) => metadata,
@@ -133,8 +134,11 @@ impl Listener {
         {
             return Err(errno(libc::EEXIST));
         }
-        match UnixStream::connect(path) {
-            Ok(_) => Err(io::Error::new(
+        // A datagram connect checks the socket type before the accept queue:
+        // a live stream listener answers EPROTOTYPE even while its queue is
+        // full, where a stream connect stalls on Linux and is refused on macOS.
+        match UnixDatagram::unbound().and_then(|probe| probe.connect(path)) {
+            Err(error) if error.raw_os_error() == Some(libc::EPROTOTYPE) => Err(io::Error::new(
                 io::ErrorKind::AddrInUse,
                 format!("server already listening at {}", path.display()),
             )),
@@ -146,6 +150,8 @@ impl Listener {
             {
                 fs::remove_file(path)
             }
+            // A live datagram socket is refused and kept.
+            Ok(()) => Err(errno(libc::EPROTOTYPE)),
             Err(error) => Err(error),
         }
     }
@@ -2153,5 +2159,65 @@ mod tests {
 
         fs::set_permissions(&directory.0, fs::Permissions::from_mode(0o755)).unwrap();
         assert_eq!(code(Listener::open(&path)), Some(libc::EACCES));
+    }
+
+    /// A private listener at `path` and the clients that fill its accept queue.
+    fn busy_listener(path: &Path) -> (std::os::fd::OwnedFd, Vec<UnixStream>) {
+        use rustix::{io::Errno, net};
+        let address = net::SocketAddrUnix::new(path).unwrap();
+        let stream = || {
+            let socket =
+                net::socket(net::AddressFamily::UNIX, net::SocketType::STREAM, None).unwrap();
+            rustix::io::fcntl_setfd(&socket, rustix::io::FdFlags::CLOEXEC).unwrap();
+            socket
+        };
+        let listener = stream();
+        net::bind(&listener, &address).unwrap();
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600)).unwrap();
+        // Darwin treats a backlog of zero as somaxconn.
+        net::listen(&listener, 1).unwrap();
+        let mut queued = Vec::new();
+        for _ in 0..16 {
+            let client = UnixStream::from(stream());
+            client.set_nonblocking(true).unwrap();
+            match net::connect(&client, &address) {
+                Ok(()) => queued.push(client),
+                Err(Errno::AGAIN | Errno::CONNREFUSED) if !queued.is_empty() => {
+                    return (listener, queued);
+                }
+                Err(error) => panic!("cannot fill backlog after {}: {error}", queued.len()),
+            }
+        }
+        panic!("backlog never filled after {} connections", queued.len());
+    }
+
+    #[test]
+    fn listener_keeps_a_live_socket_whose_accept_queue_is_full() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let directory = TestDir::new();
+        let path = directory.0.join("orbit.sock");
+        let identity = |path: &Path| {
+            let metadata = fs::symlink_metadata(path).unwrap();
+            (metadata.dev(), metadata.ino())
+        };
+        // A full queue refuses a stream connect on macOS and stalls it on Linux.
+        let busy = busy_listener(&path);
+        let live = identity(&path);
+        assert_eq!(
+            Listener::open(&path).err().unwrap().to_string(),
+            format!("server already listening at {}", path.display())
+        );
+        assert_eq!(identity(&path), live);
+
+        // Nobody listens once it closes, so a start replaces the pathname.
+        drop(busy);
+        drop(Listener::open(&path).unwrap());
+
+        let datagram = UnixDatagram::bind(&path).unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+        let live = identity(&path);
+        assert_eq!(code(Listener::open(&path)), Some(libc::EPROTOTYPE));
+        assert_eq!(identity(&path), live);
+        drop(datagram);
     }
 }
