@@ -5882,6 +5882,9 @@ pub(crate) mod tests {
     fn bound_io_accepts_einval_only_after_peer_hangup() {
         let (mut stream, mut peer) = UnixStream::pair().unwrap();
         peer.write_all(b"reply").unwrap();
+        // A concurrent fork can retain the peer after this test drops it.
+        let _inherited_peer = peer.try_clone().unwrap();
+        peer.shutdown(std::net::Shutdown::Both).unwrap();
         drop(peer);
         bound_io(&stream, Err(io::Error::from_raw_os_error(libc::EINVAL))).unwrap();
         let error = bound_io(&stream, Err(io::ErrorKind::TimedOut.into())).unwrap_err();
