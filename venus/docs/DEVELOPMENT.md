@@ -228,3 +228,7 @@ coverage and the other seeds choose every operation from the generator. Set
 20-minute watchdog for the full soak. Set `EON_VENUS_TEST_RUNE_DIFF_DIR` to
 an existing scratch directory for the reduced failure's PNGs. An unset or
 empty value uses the system temporary directory.
+
+## AppKit event-path driver
+
+`venus/tests/appkit_event_driver.rs` (`harness = false`, paired with Linux `eon-bench events` under `eon-33cww.4.2`) runs 2-process isolated AppKit event-path proofs (`static-echo`, `moving-caret-30`, `moving-caret-60`, `held-repeat`, `configure-storm`, `modifier-storm`) against both `run_venus()` and `run_rune_candidate()` using `NSTextInputClient`, `dispatch2` main-queue dispatch, `mac-proof`'s `CGEvent` helpers, and Venus's `EON_BENCH_TRACE` stream (`present_revision`, `rebuild_begin`, `rebuild_end`, `resized`, `input`, `input_end`, `input_rejected`, `key_released`). Shared verdicts live in `venus/tests/appkit_event_driver/judge.rs` and run everywhere via `venus/tests/appkit_event_judge.rs`. On Apple Silicon macOS, `mac-proof run` invokes it automatically via `nix develop --command cargo test --locked -p yazelix-venus [--features candidate-rune] --test appkit_event_driver -- --host <venus|rune> --orbit <yazelix-orbit> --mac-proof <mac-proof> --only <fixtures> --deadline 180` with `EON_APPKIT_PROOF_OUT=<dir>` and `EON_APPKIT_RUN_ROOT=/tmp/ev-<pid>-<step>`.

@@ -274,12 +274,32 @@ pub fn stop(child: &mut Child, group: bool) {
     stop_within(child, group, GRACE);
 }
 
+/// Whether `pid` is an exited, unreaped zombie (holding its PID/PGID pinned).
+fn leader_zombie(pid: u32) -> bool {
+    Command::new("ps")
+        .args(["-o", "stat=", "-p", &pid.to_string()])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim().starts_with('Z'))
+}
+
 /// `stop` with `grace` between TERM and KILL.
+/// Keeps the process-group leader unreaped until after the final group KILL so
+/// its PID/PGID cannot be recycled while group signals are in flight.
 fn stop_within(child: &mut Child, group: bool, grace: Duration) {
     if group {
-        let _ = signal("TERM", child.id());
-        wait(child, Instant::now() + grace);
-        let _ = signal("KILL", child.id());
+        let pgid = child.id();
+        if pgid > 1 {
+            let _ = signal("TERM", pgid);
+            let end = Instant::now() + grace;
+            while Instant::now() < end && !leader_zombie(pgid) {
+                thread::sleep(POLL);
+            }
+            let _ = signal("KILL", pgid);
+        }
     }
     let _ = child.kill();
     let _ = child.wait();
@@ -1007,6 +1027,17 @@ mod tests {
             assert!(gone, "{script}: the worker {pid} outlived the timeout");
         }
         fs::remove_dir_all(evidence).unwrap();
+    }
+
+    #[test]
+    fn leader_zombie_sees_only_an_unreaped_exit() {
+        let mut done = Command::new("true").spawn().unwrap();
+        let end = Instant::now() + Duration::from_secs(2);
+        while Instant::now() < end && !leader_zombie(done.id()) {
+            thread::sleep(Duration::from_millis(20));
+        }
+        assert!(leader_zombie(done.id()) && done.wait().unwrap().success());
+        assert!(!leader_zombie(done.id()));
     }
 
     #[test]

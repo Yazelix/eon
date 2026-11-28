@@ -21,6 +21,11 @@ name = "rune_candidate"
 path = "tests/rune_candidate.rs"
 required-features = ["candidate-rune"]
 
+[[test]]
+name = "appkit_event_driver"
+path = "tests/appkit_event_driver.rs"
+harness = false
+
 [features]
 # Private Rune host candidate (eon-yp6vg.7). Shipping builds omit this feature.
 # The single switch (eon-yp6vg.54) removes it. See docs/CRATES.md, Rune candidate dependency.
@@ -64,6 +69,14 @@ wgpu = { version = "=30.0.1", default-features = false, features = ["metal"] }
 
 [dev-dependencies]
 accesskit_consumer = "=0.39.2"
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dev-dependencies]
+rustix = { version = "=1.1.4", default-features = false, features = ["net", "process", "termios"] }
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+dispatch2 = { version = "=0.3.1", default-features = false, features = ["std"] }
+objc2-app-kit = { version = "=0.3.2", default-features = false, features = ["NSEvent", "NSGraphicsContext", "NSRunningApplication", "NSView", "NSWindow", "objc2-core-foundation"] }
+objc2-foundation = { version = "=0.3.2", default-features = false, features = ["NSGeometry", "NSNotification", "NSRange"] }
 
 [lints.rust]
 unsafe_code = "deny"

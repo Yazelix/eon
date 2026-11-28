@@ -277,6 +277,10 @@ impl InputState {
         }
     }
 
+    pub fn held_keys(&self) -> usize {
+        self.pressed_keys.len()
+    }
+
     /// Track native IME state and return a semantic commit or explicit rejection.
     pub fn ime(&mut self, event: Ime) -> Result<Option<ClientMessage>, &'static str> {
         match event {

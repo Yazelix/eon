@@ -756,6 +756,10 @@ impl Scenario {
         }
     }
 
+    pub(crate) fn gui_and_keys(&self) -> (Availability, Availability) {
+        (self.gui.clone(), self.keys.clone())
+    }
+
     fn show_backdrop(&mut self, rgb: [u8; 3], log: &mut Log) -> Outcome {
         self.backdrop = None;
         self.backdrop = Some(Backdrop::new(rgb, log)?);

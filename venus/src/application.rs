@@ -131,6 +131,11 @@ impl Drop for BenchInput {
         bench_trace("input_end", "");
     }
 }
+fn trace_resized(hosted: bool, s: PhysicalSize<u32>, g: u64) {
+    if !hosted {
+        bench_trace("resized", format_args!("{}x{} g={g}", s.width, s.height));
+    }
+}
 
 fn modifier_key(key: PhysicalKey) -> bool {
     matches!(
@@ -6881,6 +6886,7 @@ impl Application {
                     && state.renderer.metrics_at_scale(state.scale_factor)
                         == state.renderer.metrics()
                 {
+                    trace_resized(hosted, size, self.presentation.generation);
                     return;
                 }
                 self.next_animation = None;
@@ -6897,6 +6903,7 @@ impl Application {
                 self.reveal_workspace_selection();
                 self.attention_inbox.reveal = self.attention_inbox.open;
                 self.presentation.invalidate();
+                trace_resized(hosted, size, self.presentation.generation);
                 self.send_resize();
                 self.refresh_client_view();
             }
@@ -6984,6 +6991,10 @@ impl Application {
                     && (self.send(message) || event.state == ElementState::Released)
                 {
                     self.input.commit_key(event.physical_key, event.state);
+                    if event.state == ElementState::Released {
+                        let held = self.input.held_keys();
+                        bench_trace("key_released", format_args!("held={held}"));
+                    }
                 }
             }
             WindowEvent::Ime(event) => {

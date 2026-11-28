@@ -540,6 +540,8 @@ impl Host {
                     return;
                 }
                 self.app.presentation.publish(candidate);
+                let (g, r) = (candidate.generation, candidate.revision);
+                bench_trace("present_revision", format_args!("{g} {r:?}"));
                 if let Some(window) = self.rune_window() {
                     window.withdrawn.set(false);
                 }
@@ -668,6 +670,9 @@ impl Host {
         };
         let (applied, raw, failed) = (self.geometry.is_some(), self.raw, self.check_failure());
         let finish = failed || self.raw_geometry(size, scale);
+        if let WindowEvent::Resized(s) = *event {
+            super::trace_resized(false, s, self.app.presentation.generation);
+        }
         let outcome = match (self.raw != raw, applied && !failed && kind != Kind::Moved) {
             (true, _) => Effect::Productive,
             (false, true) => Effect::NoOp,

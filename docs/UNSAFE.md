@@ -53,6 +53,7 @@ only for tests.
 | `orbit/tests/support/process.rs` | 4 test blocks | none | macOS libproc and `mkfifo`, `getrusage`, and Linux `PTRACE_SEIZE`. |
 | `eon/crates/eon/tests/process/mod.rs` | 7 test blocks | module | Session and terminal setup before `exec`, macOS libproc and `sysctl` queries, and Unix socket peer-PID queries (`SO_PEERCRED`, `LOCAL_PEERPID`). |
 | `eon/crates/eon-boat/tests/slot.rs` | 1 test block | mod platform | Terminal setup before `exec`. |
+| `venus/tests/appkit_event_driver.rs` | 5 test blocks | in fn first_rect: 1 statement, in fn insert_text: 1 statement, in fn post_frame_did_change: 1 statement, in fn set_marked: 1 statement, in fn unmark: 1 statement | Proof-only AppKit `NSTextInputClient` protocol calls verified by `MainThreadMarker` and `TextInputClient` (`respondsToSelector:`) and posting `NSViewFrameDidChangeNotification` for `win.contentView()`. |
 
 ### Tools (not shipped)
 

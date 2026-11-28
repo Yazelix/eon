@@ -8,7 +8,7 @@ use crate::{
 use std::{
     collections::{BTreeMap, BTreeSet},
     fs,
-    os::unix::fs::DirBuilderExt,
+    os::unix::{fs::DirBuilderExt, net::UnixListener},
     path::{Path, PathBuf},
     process::Command,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
@@ -283,7 +283,9 @@ fn steps(runner: &mut Runner, context: &mut Context, personal_mac: bool) -> std:
         personal_mac,
     );
     scenario::steps(runner, &mut gui, &["package"])?;
+    let (gui_avail, keys_avail) = gui.gui_and_keys();
     drop(gui);
+    appkit_events(runner, context, &gui_avail, &keys_avail)?;
     runner.step(
         context,
         "leftovers",
@@ -292,6 +294,241 @@ fn steps(runner: &mut Runner, context: &mut Context, personal_mac: bool) -> std:
         false,
         leftovers,
     )?;
+    Ok(())
+}
+
+fn wrapper_export(path: &Path, var: &str) -> Option<String> {
+    let prefix = format!("export {var}=");
+    fs::read_to_string(path).ok()?.lines().find_map(|line| {
+        let raw = line.trim().strip_prefix(&prefix)?;
+        let val = if let Some(s) = raw.strip_prefix('\'').and_then(|s| s.strip_suffix('\'')) {
+            s.replace("'\\''", "'")
+        } else {
+            raw.strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .unwrap_or(raw)
+                .to_owned()
+        };
+        (!val.is_empty()).then_some(val)
+    })
+}
+
+fn resolve_appkit_env(
+    ctx: &Context,
+    log: &mut Log,
+    deadline: Instant,
+) -> Result<(PathBuf, Option<String>), Failure> {
+    let eon_bin = ctx.package.join("bin/eon");
+    let orbit_bin = match wrapper_export(&eon_bin, "EON_ORBIT").map(PathBuf::from) {
+        Some(path) if path.is_file() => path,
+        _ => {
+            let pkg = ctx.package.to_string_lossy();
+            let mut cmd = ctx.nix(&["path-info", "--recursive", &pkg]);
+            let closure = text(succeed(log, &mut cmd, deadline, true)?);
+            let bins: Vec<PathBuf> = closure
+                .lines()
+                .map(|p| Path::new(p).join("bin/yazelix-orbit"))
+                .filter(|p| p.is_file())
+                .collect();
+            match bins.as_slice() {
+                [bin] => bin.clone(),
+                _ => {
+                    return Err(Failure::Check(format!(
+                        "want one bin/yazelix-orbit in Eon's closure, found {bins:?}"
+                    )));
+                }
+            }
+        }
+    };
+    let venus_bin = wrapper_export(&eon_bin, "EON_VENUS");
+    let font_dirs = venus_bin
+        .as_deref()
+        .and_then(|v| wrapper_export(Path::new(v), "EON_VENUS_FONT_DIRS"));
+    if font_dirs.is_none() {
+        log.line(&format!(
+            "mac-proof: no EON_VENUS_FONT_DIRS via {eon_bin:?} {venus_bin:?}"
+        ));
+    }
+    Ok((orbit_bin, font_dirs))
+}
+
+fn failure_msg(e: Failure) -> String {
+    match e {
+        Failure::Timeout => "timed out".into(),
+        Failure::Command(m)
+        | Failure::Check(m)
+        | Failure::Unavailable(m)
+        | Failure::NotApplicable(m) => m,
+    }
+}
+
+fn is_appkit_process(name: &str) -> bool {
+    is_eon_process(name)
+        || matches!(name, "venus-rune-candidate" | "mac-proof")
+        || name.starts_with("mac_proof-")
+}
+
+/// Unix listener held open for one step; dropping it (or SIGKILL) signals EOF to detached peers.
+struct RunLife {
+    path: PathBuf,
+    _listener: UnixListener,
+}
+impl RunLife {
+    fn bind(path: PathBuf) -> Result<Self, String> {
+        let _ = fs::remove_file(&path);
+        let _listener =
+            UnixListener::bind(&path).map_err(|e| format!("life {}: {e}", path.display()))?;
+        Ok(Self { path, _listener })
+    }
+}
+impl Drop for RunLife {
+    fn drop(&mut self) {
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+/// Signals detached payloads via `finish` + `RunLife` EOF (never signaling
+/// `ps`-discovered PIDs), verifies zero Eon-owned survivors, and removes `/tmp/ev-*`.
+fn cleanup_appkit_root(run_root: &Path, life: RunLife, log: &mut Log) -> Result<(), String> {
+    let mut errs = Vec::new();
+    for p in fs::read_dir(run_root).into_iter().flatten().flatten() {
+        if p.path().is_dir() {
+            let _ = fs::write(p.path().join("finish"), "");
+        }
+    }
+    drop(life);
+    let marker = format!("{}/", run_root.display());
+    let end = Instant::now() + Duration::from_secs(2);
+    loop {
+        let lim = Instant::now() + Duration::from_secs(10);
+        match scenario::listing(log, lim).map_err(failure_msg) {
+            Ok(all) => {
+                let left: Vec<_> = all
+                    .into_iter()
+                    .filter(|p| is_appkit_process(p.name()) && p.command.contains(&marker))
+                    .collect();
+                if left.is_empty() {
+                    break;
+                }
+                if Instant::now() >= end {
+                    errs.push(format!("survived: {left:?}"));
+                    break;
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                errs.push(format!("verify: {e}"));
+                break;
+            }
+        }
+    }
+    if run_root
+        .to_str()
+        .is_some_and(|s| s.starts_with("/tmp/ev-") && !s[8..].contains('/'))
+        && run_root.exists()
+        && let Err(e) = fs::remove_dir_all(run_root)
+    {
+        errs.push(format!("remove {}: {e}", run_root.display()));
+    }
+    if !errs.is_empty() {
+        let msg = errs.join("; ");
+        log.line(&format!("mac-proof: appkit cleanup failed: {msg}"));
+        return Err(msg);
+    }
+    Ok(())
+}
+
+fn run_appkit_step(
+    ctx: &mut Context,
+    log: &mut Log,
+    deadline: Instant,
+    (idx, group, fixtures, host, rune): (usize, &str, &str, &str, bool),
+) -> Outcome {
+    let fail = |m: &'static str| move |e: std::io::Error| Failure::Check(format!("{m}: {e}"));
+    let (orbit_bin, font_dirs) = resolve_appkit_env(ctx, log, deadline)?;
+    let out = ctx.evidence.join(format!("appkit-events/{group}-{host}"));
+    let exe = std::env::current_exe().map_err(fail("exe"))?;
+    let (exe, orbit) = (exe.to_string_lossy(), orbit_bin.to_string_lossy());
+    let mut args: Vec<&str> = "develop --command cargo test --locked -p yazelix-venus"
+        .split(' ')
+        .collect();
+    if rune {
+        args.extend(["--features", "candidate-rune"]);
+    }
+    args.extend(["--test", "appkit_event_driver", "--", "--host", host]);
+    args.extend(["--orbit", &orbit, "--mac-proof", &exe, "--only", fixtures]);
+    args.extend(["--deadline", "180"]);
+    let run_root = PathBuf::from(format!("/tmp/ev-{}-{idx}", std::process::id()));
+    let _ = fs::remove_dir_all(&run_root);
+    fs::DirBuilder::new()
+        .mode(0o700)
+        .create(&run_root)
+        .map_err(fail("mkdir run_root"))?;
+    let life = RunLife::bind(run_root.join("life.sock")).map_err(|e| {
+        let _ = fs::remove_dir_all(&run_root);
+        Failure::Check(e)
+    })?;
+    let mut cmd = ctx.nix(&args);
+    cmd.env("EON_APPKIT_PROOF_OUT", &out)
+        .env("EON_APPKIT_RUN_ROOT", &run_root);
+    if let Some(dirs) = font_dirs {
+        cmd.env("EON_VENUS_FONT_DIRS", dirs);
+    }
+    let run_res = succeed(log, &mut cmd, deadline, false);
+    let clean_res = cleanup_appkit_root(&run_root, life, log);
+    match (run_res, clean_res) {
+        (Ok(_), Ok(())) => {}
+        (Err(e), Ok(())) => return Err(e),
+        (Ok(_), Err(c)) => return Err(Failure::Check(format!("appkit cleanup: {c}"))),
+        (Err(e), Err(c)) => {
+            return Err(Failure::Check(format!("{} (cleanup: {c})", failure_msg(e))));
+        }
+    }
+    let bytes = fs::read(out.join("result.json")).map_err(fail("result.json"))?;
+    let r: serde_json::Value = serde_json::from_slice(&bytes)
+        .map_err(|e| Failure::Check(format!("parse result.json: {e}")))?;
+    check(r["result"] == "pass", || {
+        format!("appkit-events {group}:{host} result {}", r["result"])
+    })
+}
+
+fn appkit_events(
+    runner: &mut Runner,
+    context: &mut Context,
+    gui_avail: &Result<(), String>,
+    keys_avail: &Result<(), String>,
+) -> std::io::Result<()> {
+    let groups = [
+        (
+            "ime",
+            "static-echo,moving-caret-30,moving-caret-60,configure-storm",
+            false,
+        ),
+        ("cgevent", "held-repeat,modifier-storm", true),
+    ];
+    let mut idx = 0usize;
+    for (group, fixtures, needs_keys) in groups {
+        for (host, rune) in [("venus", false), ("rune", true)] {
+            let (step_idx, name) = (idx, format!("appkit-events-{group}:{host}"));
+            idx += 1;
+            runner.step(
+                context,
+                &name,
+                25 * MINUTE,
+                &["package", "session"],
+                false,
+                |ctx, log, dl| {
+                    if let Err(r) = gui_avail {
+                        return Err(Failure::Unavailable(format!("needs GUI login: {r}")));
+                    }
+                    if needs_keys && let Err(r) = keys_avail {
+                        return Err(Failure::Unavailable(format!("needs Accessibility: {r}")));
+                    }
+                    run_appkit_step(ctx, log, dl, (step_idx, group, fixtures, host, rune))
+                },
+            )?;
+        }
+    }
     Ok(())
 }
 
@@ -901,18 +1138,23 @@ fn private_dirs() -> BTreeSet<String> {
         .map(|entry| entry.file_name().to_string_lossy().into_owned())
         .filter(|name| {
             let bytes = name.as_bytes();
-            bytes.len() == 2
-                && bytes[0] == b'e'
-                && (bytes[1].is_ascii_digit() || bytes[1].is_ascii_lowercase())
+            name.starts_with("ev-")
+                || (bytes.len() == 2
+                    && bytes[0] == b'e'
+                    && (bytes[1].is_ascii_digit() || bytes[1].is_ascii_lowercase()))
         })
         .collect()
+}
+
+fn is_eon_process(name: &str) -> bool {
+    EON_PROCESSES.contains(&name) || name.starts_with("appkit_event_driver")
 }
 
 /// This user's Eon processes, as (pid, command).
 fn eon_processes(log: &mut Log, deadline: Instant) -> Result<BTreeSet<(String, String)>, Failure> {
     Ok(scenario::listing(log, deadline)?
         .into_iter()
-        .filter(|process| EON_PROCESSES.contains(&process.name()))
+        .filter(|process| is_eon_process(process.name()))
         .map(|process| (process.pid.to_string(), process.command))
         .collect())
 }
@@ -973,7 +1215,14 @@ if [ "$1" = --extra-experimental-features ]; then shift 3; fi
 case "$1 $2" in
   'develop --command')
     case "$3" in
-      cargo) cat "$(dirname "$0")/metadata.json" ;;
+      cargo)
+        if [ "$4" = test ]; then
+          mkdir -p "$EON_APPKIT_PROOF_OUT"
+          printf '%s\n' "${EON_VENUS_FONT_DIRS:-}" > "$(dirname "$0")/font-dirs"
+          cat "$(dirname "$0")/appkit-result.json" > "$EON_APPKIT_PROOF_OUT/result.json"
+          exit "$(cat "$(dirname "$0")/appkit.exit")"
+        fi
+        cat "$(dirname "$0")/metadata.json" ;;
       eon-test)
         cat "$(dirname "$0")/$5.output" >&2
         exit "$(cat "$(dirname "$0")/$5.exit")" ;;
@@ -1380,5 +1629,120 @@ esac
             4
         );
         fs::remove_dir_all(evidence).unwrap();
+    }
+
+    #[test]
+    fn appkit_events_steps_verify_receipts_and_availability() {
+        use std::{
+            os::unix::{net::UnixStream, process::CommandExt},
+            process::Stdio,
+        };
+        struct Reap(std::process::Child);
+        impl Drop for Reap {
+            fn drop(&mut self) {
+                let _ = self.0.kill();
+                let _ = self.0.wait();
+            }
+        }
+        assert!(is_eon_process("appkit_event_driver-0123456789abcdef"));
+        let pid = std::process::id();
+        let root = std::env::temp_dir().join(format!("mac-proof-appkit-{pid}"));
+        let _ = fs::remove_dir_all(&root);
+        let pkg = root.join("pkg");
+        fs::create_dir_all(pkg.join("bin")).unwrap();
+        let (orbit, venus) = (pkg.join("bin/yazelix-orbit"), pkg.join("bin/yazelix-venus"));
+        fs::write(&orbit, "#!/bin/sh\n").unwrap();
+        let font = "export EON_VENUS_FONT_DIRS='/nix/store/a-fonts:/nix/store/b-fonts'\n";
+        fs::write(&venus, font).unwrap();
+        let (o, v) = (orbit.display(), venus.display());
+        let eon = format!("export EON_ORBIT='{o}'\nexport EON_VENUS='{v}'\n");
+        fs::write(pkg.join("bin/eon"), eon).unwrap();
+        let mut ctx = stub(&root);
+        ctx.package = pkg;
+        let nk = Err("no keys".into());
+        let cases = [
+            (r#"{"result":"pass"}"#, Ok(()), "pass", "pass"),
+            (r#"{"result":"fail"}"#, nk, "fail", "skipped"),
+        ];
+        for (idx, (result, keys, ime, cg)) in cases.into_iter().enumerate() {
+            let ev = root.join(idx.to_string());
+            ctx.evidence = ev.clone();
+            fs::write(root.join("appkit-result.json"), result).unwrap();
+            fs::write(root.join("appkit.exit"), "0").unwrap();
+            let mut r = Runner::new(&ev, false, MINUTE).unwrap();
+            for dep in ["package", "session"] {
+                r.step(&mut ctx, dep, MINUTE, &[], false, |_, _, _| Ok(()))
+                    .unwrap();
+            }
+            appkit_events(&mut r, &mut ctx, &Ok(()), &keys).unwrap();
+            assert_eq!(r.write(true).unwrap(), idx == 0);
+            let raw = fs::read(ev.join("summary.json")).unwrap();
+            let s: serde_json::Value = serde_json::from_slice(&raw).unwrap();
+            let steps = s["steps"].as_array().unwrap();
+            let st = |n| steps.iter().find(|x| x["name"] == n).unwrap();
+            assert_eq!(st("appkit-events-ime:venus")["status"], ime);
+            assert_eq!(st("appkit-events-ime:rune")["status"], ime);
+            assert_eq!(st("appkit-events-cgevent:venus")["status"], cg);
+            assert_eq!(st("appkit-events-cgevent:rune")["for_yu"], idx == 1);
+        }
+        let calls = fs::read_to_string(root.join("calls")).unwrap();
+        let needle = "develop --command cargo test --locked -p yazelix-venus --features candidate-rune --test appkit_event_driver";
+        assert!(calls.contains(needle));
+        let dirs = fs::read_to_string(root.join("font-dirs")).unwrap();
+        assert_eq!(dirs.trim(), "/nix/store/a-fonts:/nix/store/b-fonts");
+        let (orphan_root, sibling_root) = (
+            PathBuf::from(format!("/tmp/ev-test-cleanup-{pid}")),
+            PathBuf::from(format!("/tmp/ev-test-cleanup-{pid}0")),
+        );
+        for d in [&orphan_root, &sibling_root] {
+            let _ = fs::remove_dir_all(d);
+            fs::create_dir_all(d.join("0")).unwrap();
+        }
+        let (life_sock, ready) = (orphan_root.join("life.sock"), root.join("life.ready"));
+        let life = RunLife::bind(life_sock.clone()).unwrap();
+        let mut cmd = Command::new(std::env::current_exe().unwrap());
+        cmd.args(["--exact", "run::tests::life_peer", "--ignored"])
+            .envs([("EON_LIFE_S", &life_sock), ("EON_LIFE_R", &ready)])
+            .process_group(0)
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        let mut peer = Reap(cmd.spawn().unwrap());
+        let end = Instant::now() + Duration::from_secs(5);
+        while !ready.exists() {
+            assert!(peer.0.try_wait().unwrap().is_none() && Instant::now() < end);
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(peer.0.try_wait().unwrap().is_none());
+        drop(life);
+        let end = Instant::now() + Duration::from_secs(5);
+        while peer.0.try_wait().unwrap().is_none() {
+            assert!(Instant::now() < end, "detached peer survived RunLife drop");
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        assert!(peer.0.wait().unwrap().success() && orphan_root.join("0").exists());
+        assert!(UnixStream::connect(&life_sock).is_err());
+        let mut log = Log::new(fs::File::create(root.join("cleanup.log")).unwrap());
+        cleanup_appkit_root(&orphan_root, RunLife::bind(life_sock).unwrap(), &mut log).unwrap();
+        assert!(!orphan_root.exists() && sibling_root.exists());
+        let _ = fs::remove_dir_all(&sibling_root);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    #[ignore]
+    fn life_peer() {
+        use std::io::{ErrorKind, Read};
+        let (Ok(s), Ok(r)) = (std::env::var("EON_LIFE_S"), std::env::var("EON_LIFE_R")) else {
+            return;
+        };
+        let mut c = std::os::unix::net::UnixStream::connect(s).unwrap();
+        let mut b = [0u8; 1];
+        c.set_nonblocking(true).unwrap();
+        assert_eq!(c.read(&mut b).unwrap_err().kind(), ErrorKind::WouldBlock);
+        c.set_nonblocking(false).unwrap();
+        fs::write(r, "").unwrap();
+        let res = c.read(&mut b);
+        assert!(matches!(res, Ok(0)) || res.is_err_and(|e| e.kind() == ErrorKind::ConnectionReset));
     }
 }

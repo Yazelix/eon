@@ -112,6 +112,10 @@ fn a_local_dry_run_round_trips_the_candidate_tree() {
             "adoption=planned",
             "quit=planned",
             "stop=planned",
+            "appkit-events-ime:venus=planned",
+            "appkit-events-ime:rune=planned",
+            "appkit-events-cgevent:venus=planned",
+            "appkit-events-cgevent:rune=planned",
             "leftovers=planned"
         ]
     );

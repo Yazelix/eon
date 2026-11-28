@@ -4717,6 +4717,7 @@ dependencies = [
  "accesskit_consumer",
  "accesskit_winit",
  "arboard",
+ "dispatch2",
  "eon-workspace-protocol",
  "glyphon",
  "jiff",

@@ -56,8 +56,8 @@ checkout
 
 Steps, in order; each has a deadline, and a step whose prerequisite did not pass is skipped:
   host        macOS (14 or later), hardware, displays, Nix (2.20 or later) and its builder
-              sandbox setting, /tmp/e<c> directories, Eon processes and fonts like Eon's
-              already present
+              sandbox setting, /tmp/e<c> and /tmp/ev-* directories, Eon processes and fonts
+              like Eon's already present
   source      the Git tree, checked against --expect-tree
   package     nix build .#packages.aarch64-darwin.default
   terminfo    macOS's own infocmp and tput find `eon` only through the package (ORB-C10)
@@ -76,7 +76,11 @@ Steps, in order; each has a deadline, and a step whose prerequisite did not pass
   session ... stop
               the GUI scenario on the built package; `mac-proof scenario --help` lists
               its steps and what each needs
-  leftovers   fails on Eon processes or /tmp/e<c> directories the run left behind
+  appkit-events-(ime|cgevent):(venus|rune)
+              runs Venus's AppKit event-path proof driver (IME, caret, autorepeat, resize
+              holdback, modifier storm) via `nix develop --command cargo test` and verifies
+              result.json == pass
+  leftovers   fails on Eon processes or /tmp/e<c> and /tmp/ev-* directories the run left behind
 
 Evidence folder:
   summary.txt          one line per step: status, duration, first failing line
@@ -114,6 +118,8 @@ fn main() -> ExitCode {
             .and_then(mac::backdrop)
             .map(|()| true),
         Some("virtual-display") if arguments.len() == 1 => mac::virtual_display().map(|()| true),
+        Some("hold-repeat") => hold_repeat(&arguments[1..]).map(|()| true),
+        Some("flags-changed") => flags_changed(&arguments[1..]).map(|()| true),
         Some("--help" | "-h") => {
             println!("{USAGE}");
             return ExitCode::SUCCESS;
@@ -141,6 +147,56 @@ fn backdrop_rgb(arguments: &[String]) -> Result<[u8; 3], String> {
             .map_err(|error| format!("backdrop channel {value}: {error}"))
     };
     Ok([channel(r)?, channel(g)?, channel(b)?])
+}
+
+fn num<T: std::str::FromStr>(s: &str) -> Result<T, String>
+where
+    T::Err: std::fmt::Display,
+{
+    s.parse().map_err(|e| format!("{s}: {e}"))
+}
+
+fn hold_repeat(args: &[String]) -> Result<(), String> {
+    let (args, cancel_on_eof) = match args.split_last() {
+        Some((last, rest)) if last == "--cancel-on-eof" => (rest, true),
+        _ => (args, false),
+    };
+    let [pid, code, flags, count, delay, interval] = args else {
+        return Err(
+            "hold-repeat needs PID CODE FLAGS COUNT DELAY_MS INTERVAL_MS [--cancel-on-eof]".into(),
+        );
+    };
+    let cancel = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+    if cancel_on_eof {
+        let c2 = cancel.clone();
+        std::thread::spawn(move || {
+            let _ = std::io::copy(&mut std::io::stdin().lock(), &mut std::io::sink());
+            c2.store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+    }
+    let repeat = mac::Repeat {
+        code: num(code)?,
+        flags: num(flags)?,
+        count: num(count)?,
+        delay_ms: num(delay)?,
+        interval_ms: num(interval)?,
+    };
+    println!(
+        "{{\"sent_repeats\":{}}}",
+        mac::repeat(num(pid)?, repeat, &cancel)?
+    );
+    Ok(())
+}
+
+fn flags_changed(args: &[String]) -> Result<(), String> {
+    let (args, step) = match args.split_last() {
+        Some((last, rest)) if last == "--step" => (rest, true),
+        _ => (args, false),
+    };
+    let [pid, pairs] = args else {
+        return Err("flags-changed needs PID PAIRS [--step]".into());
+    };
+    mac::modifiers(num(pid)?, num(pairs)?, step)
 }
 
 /// Flags as (name, value), with `true` for the valueless ones. `--help`

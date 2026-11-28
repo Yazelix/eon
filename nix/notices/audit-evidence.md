@@ -54,6 +54,35 @@ are also absent from the actual compile log and selected graphs.
 Full proof records, including the baseline-accepts/fixed-rejects dependency
 omission, are owned by eon-igae.15.8. This records no new license decision.
 
+### AppKit event-path driver dev-dep edge (eon-33cww.4.2)
+
+For `eon-33cww.4.2` over `a4b87f81`, `venus/Cargo.toml` adds a `harness = false`
+test target (`appkit_event_driver`) with macOS-only dev-dependencies (`dispatch2`,
+`objc2-app-kit`, `objc2-foundation`) and Unix dev-dependency features on `rustix`.
+The workspace `Cargo.lock` gains only one edge (`"dispatch2",` in `yazelix-venus`'s
+dependency list) and zero new packages, versions, checksums, sources, or target
+runtime/native selections on Linux (`dispatch2`, `objc2-app-kit`, and
+`objc2-foundation` are `cfg(target_os = "macos")` dev-dependencies only). The
+four workspace producers that share `Cargo.lock` change context: `eon`, `orbit`,
+`venus`, and `venus-rune-preview`. Deleting only that one ` "dispatch2",` line
+from `yazelix-venus`'s stanza in each candidate canonical `graph.json` lock
+reproduces the accepted base graphs byte for byte: `3bb67edb` → `562fcad4` for
+Eon, `e3718a2d` → `ce72bd78` for Orbit, `b6b92d4e` → `7f495d9f` for Venus, and
+`27786595` → `69114db0` for `venus-rune-preview`. The other nine producers'
+graphs are unchanged. Each graph differs from its base solely in that lock line,
+so all producer runtime/native feature selections, ELF audit sets, exception
+identities, and host/unselected classes carry over unchanged: Eon 9 host / 2
+unselected, Orbit 6 / 1, Venus 15 / 4, and `venus-rune-preview` 20 / 9. All four
+`inspect-audit` replays against the actual binaries reproduce their saved
+`graph.json` and `observation.json` byte for byte. The strict
+`propose-audit-renewal` proposal changes only these eight `graph_sha256` fields,
+and parsed, equals the checked-in `nix/notices/audit-exceptions.json`. Zoxide's
+`prove-audit-omission` accepts the retained root under the root-only baseline
+and rejects omitted `anyhow 1.0.98` with both the base and renewed exception data.
+
+- Vendor at `/nix/store/59hg4x8rpgmv7jkirh7hz3bi76rckg7x-cargo-vendor-dir`.
+- Proposal input at `/nix/store/bskj3mxr7xjr19zagzpsm2rjr4f4b2rp-eon-archive-notice-input.json` (candidate `00726b3f` over `a4b87f81`, before this renewal).
+
 ### Rune crate split cutover (eon-yp6vg.67)
 
 The cutover over `ffaad90d` moves the optional preview to `7d7bd5e4`.
@@ -674,6 +703,21 @@ tree; evidence does not depend on a report file claiming its own acceptance.
 
 ## eon
 
+Renewed on 2026-11-27 for `eon-33cww.4.2` to context
+`3bb67edb2bb2c2f43b6fce2bb96648baca93bface82d7ea94fe4a4b036c1c00b`.
+Deleting `yazelix-venus`'s macOS dev-dep `dispatch2` lock edge reproduces
+`562fcad4…` byte for byte. The 9 host and 2 unselected identities keep their
+classes.
+
+- Source at `/nix/store/8l49c5khgymx2v0mcfvsf0xzjfqrgam2-source` (candidate `00726b3f` over `a4b87f81`, before this renewal's own edits).
+- Vendor at `/nix/store/59hg4x8rpgmv7jkirh7hz3bi76rckg7x-cargo-vendor-dir`.
+- Observation at `/nix/store/sm95lls1bsi5b9z0xm5idq5k98a6ddwd-eon-cargo-notices-0.1.29/audit/observation.json`.
+- Binary at `/nix/store/4qgci75g5zng1rlzr7c3ndgzlxz1yk36-eon-rust-0.1.29/bin/eon`
+  with SHA-256 `f8b1fcc8c40eefaaa382ac880896e58da889e43187c21aa247ec57125f01ac78`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package eon`.
+
+Historical (`eon-yp6vg.67`, `9dfb254d`):
+
 Renewed on 2026-11-26 for `eon-yp6vg.67` to context
 `562fcad4a51e35ed069fd6b9549144cfab7a4b3cbb37833e2b4df12130c661f1`.
 Restoring the base `lock` field reproduces `065c7b2c…`. The 9 host and
@@ -1051,6 +1095,21 @@ binaries, inventory and independent artwork obligations.
 
 ## orbit
 
+Renewed on 2026-11-27 for `eon-33cww.4.2` to context
+`e3718a2d73d6641037056c3fb74b38f06d08a3290f80acd04c1b9975234c9c76`.
+Deleting `yazelix-venus`'s macOS dev-dep `dispatch2` lock edge reproduces
+`ce72bd78…` byte for byte. The 6 host and 1 unselected identities keep their
+classes.
+
+- Source at `/nix/store/qrhz1pxcban2yda6cd9y28kmrc25pbnd-source` (candidate `00726b3f` over `a4b87f81`, before this renewal's own edits).
+- Vendor at `/nix/store/59hg4x8rpgmv7jkirh7hz3bi76rckg7x-cargo-vendor-dir`.
+- Observation at `/nix/store/jpapvi06pyl7n6s64b3zc8r172x040pj-orbit-cargo-notices-0.1.0/audit/observation.json`.
+- Binary at `/nix/store/y1pm3hhsbi793s00fy91i8ljzxzb4ql5-yazelix-orbit-0.1.0/bin/yazelix-orbit`
+  with SHA-256 `b2293388d7e4b74da7da08b7ef457b60b4bdb65acc10c6831d79f88ea3b2fc3f`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-orbit`.
+
+Historical (`eon-yp6vg.67`, `9dfb254d`):
+
 Renewed on 2026-11-26 for `eon-yp6vg.67` to context
 `ce72bd78ba6c324b0c384fd023e998f8b9de2f9616b48ca63749decca9174c41`.
 Restoring the base `lock` field reproduces `8d9eb57d…`. The 6 host and
@@ -1420,6 +1479,21 @@ Binary `/nix/store/pl9b7z1vyzcvb7yfydii994m9fh10ikj-yazelix-orbit-0.1.0/bin/yaze
 - Result: 6 exact host exceptions; 1 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus
+
+Renewed on 2026-11-27 for `eon-33cww.4.2` to context
+`b6b92d4efb95d3e86a99ae4b71f7cdf19076dc874b5655a13dfa05ad4129901f`.
+Deleting `yazelix-venus`'s macOS dev-dep `dispatch2` lock edge reproduces
+`7f495d9f…` byte for byte. The 15 host and 4 unselected identities keep their
+classes.
+
+- Source at `/nix/store/j13bhwmzafj9k8fs1624bmdwpsw0b680-source` (candidate `00726b3f` over `a4b87f81`, before this renewal's own edits).
+- Vendor at `/nix/store/59hg4x8rpgmv7jkirh7hz3bi76rckg7x-cargo-vendor-dir`.
+- Observation at `/nix/store/9s57njmicl33k9dxrxric79hibcpbpqv-venus-cargo-notices-0.1.0/audit/observation.json`.
+- Binary at `/nix/store/g2pxis7k1zab2dk53zj9slw0q6rf8g1v-yazelix-venus-0.1.0/bin/.yazelix-venus-wrapped`
+  with SHA-256 `f91813df46bf4f72fb9bf7dfa4702406872a1a2c763560a847cf469d91b51366`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --package yazelix-venus`.
+
+Historical (`eon-yp6vg.67`, `9dfb254d`):
 
 Renewed on 2026-11-26 for `eon-yp6vg.67` to context
 `7f495d9fb2e1fc859c6f65d524214e7bf7b65755a1065e3cb77030b183596aa4`.
@@ -1807,6 +1881,21 @@ Binary `/nix/store/7sz2z1rbi2sgyk5w21bq8v7difbgnwnk-yazelix-venus-0.1.0/bin/.yaz
 - Result: 15 exact host exceptions; 4 exact unselected exceptions; zero unselected identities compiled in the build phase.
 
 ## venus-rune-preview
+
+Renewed on 2026-11-27 for `eon-33cww.4.2` to context
+`277865958ad25eeac6b83d6df50b306b18c52ede98d11a641a2c9d232f7ee712`.
+Deleting `yazelix-venus`'s macOS dev-dep `dispatch2` lock edge reproduces
+`69114db0…` byte for byte. The 20 host and 9 unselected identities keep their
+classes.
+
+- Source at `/nix/store/j13bhwmzafj9k8fs1624bmdwpsw0b680-source` (candidate `00726b3f` over `a4b87f81`, before this renewal's own edits).
+- Vendor at `/nix/store/59hg4x8rpgmv7jkirh7hz3bi76rckg7x-cargo-vendor-dir`.
+- Observation at `/nix/store/bzbcqshk1059v1g70rkrh81raakam5v9-venus-rune-preview-cargo-notices-0.1.0/audit/observation.json`.
+- Binary at `/nix/store/2pm3sx3fz7wj0wfs7dx2gnb2nds4q0ck-venus-rune-preview-0.1.0/bin/.venus-rune-candidate-wrapped`
+  with SHA-256 `a89954fe9c48002af258b3c189d2e0455c4c5f20a4d7afdd46105283dd8c091e`.
+- Observed build flags `-j 8 --target x86_64-unknown-linux-gnu --offline --profile release --features=candidate-rune --package yazelix-venus --bin venus-rune-candidate`.
+
+Historical (`eon-yp6vg.67`, `9dfb254d`):
 
 Renewed on 2026-11-26 for `eon-yp6vg.67` from `34e1087b…` to context
 `69114db012ebd2ee59ca61040222f156c85ea4bd89a6b30064782356351894cc`.

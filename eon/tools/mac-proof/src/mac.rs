@@ -5,14 +5,52 @@
 
 #[cfg(not(target_os = "macos"))]
 pub use elsewhere::{
-    Switched, activate, backdrop, displays, grants, in_mirror_set, mirror, press, switch,
-    virtual_display, windows,
+    Switched, activate, backdrop, displays, grants, in_mirror_set, mirror, modifiers, press,
+    repeat, switch, virtual_display, windows,
 };
 #[cfg(target_os = "macos")]
 pub use native::{
-    Switched, activate, backdrop, displays, grants, in_mirror_set, mirror, press, switch,
-    virtual_display, windows,
+    Switched, activate, backdrop, displays, grants, in_mirror_set, mirror, modifiers, press,
+    repeat, switch, virtual_display, windows,
 };
+
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+#[derive(Clone, Copy)]
+pub struct Repeat {
+    pub code: u16,
+    pub flags: u64,
+    pub count: u32,
+    pub delay_ms: u64,
+    pub interval_ms: u64,
+}
+
+/// Runs a finite autorepeat plan (`keyDown`, up to `count` autorepeats unless `cancel` flips,
+/// then guaranteed `keyUp` even on mid-burst error) and returns `sent_repeats`.
+#[cfg(any(target_os = "macos", test))]
+pub fn drive_repeat(
+    r: Repeat,
+    cancel: &std::sync::atomic::AtomicBool,
+    mut emit: impl FnMut(bool, bool) -> Result<(), String>,
+    mut sleep_ms: impl FnMut(u64),
+) -> Result<u32, String> {
+    use std::sync::atomic::Ordering;
+    emit(true, false)?;
+    sleep_ms(r.delay_ms);
+    let (mut sent, mut err) = (0, None);
+    while sent < r.count && !cancel.load(Ordering::Relaxed) {
+        if let Err(e) = emit(true, true) {
+            err = Some(e);
+            break;
+        }
+        sent += 1;
+        sleep_ms(r.interval_ms);
+    }
+    let up = emit(false, false);
+    match (err, up) {
+        (Some(e), _) | (None, Err(e)) => Err(e),
+        (None, Ok(())) => Ok(sent),
+    }
+}
 
 pub const VIRTUAL_DISPLAY_NAME: &str = "mac-proof HiDPI";
 
@@ -45,12 +83,12 @@ mod native {
         CGConfigureDisplayMirrorOfDisplay, CGConfigureDisplayWithDisplayMode, CGConfigureOption,
         CGDirectDisplayID, CGDisplayBounds, CGDisplayCopyAllDisplayModes, CGDisplayCopyDisplayMode,
         CGDisplayIsBuiltin, CGDisplayIsInMirrorSet, CGDisplayIsMain, CGDisplayMirrorsDisplay,
-        CGDisplayMode, CGError, CGEvent, CGEventFlags, CGGetActiveDisplayList, CGMainDisplayID,
-        CGPreflightPostEventAccess, CGPreflightScreenCaptureAccess,
-        CGRectMakeWithDictionaryRepresentation, CGWindowLevelForKey, CGWindowLevelKey,
-        CGWindowListCopyWindowInfo, CGWindowListOption, kCGDisplayShowDuplicateLowResolutionModes,
-        kCGNullDirectDisplay, kCGNullWindowID, kCGWindowBounds, kCGWindowLayer, kCGWindowNumber,
-        kCGWindowOwnerPID,
+        CGDisplayMode, CGError, CGEvent, CGEventField, CGEventFlags, CGEventType,
+        CGGetActiveDisplayList, CGMainDisplayID, CGPreflightPostEventAccess,
+        CGPreflightScreenCaptureAccess, CGRectMakeWithDictionaryRepresentation,
+        CGWindowLevelForKey, CGWindowLevelKey, CGWindowListCopyWindowInfo, CGWindowListOption,
+        kCGDisplayShowDuplicateLowResolutionModes, kCGNullDirectDisplay, kCGNullWindowID,
+        kCGWindowBounds, kCGWindowLayer, kCGWindowNumber, kCGWindowOwnerPID,
     };
     use std::{
         ffi::{CStr, c_char, c_void},
@@ -325,39 +363,118 @@ mod native {
         ))
     }
 
-    /// Brings process `pid` to the front.
-    pub fn activate(pid: u32) -> Result<(), String> {
+    fn activate_pid(pid: u32) -> Result<i32, String> {
         let pid = i32::try_from(pid).map_err(|error| format!("pid {pid}: {error}"))?;
         let app = NSRunningApplication::runningApplicationWithProcessIdentifier(pid)
             .ok_or_else(|| format!("no application with pid {pid}"))?;
-        // Ignoring other applications counts before macOS 14; later systems
-        // decide activation themselves.
         #[allow(deprecated)]
-        let options = NSApplicationActivationOptions::ActivateIgnoringOtherApps;
-        if !app.activateWithOptions(options) {
+        if !app.activateWithOptions(NSApplicationActivationOptions::ActivateIgnoringOtherApps) {
             return Err(format!(
                 "the application with pid {pid} cannot be activated"
             ));
         }
+        Ok(pid)
+    }
+
+    /// Brings process `pid` to the front.
+    pub fn activate(pid: u32) -> Result<(), String> {
+        activate_pid(pid)?;
         thread::sleep(Duration::from_millis(500));
+        Ok(())
+    }
+
+    fn post_key(
+        pid: i32,
+        code: u16,
+        flags: u64,
+        down: bool,
+        autorepeat: bool,
+    ) -> Result<(), String> {
+        let event = CGEvent::new_keyboard_event(None, code, down)
+            .ok_or_else(|| format!("no key event for key code {code}"))?;
+        if autorepeat {
+            CGEvent::set_integer_value_field(
+                Some(&event),
+                CGEventField::KeyboardEventAutorepeat,
+                1,
+            );
+        }
+        CGEvent::set_flags(Some(&event), CGEventFlags::from_bits_retain(flags));
+        CGEvent::post_to_pid(pid, Some(&event));
         Ok(())
     }
 
     /// Brings process `pid` to the front, then posts it each key, as a
     /// virtual key code and modifier flags, pressed and released.
     pub fn press(pid: u32, keys: &[(u16, u64)]) -> Result<(), String> {
-        activate(pid)?;
-        let pid = i32::try_from(pid).map_err(|error| format!("pid {pid}: {error}"))?;
+        let pid = activate_pid(pid)?;
+        thread::sleep(Duration::from_millis(500));
         for &(code, flags) in keys {
             for down in [true, false] {
-                let event = CGEvent::new_keyboard_event(None, code, down)
-                    .ok_or_else(|| format!("no key event for key code {code}"))?;
-                CGEvent::set_flags(Some(&event), CGEventFlags::from_bits_retain(flags));
-                CGEvent::post_to_pid(pid, Some(&event));
+                post_key(pid, code, flags, down, false)?;
                 thread::sleep(Duration::from_millis(50));
             }
         }
         thread::sleep(Duration::from_millis(500));
+        Ok(())
+    }
+
+    /// Posts a finite autorepeat burst to `pid`, stopping early if `cancel` flips and always
+    /// posting a final `keyUp`.
+    pub fn repeat(
+        pid: u32,
+        r: super::Repeat,
+        cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<u32, String> {
+        let pid = activate_pid(pid)?;
+        thread::sleep(Duration::from_millis(250));
+        super::drive_repeat(
+            r,
+            cancel,
+            |down, rep| post_key(pid, r.code, r.flags, down, rep),
+            |ms| thread::sleep(Duration::from_millis(ms)),
+        )
+    }
+
+    /// Posts `pairs` alternating Shift / Ctrl `FlagsChanged` press+release pairs (`2 * pairs` events).
+    /// When `step` is true, waits for one line on stdin before each event (exiting cleanly on EOF)
+    /// and writes `"ok\n"` to stdout after posting.
+    pub fn modifiers(pid: u32, pairs: u32, step: bool) -> Result<(), String> {
+        use std::io::{BufRead, Write};
+        let pid = activate_pid(pid)?;
+        thread::sleep(Duration::from_millis(250));
+        let (stdin, stdout) = (std::io::stdin(), std::io::stdout());
+        let (mut rd, mut wr, mut line) = (stdin.lock(), stdout.lock(), String::new());
+        for pair in 0..pairs {
+            let (code, mask) = if pair.is_multiple_of(2) {
+                (56u16, 0x2_0000)
+            } else {
+                (59u16, 0x4_0000)
+            };
+            for (down, flags) in [(true, mask), (false, 0u64)] {
+                if step {
+                    line.clear();
+                    if rd
+                        .read_line(&mut line)
+                        .map_err(|e| format!("flags-changed stdin: {e}"))?
+                        == 0
+                    {
+                        return Ok(());
+                    }
+                }
+                let ev = CGEvent::new_keyboard_event(None, code, down).ok_or("no flagsChanged")?;
+                CGEvent::set_type(Some(&ev), CGEventType::FlagsChanged);
+                CGEvent::set_flags(Some(&ev), CGEventFlags::from_bits_retain(flags));
+                CGEvent::post_to_pid(pid, Some(&ev));
+                if step {
+                    writeln!(wr, "ok")
+                        .and_then(|()| wr.flush())
+                        .map_err(|e| format!("stdout: {e}"))?;
+                } else {
+                    thread::sleep(Duration::from_millis(2));
+                }
+            }
+        }
         Ok(())
     }
 
@@ -683,6 +800,18 @@ mod elsewhere {
         Err(MACOS.to_owned())
     }
 
+    pub fn repeat(
+        _pid: u32,
+        _r: super::Repeat,
+        _cancel: &std::sync::atomic::AtomicBool,
+    ) -> Result<u32, String> {
+        Err(MACOS.to_owned())
+    }
+
+    pub fn modifiers(_pid: u32, _pairs: u32, _step: bool) -> Result<(), String> {
+        Err(MACOS.to_owned())
+    }
+
     pub fn windows(_pid: u32) -> Result<(Vec<Window>, [f64; 2]), String> {
         Err(MACOS.to_owned())
     }
@@ -717,5 +846,56 @@ mod elsewhere {
 
     pub fn mirror(_main: u32, _display: u32, _to: Mode) -> Result<Mirrored, String> {
         Err(MACOS.to_owned())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Repeat, drive_repeat};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    #[test]
+    fn finite_repeat_honors_cancel_and_always_posts_key_up() {
+        let r = Repeat {
+            code: 7,
+            flags: 0,
+            count: 10,
+            delay_ms: 300,
+            interval_ms: 40,
+        };
+        let (cancel, mut seq) = (AtomicBool::new(false), Vec::new());
+        let sent = drive_repeat(
+            r,
+            &cancel,
+            |down, rep| {
+                seq.push((down, rep));
+                if seq.len() == 4 {
+                    cancel.store(true, Ordering::Relaxed);
+                }
+                Ok(())
+            },
+            |_| {},
+        )
+        .unwrap();
+        assert_eq!(
+            (sent, seq.first(), seq.last()),
+            (3, Some(&(true, false)), Some(&(false, false)))
+        );
+
+        let mut err_seq = Vec::new();
+        let res = drive_repeat(
+            r,
+            &AtomicBool::new(false),
+            |down, rep| {
+                err_seq.push((down, rep));
+                if err_seq.len() == 3 {
+                    Err("boom".into())
+                } else {
+                    Ok(())
+                }
+            },
+            |_| {},
+        );
+        assert!(res.is_err() && err_seq.last() == Some(&(false, false)));
     }
 }
