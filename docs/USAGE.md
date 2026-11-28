@@ -526,6 +526,22 @@ The registry belongs to this user's configured state directory
 (`$XDG_STATE_HOME/eon/sessions`, otherwise `~/.local/state/eon/sessions`);
 different state roots select independent registries.
 
+An invalid registry blocks new sessions and fresh windows; its failure names
+the damaged file, and when set-aside can move the registry it also names
+`eon session registry set-aside [--json]`. That command
+moves the whole registry, unchanged, to a sibling
+`sessions.set-aside-<time>-<random>` in the same state directory, where its
+files stay for diagnosis or recovery by hand. The next session starts a fresh
+registry with new IDs; running windows, their terminals and their sessions'
+old IDs inside the window are unaffected, while the registry no longer knows
+those IDs. A valid or absent registry is left alone (`status` `valid` or
+`absent`); JSON is `{status, registry, set_aside, validation_error}`. A busy
+registry exits 1 with `registry-busy`; an unsafe path is refused unchanged;
+a failure after the move is `registry-uncertain` and names the moved path.
+A file in a later format comes from a newer Eon build: run that build instead
+when it is available, since setting the registry aside takes its
+registrations out of use too.
+
 Creation validates its inputs, commits the registration, then starts terminals.
 Success retains `created: sN` and adds `created_persistent_id`. A failed start
 after registration reports that persistent ID and retains it without adding a
@@ -1276,6 +1292,7 @@ line points agents to `eon --skill`.
 | `eon session ls [--json]` | List the window's sessions in order, with each one's local ID, persistent ID (JSON), name, whether it is shown, its tab count, its most urgent agent attention state, and its recency (0 for the shown one, then 1 for the one shown before it, and so on, the Sessions picker's order) |
 | `eon session [--json]` | Inspect the live tab, pane, popup, and terminal mapping, with each terminal's agent attention state, app and name; JSON includes each terminal's full agent attention record and the Codex, Claude and Google quota readings, and the calling terminal in `caller` (null without `EON_TERMINAL`; a `caller` line in human output only when present); JSON `running` holds this window and the other running Eon windows, each with its ID, generation, name, start time, live terminal count and `client` (`shipping`, or `rune-preview` for a `--rune-preview` window; a preview field); JSON `busy` lists the window's busy terminals, each with its session, tab, pane or popup, terminal and name, and `omitted` counts those past 32, with one `busy` line per terminal in human output |
 | `eon session registry [ID] [--json]` | Read host registrations without a window; registration alone says nothing about running terminals |
+| `eon session registry set-aside [--json]` | Move an invalid registry aside, unchanged, so the next session starts a fresh one; a valid or absent registry is left alone |
 | `eon session --id ID [--json]` | Inspect that exact member without changing the shown session |
 | `eon session new [--name NAME] [--no-focus] [--json]` | Add a session after the shown one, with one tab on quick search, and show it; with `--no-focus` the shown session stays. The reply names the new session's ID in `created` and its persistent ID in `created_persistent_id` (also printed in human output) |
 | `eon session switch SESSION [--json]` | Show session SESSION, with its tabs, panes and popups as it left them |

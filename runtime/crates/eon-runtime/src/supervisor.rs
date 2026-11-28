@@ -6913,7 +6913,10 @@ mod tests {
 
     #[test]
     fn c38_restart_keeps_live_terminals_reachable_when_registry_is_unavailable() {
-        use crate::{control, session_registry::Registry};
+        use crate::{
+            control,
+            session_registry::{Registry, SetAside},
+        };
         let generation = current_generation(&crate::fixtures::inputs()).unwrap();
         for case in ["corrupt", "permissions", "held", "state-root", "worker"] {
             let root = temporary_directory();
@@ -7065,6 +7068,35 @@ mod tests {
                 .unwrap(),
                 control::ControlResponse::Workspace(super::Response::Failure(_))
             ));
+            // EON-C38: a member whose registration completed unsuccessfully
+            // stays unregistered after set-aside.
+            let mut kept = registry_root.clone();
+            if case == "corrupt" {
+                let Ok(SetAside::Moved { destination, .. }) = registry.set_aside() else {
+                    panic!("the corrupt registry was not set aside");
+                };
+                kept = destination;
+                let Ok(control::ControlResponse::Workspace(super::Response::Snapshot(after))) =
+                    control::send_action(&socket, Action::Workspace(WorkspaceAction::Inspect))
+                else {
+                    panic!("no snapshot after set-aside");
+                };
+                assert_eq!(after.workspaces[0].persistent_id, None);
+                assert_eq!(
+                    after.workspaces[0].registration_error,
+                    snapshot.workspaces[0].registration_error
+                );
+                assert!(matches!(
+                    control::send_action(
+                        &socket,
+                        Action::ReadTerminal {
+                            target: "p1".into()
+                        }
+                    )
+                    .unwrap(),
+                    control::ControlResponse::Workspace(super::Response::Text(_))
+                ));
+            }
             let stopped =
                 control::send_stop_on(UnixStream::connect(&socket).unwrap(), &generation).unwrap();
             assert!(matches!(
@@ -7083,10 +7115,7 @@ mod tests {
             );
             drop(held);
             if case == "corrupt" {
-                assert_eq!(
-                    fs::read(registry_root.join("allocator.json")).unwrap(),
-                    b"{"
-                );
+                assert_eq!(fs::read(kept.join("allocator.json")).unwrap(), b"{");
             }
             if case == "permissions" {
                 assert_eq!(fs::metadata(&registry_root).unwrap().mode() & 0o7777, 0o755);
@@ -7105,101 +7134,126 @@ mod tests {
 
     #[test]
     fn c38_registered_recovery_retries_and_publishes_the_confirmed_same_member() {
-        use crate::session_registry::{Operation, Registry, Worker};
+        use crate::session_registry::{Fault, Operation, Registry, SetAside, Worker};
         use eon_workspace_protocol::v51::{Change, SubscriptionMessage, WorkspaceChange};
-        let (root, inputs, mut state, old_peer) = subscribed_window();
-        drop(old_peer);
-        let registry_root = root.join("registry");
-        let registry = Registry::in_test_directory(registry_root.clone());
-        registry.create(None).unwrap();
-        state.workspaces = Some(
-            WorkspaceSet::registered_recovered(
-                Some(registry.clone()),
-                None,
-                crate::workspace::IdAllocator::new(root.clone(), 0).unwrap(),
-                root.clone(),
-                Some(root.clone()),
-                vec![(
-                    1,
-                    Session {
-                        id: "terminal-1".into(),
-                        endpoint: root.join("orbit.sock"),
-                    },
-                )],
-                inputs.defaults.popups.clone(),
-            )
-            .unwrap(),
-        );
-        state.subscribers =
-            crate::subscriptions::Subscribers::new("g1-00000000000000000000000000000001");
-        let before = state.workspace_snapshot_in(None).unwrap();
-        let Dispatched::Subscribe(subscriber) = super::dispatch(
-            super::Incoming::Request(super::Request {
-                id: "recovered-subscribe".into(),
-                caller: None,
-                action: Action::Subscribe {
-                    filter: Default::default(),
-                    after: None,
-                },
-            }),
-            &mut state,
-            &inputs,
-            &root,
-            &root,
-            "g1-00000000000000000000000000000001",
-            None,
-        ) else {
-            panic!("subscription refused");
-        };
-        let (stream, mut peer) = UnixStream::pair().unwrap();
-        state
-            .subscribers
-            .attach(stream, *subscriber, Instant::now());
-        let initial = subscription_messages(&mut peer);
-        assert!(
-            matches!(&initial[0], SubscriptionMessage::Subscribed(subscribed)
-            if subscribed.snapshot.as_ref().unwrap().workspaces[0].workspace.persistent_id.is_none())
-        );
-        let lock = fs::File::open(registry_root.join("registry.lock")).unwrap();
-        lock.lock().unwrap();
-        let mut worker = Worker::start(registry.clone()).unwrap();
-        worker.submit(Operation::Register).unwrap();
-        state.registry_worker = Some(worker);
-        state.registry_pending = Some(super::RegistryPending::Recovery("s1".into()));
-        std::thread::sleep(Duration::from_millis(100));
-        state.poll_registry(&inputs, &root, &root, "g1-00000000000000000000000000000001");
-        assert!(
-            state.workspace_snapshot_in(None).unwrap().workspaces[0]
-                .persistent_id
-                .is_none()
-        );
-        drop(lock);
-        let deadline = Instant::now() + Duration::from_secs(5);
-        while state.registry_pending.is_some() {
-            assert!(
-                Instant::now() < deadline,
-                "recovered registration did not retry"
+        for set_aside in [false, true] {
+            let (root, inputs, mut state, old_peer) = subscribed_window();
+            drop(old_peer);
+            let registry_root = root.join("registry");
+            let registry = Registry::in_test_directory(registry_root.clone());
+            let old = registry.create(None).unwrap();
+            state.workspaces = Some(
+                WorkspaceSet::registered_recovered(
+                    Some(registry.clone()),
+                    None,
+                    crate::workspace::IdAllocator::new(root.clone(), 0).unwrap(),
+                    root.clone(),
+                    Some(root.clone()),
+                    vec![(
+                        1,
+                        Session {
+                            id: "terminal-1".into(),
+                            endpoint: root.join("orbit.sock"),
+                        },
+                    )],
+                    inputs.defaults.popups.clone(),
+                )
+                .unwrap(),
             );
+            state.subscribers =
+                crate::subscriptions::Subscribers::new("g1-00000000000000000000000000000001");
+            let before = state.workspace_snapshot_in(None).unwrap();
+            let Dispatched::Subscribe(subscriber) = super::dispatch(
+                super::Incoming::Request(super::Request {
+                    id: "recovered-subscribe".into(),
+                    caller: None,
+                    action: Action::Subscribe {
+                        filter: Default::default(),
+                        after: None,
+                    },
+                }),
+                &mut state,
+                &inputs,
+                &root,
+                &root,
+                "g1-00000000000000000000000000000001",
+                None,
+            ) else {
+                panic!("subscription refused");
+            };
+            let (stream, mut peer) = UnixStream::pair().unwrap();
+            state
+                .subscribers
+                .attach(stream, *subscriber, Instant::now());
+            let initial = subscription_messages(&mut peer);
+            assert!(
+                matches!(&initial[0], SubscriptionMessage::Subscribed(subscribed)
+                if subscribed.snapshot.as_ref().unwrap().workspaces[0].workspace.persistent_id.is_none())
+            );
+            let lock = fs::File::open(registry_root.join("registry.lock")).unwrap();
+            lock.lock().unwrap();
+            let mut worker_registry = registry.clone();
+            if set_aside {
+                worker_registry.inject(Some(Fault::HandOffBusyRetry));
+            }
+            let mut worker = Worker::start(worker_registry).unwrap();
+            worker.submit(Operation::Register).unwrap();
+            state.registry_worker = Some(worker);
+            state.registry_pending = Some(super::RegistryPending::Recovery("s1".into()));
+            std::thread::sleep(Duration::from_millis(100));
             state.poll_registry(&inputs, &root, &root, "g1-00000000000000000000000000000001");
-            state.end_turn(Instant::now());
-            std::thread::sleep(Duration::from_millis(1));
+            assert!(
+                state.workspace_snapshot_in(None).unwrap().workspaces[0]
+                    .persistent_id
+                    .is_none()
+            );
+            // EON-C38: still pending while its registry is damaged and set aside,
+            // the retry registers it in the fresh registry under a new namespace.
+            // The lock is held until the retry pauses, so it always pauses.
+            if set_aside {
+                let deadline = Instant::now() + Duration::from_secs(5);
+                while !registry_root.join(".tmp-test-retrying").exists() {
+                    assert!(Instant::now() < deadline, "registration did not retry");
+                    std::thread::sleep(Duration::from_millis(1));
+                }
+            }
+            drop(lock);
+            if set_aside {
+                fs::write(registry_root.join("junk.txt"), b"{}").unwrap();
+                let moved = registry.set_aside();
+                assert!(matches!(moved, Ok(SetAside::Moved { .. })), "{moved:?}");
+                fs::create_dir(&registry_root).unwrap();
+                fs::set_permissions(&registry_root, fs::Permissions::from_mode(0o700)).unwrap();
+                fs::write(registry_root.join(".tmp-test-release"), b"go").unwrap();
+            }
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while state.registry_pending.is_some() {
+                assert!(
+                    Instant::now() < deadline,
+                    "recovered registration did not retry"
+                );
+                state.poll_registry(&inputs, &root, &root, "g1-00000000000000000000000000000001");
+                state.end_turn(Instant::now());
+                std::thread::sleep(Duration::from_millis(1));
+            }
+            let after = state.workspace_snapshot_in(None).unwrap();
+            let id = registry.list().unwrap().last().unwrap().id.clone();
+            assert_eq!(id[..32] != old.id[..32], set_aside);
+            assert_eq!(
+                after.workspaces[0].persistent_id.as_deref(),
+                Some(id.as_str())
+            );
+            assert_eq!(after.workspaces[0].registration_error, None);
+            assert_eq!(after.workspace, before.workspace);
+            assert_eq!(after.tabs, before.tabs);
+            let messages = subscription_messages(&mut peer);
+            assert!(messages.iter().any(|message| matches!(message,
+                SubscriptionMessage::Event(event) if matches!(&event.change,
+                    Change::Workspace { change: WorkspaceChange::Registered, workspace }
+                        if workspace.workspace.id == "s1" && workspace.workspace.persistent_id.as_deref() == Some(id.as_str())))), "{messages:?}");
+            drop((peer, state));
+            fs::remove_dir_all(root).unwrap();
         }
-        let after = state.workspace_snapshot_in(None).unwrap();
-        let id = registry.list().unwrap().last().unwrap().id.clone();
-        assert_eq!(
-            after.workspaces[0].persistent_id.as_deref(),
-            Some(id.as_str())
-        );
-        assert_eq!(after.workspaces[0].registration_error, None);
-        assert_eq!(after.workspace, before.workspace);
-        assert_eq!(after.tabs, before.tabs);
-        let messages = subscription_messages(&mut peer);
-        assert!(messages.iter().any(|message| matches!(message,
-            SubscriptionMessage::Event(event) if matches!(&event.change,
-                Change::Workspace { change: WorkspaceChange::Registered, workspace }
-                    if workspace.workspace.id == "s1" && workspace.workspace.persistent_id.as_deref() == Some(id.as_str())))), "{messages:?}");
-        drop((peer, state));
-        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

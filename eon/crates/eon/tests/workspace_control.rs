@@ -10050,6 +10050,209 @@ fn c38_registry_queries_are_read_only_and_independent_of_windows() {
     fs::remove_dir_all(root).unwrap();
 }
 
+// EON-C10: set-aside's JSON, text and exit statuses, with no window or supervisor.
+#[test]
+fn c38_set_aside_cli_reports_json_text_and_exit_statuses() {
+    let root = temporary_directory();
+    let state = root.join("state");
+    let run = |arguments: &[&str]| {
+        eon_command(Path::new(env!("CARGO_BIN_EXE_eon")))
+            .args(["session", "registry"])
+            .args(arguments)
+            .env("XDG_STATE_HOME", &state)
+            .env("EON_RUNTIME_DIR", root.join("absent-runtime"))
+            .env("EON_CONFIG_HOME", root.join("absent-config"))
+            .env("EON_TERMINAL", "invalid caller")
+            .env("EON_ORBIT", root.join("missing-orbit"))
+            .env("EON_VENUS", root.join("missing-venus"))
+            .output()
+            .unwrap()
+    };
+    let json =
+        |output: &Output| serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap();
+    let hint = "'eon session registry set-aside' moves this registry aside";
+    let absent = run(&["set-aside", "--json"]);
+    assert_eq!(absent.status.code(), Some(0), "{absent:?}");
+    assert_eq!(json(&absent)["status"], "absent");
+    assert!(!state.exists());
+    let registry = state.join("eon/sessions");
+    let record = registry.join("0123456789abcdef0123456789abcdef0000000000000001.json");
+    let damage = || {
+        fs::create_dir_all(&registry).unwrap();
+        fs::set_permissions(&registry, fs::Permissions::from_mode(0o700)).unwrap();
+        fs::write(&record, b"{").unwrap();
+        fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+    };
+    damage();
+    let failed = run(&[]);
+    assert_eq!(failed.status.code(), Some(1), "{failed:?}");
+    let stderr = String::from_utf8_lossy(&failed.stderr);
+    assert!(
+        stderr.contains(&record.display().to_string()) && stderr.contains(hint),
+        "{stderr}"
+    );
+    let moved = run(&["set-aside", "--json"]);
+    assert_eq!(moved.status.code(), Some(0), "{moved:?}");
+    let value = json(&moved);
+    assert_eq!(value["status"], "set-aside");
+    assert_eq!(value["registry"], registry.display().to_string());
+    let destination = PathBuf::from(value["set_aside"].as_str().unwrap());
+    assert_eq!(destination.parent(), registry.parent());
+    assert!(
+        destination
+            .file_name()
+            .unwrap()
+            .to_string_lossy()
+            .starts_with("sessions.set-aside-")
+    );
+    assert_eq!(
+        fs::read(destination.join(record.file_name().unwrap())).unwrap(),
+        b"{"
+    );
+    let error = &value["validation_error"];
+    assert_eq!(error["code"], "session-registry");
+    let detail = error["detail"].as_str().unwrap();
+    assert!(
+        detail.contains(&record.display().to_string()) && !detail.contains(hint),
+        "{detail}"
+    );
+    let again = run(&["set-aside", "--json"]);
+    assert_eq!(
+        (again.status.code(), json(&again)["status"].clone()),
+        (Some(0), "absent".into())
+    );
+    damage();
+    let text = run(&["set-aside"]);
+    assert_eq!(text.status.code(), Some(0), "{text:?}");
+    assert!(stdout(&text).starts_with(&format!(
+        "set aside session registry {}\nmoved to ",
+        registry.display()
+    )));
+    fs::DirBuilder::new().mode(0o700).create(&registry).unwrap();
+    let valid = run(&["set-aside"]);
+    assert_eq!(valid.status.code(), Some(0), "{valid:?}");
+    assert!(
+        stdout(&valid).ends_with("is valid; nothing was set aside\n"),
+        "{valid:?}"
+    );
+    fs::write(&record, b"{").unwrap();
+    fs::set_permissions(&record, fs::Permissions::from_mode(0o600)).unwrap();
+    let lock = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .mode(0o600)
+        .open(registry.join("registry.lock"))
+        .unwrap();
+    lock.try_lock().unwrap();
+    let busy = run(&["set-aside", "--json"]);
+    assert_eq!(busy.status.code(), Some(1), "{busy:?}");
+    assert_eq!(json(&busy)["error"]["code"], "registry-busy");
+    drop(lock);
+    assert!(record.exists());
+    for arguments in [
+        vec!["set-aside", "extra"],
+        vec!["set-aside", "--window", "default"],
+        vec!["set-aside", "--generation", "g1"],
+    ] {
+        assert_eq!(run(&arguments).status.code(), Some(2), "{arguments:?}");
+    }
+    let help = run(&["set-aside", "--help"]);
+    assert_eq!(help.status.code(), Some(0), "{help:?}");
+    assert!(stdout(&help).contains("session registry set-aside [--json]"));
+    assert!(!root.join("absent-runtime").exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+// EON-C38: set-aside leaves a live window, its terminals and its members' IDs alone.
+#[test]
+fn c38_set_aside_keeps_live_terminals_and_their_ids() {
+    let window = PairWindow::new();
+    let state = window.root.join("state");
+    // A fresh window refused by a damaged registry starts once it is set aside.
+    let junk = state.join("eon/sessions/junk.txt");
+    fs::create_dir_all(junk.parent().unwrap()).unwrap();
+    for path in [state.join("eon"), state.join("eon/sessions")] {
+        fs::set_permissions(path, fs::Permissions::from_mode(0o700)).unwrap();
+    }
+    fs::write(&junk, b"{}").unwrap();
+    let mut refused = window.command(&[]);
+    let refused = refused.env("XDG_STATE_HOME", &state).output().unwrap();
+    assert!(!refused.status.success(), "{refused:?}");
+    // The detached supervisor reports why in its log.
+    let text: String = fs::read_dir(state.join("eon/logs"))
+        .unwrap()
+        .map(|entry| fs::read_to_string(entry.unwrap().path()).unwrap())
+        .collect();
+    assert!(
+        text.contains(&junk.display().to_string()) && text.contains("set-aside"),
+        "{text}"
+    );
+    let mut set_aside = window.command_with_arguments(&["session", "registry", "set-aside"]);
+    assert!(
+        set_aside
+            .env("XDG_STATE_HOME", &state)
+            .status()
+            .unwrap()
+            .success()
+    );
+    let mut launch = window.command(&[]);
+    launch.env("XDG_STATE_HOME", &state);
+    let mut supervisor = window.start(launch);
+    wait_for_ready(&window.control());
+    let run = |arguments: &[&str]| {
+        eon_command(&window.binary)
+            .args(arguments)
+            .env("HOME", &window.home)
+            .env("XDG_STATE_HOME", &state)
+            .env("EON_RUNTIME_DIR", &window.runtime)
+            .env("EON_CONFIG_HOME", &window.config)
+            .output()
+            .unwrap()
+    };
+    let read = |arguments: &[&str]| {
+        let output = run(arguments);
+        assert_eq!(output.status.code(), Some(0), "{arguments:?}: {output:?}");
+        serde_json::from_slice::<serde_json::Value>(&output.stdout).unwrap()
+    };
+    let initial = window.inspect("initial");
+    let first = initial.workspaces[0].persistent_id.clone().unwrap();
+    let damaged = state.join("eon/sessions/junk.txt");
+    fs::write(&damaged, b"{}").unwrap();
+    fs::set_permissions(&damaged, fs::Permissions::from_mode(0o600)).unwrap();
+    let refused = run(&["session", "new", "--no-focus", "--json"]);
+    assert_eq!(refused.status.code(), Some(1), "{refused:?}");
+    let detail = stdout(&refused);
+    assert!(
+        detail.contains(&damaged.display().to_string()) && detail.contains("set-aside"),
+        "{detail}"
+    );
+    assert_eq!(
+        read(&["session", "registry", "set-aside", "--json"])["status"],
+        "set-aside"
+    );
+    let listing = read(&["session", "ls", "--json"]);
+    assert_eq!(listing["sessions"][0]["persistent_id"], first.as_str());
+    assert_eq!(window.inspect("after-set-aside").tabs, initial.tabs);
+    assert_eq!(
+        read(&["session", "--id", &first, "--json"])["session"],
+        "s1"
+    );
+    for arguments in [
+        vec!["session", "registry", first.as_str()],
+        vec!["session", "rename", "--id", first.as_str(), "renamed"],
+    ] {
+        assert_eq!(run(&arguments).status.code(), Some(3), "{arguments:?}");
+    }
+    let created = read(&["session", "new", "--no-focus", "--json"]);
+    let fresh = created["created_persistent_id"].as_str().unwrap();
+    assert_ne!(fresh[..32], first[..32]);
+    assert_eq!(
+        window.inspect("after-create").workspaces[0].name,
+        initial.workspaces[0].name
+    );
+    window.stop_generation(&mut supervisor);
+}
+
 #[test]
 fn c38_cli_identity_targets_and_creation_results_keep_exact_membership() {
     let window = PairWindow::new();

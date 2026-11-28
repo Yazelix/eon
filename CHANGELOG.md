@@ -5,6 +5,10 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- `eon session registry set-aside` moves an invalid session registry aside,
+  unchanged, so new sessions and windows start again with a fresh registry;
+  registry failures now name the damaged file and this command, and a file
+  from a later Eon build says so (`eon-bq146`, EON-C38, EON-C10).
 - The Agents sidebar heading adapts to light and dark terminal backgrounds
   (`eon-h69sg`).
 - Orbit publishes its presentation socket once it is listening. Standalone

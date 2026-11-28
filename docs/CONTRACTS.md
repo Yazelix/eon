@@ -1547,6 +1547,24 @@ names its socket. CLI JSON names a session `session` and a terminal
 
 ## EON-C10 — Typed workspace control
 
+- Amended on 2026-11-28 (approved by Lucca, relayed by eon-lead) by
+  `eon-bq146`: `eon session registry set-aside [--json]` runs without a
+  window, caller or supervisor and applies EON-C38 Set-aside. It exits 0
+  when it moves the registry and when the registry is valid or absent,
+  including a missing state directory.
+  JSON is `{status, registry, set_aside, validation_error}`: `status` is
+  `set-aside`, `valid` or `absent`; `registry` and `set_aside` are
+  absolute paths encoded as other CLI JSON paths are; `set_aside` and
+  `validation_error` (the bounded `{code, detail}` that made the registry
+  invalid) are null unless it moved. `registry-busy` exits 1 and moves
+  nothing; a refusal or failed move exits 1 with `session-registry`; any
+  failure after the move (its inspection or its durability) exits 1 with
+  `registry-uncertain`, names the moved path, and must not be retried
+  blindly. Syntax exits 2;
+  window and generation selectors are invalid here. A registry failure
+  that set-aside can resolve names the failing path and the command; its
+  code stays `session-registry`.
+
 - **Amendment (2026-11-25):** `eon-dm8m6`, approved by eon-desk under
   Lucca's 2026-11-13 delegation for contract text: a Files invocation that
   shows a hidden Files moves it to the tab's current directory in place.
@@ -7162,6 +7180,9 @@ A missing or nonexecutable agy is `start`; an invalid reset timestamp is
   rule) by `eon-remote-workspaces-52i4.4`: restated as current behavior after
   slice 2a landed, naming the registry's format, the outcomes of a mutation
   and the limits that remain. No behavior changed.
+  Amended on 2026-11-28 (approved by Lucca, relayed by eon-lead) by
+  `eon-bq146`: an explicit command sets an invalid registry aside, and its
+  failures name the failing path.
 - **Consumer:** Local Eon session clients and the host's ID-targeted session
   operations: the `eon session` commands and JSON (EON-C10), event
   subscribers (EON-C39) and Venus. Remote clients are planned under the
@@ -7233,18 +7254,76 @@ A missing or nonexecutable agy is `start`; an invalid reset timestamp is
     list and lookup use shared locks; mutations use exclusive locks. A
     registry that cannot be set up is a recovered member's visible
     registration error and blocks neither recovery nor control binding.
+  - **Set-aside.** `eon session registry set-aside` acts only on a
+    registry that exists and fails validation. It requires a state
+    directory owned by the user that others cannot write, and that its
+    group can write only when it is the user's own primary group. It locks
+    the registry directory and, when present, its `registry.lock`, without
+    waiting; checks after locking and again after validation, just before
+    moving, that both are still the ones it locked; and renames the whole
+    registry directory, unchanged, to a new sibling
+    `sessions.set-aside-<unique>` in the same state directory with an
+    atomic rename that never replaces anything; then it syncs the state
+    directory and releases the locks. Nothing in the registry is created,
+    rewritten, re-moded or deleted. A valid or absent registry, or a
+    missing state directory (including one below an existing symbolic
+    link to a directory), is left unchanged. It moves nothing when the
+    state directory is owned by another user, cannot be opened, is reached
+    through a dangling link or a link to a non-directory, or other users
+    can write it; when the
+    registry path is a symbolic link, not a directory, owned by another
+    user or cannot be opened; when `registry.lock` is a link, not a
+    regular file, owned by another user or cannot be opened; when the
+    filesystem lacks atomic no-replace rename; or when the registry
+    changes while it works; a held lock is busy. Any failure after the
+    rename is an uncertain result that names the new path, and the move is
+    never undone. First-time lock creation takes the registry directory
+    lock before checking the directory's mode, validating and creating
+    `registry.lock`, so no process of a build with set-aside can write to
+    or create a lock in a registry that set-aside moves; when
+    `registry.lock` exists, no process of any build can. Two narrow limits
+    remain in the instant between the last check and the rename. Because
+    no system call renames a directory by identity, a process the state
+    directory trusts can replace the registry directory, and the
+    replacement is what moves. And an already-running older build, which
+    does not take the directory lock on first-time creation, paused after
+    preparing an initially valid, empty, lockless registry when something
+    else damaged it, can create and hold `registry.lock` before the
+    rename. In both cases the post-rename inspection detects the mismatch
+    or the unexpected lock, reports an uncertain result naming both paths,
+    and deletes nothing; in the older-build case the paused process could
+    still write by path into a newly initialized registry until it
+    finishes. An older build whose `registry.lock` is removed while it
+    holds it can likewise write by path into a newly initialized registry
+    until it finishes. Detection is not complete for such an older build:
+    if its lock creation is already in flight when the rename happens, it may
+    add an empty `registry.lock` to the set-aside directory after a
+    successful result; that process then fails its own lock check and
+    writes nothing anywhere, and no original byte changes. These
+    transitional windows end once running builds include set-aside. The
+    next registration starts
+    a fresh registry with a new namespace, so no ID of the set-aside
+    registry is issued again, and nothing rebinds one. Supervisors are not
+    contacted: live members keep their IDs as window-local targets;
+    registry lookup, rename and in-place update of a member whose ID was
+    set aside fail as for a missing registration; recovered members whose
+    registration attempt has completed unsuccessfully stay unregistered
+    until their supervisor next starts. Running terminals are unaffected.
 - **Important failures:**
   - Unknown, stale or ambiguous targets, corrupt or unknown registry
     versions, unsafe ownership, modes or links, and persistence failures give
     explicit diagnostics rather than guessed targets or a replacement with
     the same name.
-  - Malformed state remains in place for diagnosis. Every read validates the
-    whole registry, and Eon never repairs, replaces or removes what fails.
+  - Every read validates the whole registry and names the failing path.
+    Eon never repairs, rewrites or deletes what fails; malformed state
+    stays in place for diagnosis until set-aside moves it out of use.
   - Registry failure authorizes no terminal stop, destructive cleanup,
     duplicate process launch or fallback local creation. An invalid
-    non-temporary registry entry refuses registry operations: no new session
-    or fresh launch without recoverable terminals succeeds until corrected.
-    Running terminals, their recovery and eonbase are unaffected.
+    non-temporary registry entry refuses registry operations: no new
+    session or fresh launch without recoverable terminals succeeds until
+    the registry is corrected or set aside. A failure that set-aside can
+    resolve names it. Running terminals, their recovery and eonbase are
+    unaffected.
 - **Owner:** Eon Runtime owns persistent IDs, registry state and target
   resolution. Eon projects that authority through its existing command and
   picker boundaries. Orbit remains the authority for terminal and run state
@@ -7257,10 +7336,13 @@ A missing or nonexecutable agy is `start`; an invalid reset timestamp is
     state. Restoring original membership and layout after a supervisor
     restart belongs to slice 2b (`eon-remote-workspaces-52i4.6`) and its
     amendments to EON-C15 and EON-C33.
-  - Nothing removes a registration or a reserved ID, and a temporary file
-    left by an interrupted write is ignored, not cleaned. Forget is row I4 of
-    the acceptance matrix.
-  - No command repairs or sets aside a registry that fails validation.
+  - Nothing deletes a registration or a reserved ID; set-aside moves them,
+    with their whole registry, out of use. A temporary file left by an
+    interrupted write is ignored, not cleaned. Forget is row I4 of the
+    acceptance matrix.
+  - No command repairs a registry, salvages records from one, or moves a
+    set-aside registry back; set-aside is the only operation on an invalid
+    registry.
   - No remote target, SSH transport, takeover or moving live work across
     hosts. A remote target will name its host and session ID, and one window
     uses one host (reserved EON-C34).

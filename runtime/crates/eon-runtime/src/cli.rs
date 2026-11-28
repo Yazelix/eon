@@ -1118,6 +1118,11 @@ pub(super) fn versions(inputs: &Inputs) -> Result<String, String> {
 fn registry_command(arguments: &[OsString]) -> Result<i32, Error> {
     use super::session_registry::{Failure as RegistryFailure, Registry, validate_id};
 
+    if let [operation, rest @ ..] = arguments
+        && operation == "set-aside"
+    {
+        return set_aside_command(rest);
+    }
     let (mut id, mut json) = (None, false);
     for argument in arguments {
         match argument.to_str() {
@@ -1176,6 +1181,63 @@ fn registry_command(arguments: &[OsString]) -> Result<i32, Error> {
                 )
             })
             .collect()
+    })?;
+    Ok(0)
+}
+
+/// `eon session registry set-aside [--json]` (EON-C38): no window or supervisor.
+fn set_aside_command(arguments: &[OsString]) -> Result<i32, Error> {
+    use super::session_registry::{Registry, SetAside};
+
+    let json = match arguments {
+        [] => false,
+        [flag] if flag == "--json" => true,
+        _ => return Err(Error::usage(EON_USAGE)),
+    };
+    // Local output: the detail keeps the whole moved path, unbounded.
+    let registry = match Registry::new() {
+        Ok(registry) => registry,
+        Err(error) => return Ok(report_failure(&error.bounded(usize::MAX), json)?),
+    };
+    let outcome = match registry.set_aside() {
+        Ok(outcome) => outcome,
+        Err(error) => return Ok(report_failure(&error.bounded(usize::MAX), json)?),
+    };
+    let root = registry.root();
+    let path = |path: &Path| super::workspace::json_path(path.as_os_str().as_bytes());
+    let (status, moved) = match outcome {
+        SetAside::Moved {
+            destination,
+            validation_error,
+        } => (
+            "set-aside",
+            Some((destination, validation_error.into_control())),
+        ),
+        SetAside::Valid => ("valid", None),
+        SetAside::Absent => ("absent", None),
+    };
+    write_stdout(if json {
+        let (set_aside, error) = moved.map_or(("null".into(), "null".into()), |(to, error)| {
+            let error = serde_json::json!({"code": error.code, "detail": error.detail});
+            (path(&to), error.to_string())
+        });
+        format!(
+            "{{\"status\":\"{status}\",\"registry\":{},\"set_aside\":{set_aside},\"validation_error\":{error}}}\n",
+            path(root)
+        )
+    } else if let Some((to, error)) = moved {
+        format!(
+            "set aside session registry {}\nmoved to {}\nreason: {}\nthe next session starts a fresh \
+             registry; sessions in running windows keep their old IDs\n",
+            root.display(),
+            to.display(),
+            error.detail
+        )
+    } else {
+        format!(
+            "session registry {} is {status}; nothing was set aside\n",
+            root.display()
+        )
     })?;
     Ok(0)
 }
@@ -1317,6 +1379,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
             (
                 "session registry [ID] [--json]",
                 "Read this user's registrations",
+            ),
+            (
+                "session registry set-aside [--json]",
+                "Move an invalid registry aside",
             ),
             ("events [--json]", "Subscribe to this window's events"),
             (
@@ -1485,10 +1551,10 @@ const HELP_SECTIONS: &[(&str, &[(&str, &str)])] = &[
     ),
 ];
 
-/// Answers `-h` or `--help` alone or after one or two command words: `eon FAMILY --help` and
+/// Answers `-h` or `--help` alone or after up to three command words: `eon FAMILY --help` and
 /// `eon FAMILY COMMAND --help` print the rows of `eon --help` whose command starts with those
-/// words, and words no row starts with are invalid. Operands, as in `run -- --help`, and
-/// Anima's own help are not help here.
+/// words, and one or two words no row starts with are invalid. Operands, as in `run -- --help`
+/// or a third word no row starts with, and Anima's own help are not help here.
 fn command_help(version: &str, arguments: &[OsString]) -> Option<Result<i32, Error>> {
     let (flag, words) = arguments.split_last()?;
     // Command words are lowercase, as `window`; `--`, IDs and the `-h,` row are not.
@@ -1501,7 +1567,7 @@ fn command_help(version: &str, arguments: &[OsString]) -> Option<Result<i32, Err
         })
     };
     if !(flag == "-h" || flag == "--help")
-        || words.len() > 2
+        || words.len() > 3
         || words.first().is_some_and(|word| word == "anima")
         || !words.iter().all(command_word)
     {
@@ -1516,6 +1582,10 @@ fn command_help(version: &str, arguments: &[OsString]) -> Option<Result<i32, Err
         [family, ..] if family == "eon" => None,
         _ => command_help_text(words, color),
     };
+    // A third word no row starts with is an operand, as in `tab rename notes`.
+    if help.is_none() && words.len() == 3 {
+        return None;
+    }
     Some(match help {
         Some(help) => write_stdout(help).map(|()| 0).map_err(Error::from),
         None => Err(Error::usage(EON_USAGE)),
@@ -1631,6 +1701,7 @@ SESSION is a session ID (s1, s2, ...) or its exact name.
 Inspect/switch/rename/close accept --id ID instead of a SESSION target.
 ID is the full persistent_id, scoped to the selected window.
 session registry reads metadata without a window; it does not show liveness.
+session registry set-aside moves an invalid registry aside, unchanged.
 session new --name NAME names the new session; created gives its local ID,
 created_persistent_id its durable identity. Uncertain creation needs inspection,
 not an automatic retry.

@@ -4637,7 +4637,7 @@ pub(crate) fn json_option(output: &mut String, value: Option<&str>) {
 }
 
 /// UTF-8 paths become JSON strings; other paths keep their exact bytes as an array.
-fn json_path(bytes: &[u8]) -> String {
+pub(crate) fn json_path(bytes: &[u8]) -> String {
     match std::str::from_utf8(bytes) {
         Ok(path) => format!("\"{}\"", json_escape(path)),
         Err(_) => format!(
