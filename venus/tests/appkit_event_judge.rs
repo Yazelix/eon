@@ -216,9 +216,18 @@ fn trace_integrity_and_receipt_schema_fail_closed() {
         &[],
         json!({"echo_calls": 2000}),
     );
-    let res = result_json("aarch64-darwin", "rune", vec![c]);
+    let res = result_json(
+        "aarch64-darwin",
+        "rune",
+        &["--cursor-effect-v1", "none"],
+        vec![c],
+    );
     assert_eq!(res["schema"], 1);
     assert_eq!(res["tool"], "appkit-event-driver");
     assert_eq!(res["platform"], "aarch64-darwin");
     assert_eq!(res["result"], "pass");
+    assert_eq!(
+        res["conditions"]["worker_flags"],
+        json!(["--cursor-effect-v1", "none"])
+    );
 }

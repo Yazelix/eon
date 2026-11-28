@@ -438,7 +438,7 @@ pub fn receipt_json(
     })
 }
 
-pub fn result_json(platform: &str, host: &str, cells: Vec<Value>) -> Value {
+pub fn result_json(platform: &str, host: &str, worker_flags: &[&str], cells: Vec<Value>) -> Value {
     let ok = !cells.is_empty() && cells.iter().all(|c| c["result"] == "pass");
     json!({
         "schema": 1, "tool": "appkit-event-driver", "suite": "events",
@@ -449,6 +449,7 @@ pub fn result_json(platform: &str, host: &str, cells: Vec<Value>) -> Value {
             "repeat_delay_ms": REPEAT_DELAY_MS, "repeat_interval_ms": REPEAT_INTERVAL_MS,
             "repeat_settle_ms": SETTLE_MS, "same_configures": TOGGLES,
             "resize_modes": MODES, "modifier_pairs": MODIFIER_PAIRS,
+            "worker_flags": worker_flags,
         },
         "cells": cells,
     })

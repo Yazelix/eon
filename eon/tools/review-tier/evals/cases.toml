@@ -403,6 +403,30 @@ lines = [1462, 1477]
 file = "eon/tools/eon-bench/src/bundle.rs"
 lines = [498, 514]
 
+[[case]]
+id = "R37"
+kind = "failed-landing"
+commit = "7f7abbdaf966c6c9d0859938227bfd89eba104c1"
+# Pending landed fix commit SHA for eon-33cww.4.2.
+fixed_by = "0000000000000000000000000000000000000000"
+class = "macos-portability"
+tier = "high"
+summary = "The AppKit event proof worker tears down its window with -[NSWindow close] instead of -performClose:, bypassing AppKit's windowShouldClose: delegate (CloseRequested / on_close_request) and delivering only windowWillClose: (WindowEvent::Destroyed). Rune's Host::native_event ignores WindowEvent::Destroyed and only exits via on_close_request, so every Rune cell hangs until its 180s deadline after writing metrics.json."
+evidence = "7f7abbda adds worker teardown at venus/tests/appkit_event_driver.rs:657 calling w.close(), while venus/src/application/rune_host.rs:485 (Host::native_event) does not handle WindowEvent::Destroyed and exits only through on_close_request (:1012). Native mac-proof run 46123084375 on macos-15 failed all six Rune cells across appkit-events-ime:rune and appkit-events-cgevent:rune with 'cell timed out'. The same run also showed moving-caret quiet-tail rebuilds from Venus's default cursor trail, configure-storm probes 0/10 from -[NSWindow setContentSize:] synchronously presenting before the pointer probe, and held-repeat emitting 1 byte because macOS ApplePressAndHoldEnabled intercepts letter keycode 7 ('x')."
+mechanism = [["w.close", "close()", "nswindow close", "performclose", "perform close", "windowshouldclose", "windowwillclose", "closerequested", "close requested", "on_close_request", "destroyed"], ["rune", "hang", "hangs", "time out", "times out", "timed out", "timeout", "never exits", "does not exit", "won't exit", "stays open", "ignores", "ignored", "bypass", "bypasses"]]
+
+[[case.expect]]
+file = "venus/tests/appkit_event_driver.rs"
+lines = [656, 658]
+
+[[case.expect]]
+file = "venus/src/application/rune_host.rs"
+lines = [485, 505]
+
+[[case.expect]]
+file = "venus/src/application/rune_host.rs"
+lines = [1012, 1035]
+
 # Exact Darwin levels and legs for the whole first-parent diff.
 [[darwin]]
 commit = "7cf509e988af36c7da06778cf910974707887134"

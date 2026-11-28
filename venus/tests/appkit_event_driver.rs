@@ -30,6 +30,8 @@ use std::{
     time::{Duration, Instant},
 };
 
+const WORKER_FLAGS: [&str; 2] = ["--cursor-effect-v1", "none"];
+
 fn ms(n: u64) -> Duration {
     Duration::from_millis(n)
 }
@@ -224,7 +226,7 @@ fn run_parent(args: &[String], out: &Path) -> Result<bool, String> {
         put(cell_out.join("receipt.json"), &cell)?;
         cells.push(cell);
     }
-    let summary = result_json(platform, &host, cells);
+    let summary = result_json(platform, &host, &WORKER_FLAGS, cells);
     put(out.join("result.json"), &summary)?;
     Ok(summary["result"] == "pass")
 }
@@ -285,7 +287,7 @@ fn run_cell(
     let stderr_file = fs::File::create(&stderr_path).map_err(err("stderr"))?;
     let worker_idx = guard.children.len();
     let mut cmd = Command::new(exe);
-    cmd.arg(&orbit_sock).envs([
+    cmd.args(WORKER_FLAGS).arg(&orbit_sock).envs([
         ("EON_APPKIT_DRIVER_WORKER", Path::new("1")),
         ("EON_APPKIT_FIXTURE", Path::new(fixture)),
         ("EON_APPKIT_HOST", Path::new(host)),
@@ -396,7 +398,7 @@ fn pty_payload(args: &[String]) -> Result<(), String> {
                             acc.extend_from_slice(&buf[..n]);
                             atomic_write(&dir.join("committed.txt"), &acc);
                         } else {
-                            count += buf[..n].iter().filter(|&&b| b == b'x').count() as u64;
+                            count += buf[..n].iter().filter(|&&b| b == b'1').count() as u64;
                             atomic_write(&dir.join("count.txt"), count.to_string().as_bytes());
                             put(&format!("\r{count} "));
                         }
@@ -467,7 +469,7 @@ mod appkit {
         NSResponder, NSView, NSWindow,
     };
     use objc2_foundation::{
-        NSNotFound, NSNotificationCenter, NSPoint, NSRange, NSRect, NSSize, NSString,
+        NSNotFound, NSNotificationCenter, NSPoint, NSProcessInfo, NSRange, NSRect, NSSize, NSString,
     };
     use serde_json::json;
     use std::{
@@ -623,6 +625,16 @@ mod appkit {
         (before, read_count(dir).saturating_sub(before))
     }
 
+    fn resize_content_no_display(win: &NSWindow, size: NSSize) {
+        let cur = win.frame();
+        let mut next = win.frameRectForContentRect(NSRect::new(NSPoint::new(0.0, 0.0), size));
+        next.origin = NSPoint::new(
+            cur.origin.x,
+            cur.origin.y + cur.size.height - next.size.height,
+        );
+        win.setFrame_display(next, false);
+    }
+
     pub fn run_worker() -> ExitCode {
         let env_s = |k| env::var(k).unwrap_or_default();
         let (fixture, dir) = (
@@ -654,7 +666,10 @@ mod appkit {
                 json!({"driver_error": format!("startup timeout (15s): {d}")})
             };
             let _ = fs::write(&out_metrics, serde_json::to_string(&metrics).unwrap());
-            on_main(|m| main_window(m).into_iter().for_each(|w| w.close()));
+            on_main(|m| match main_window(m) {
+                Some(w) => w.performClose(None),
+                None => NSApplication::sharedApplication(m).terminate(None),
+            });
         });
         let res = match host.as_str() {
             #[cfg(feature = "candidate-rune")]
@@ -786,7 +801,7 @@ mod appkit {
         let args = [
             "hold-repeat",
             pid,
-            "7",
+            "18",
             "0",
             &rs,
             &ds,
@@ -862,12 +877,17 @@ mod appkit {
                     let scale = w.backingScaleFactor();
                     let (pw, ph) = ((960.0 * scale).round() as u32, (h * scale).round() as u32);
                     yazelix_venus::bench_trace("driver_probe", format_args!("{i} {pw}x{ph}"));
-                    w.setContentSize(NSSize::new(960.0, h));
+                    resize_content_no_display(&w, NSSize::new(960.0, h));
+                    let ts = NSProcessInfo::processInfo().systemUptime();
                     for ty in [NSEventType::RightMouseDown, NSEventType::RightMouseUp] {
                         let ev = NSEvent::mouseEventWithType_location_modifierFlags_timestamp_windowNumber_context_eventNumber_clickCount_pressure(
-                            ty, NSPoint::new(100.0, 100.0), NSEventModifierFlags::empty(), 0.0,
+                            ty, NSPoint::new(100.0, 100.0), NSEventModifierFlags::empty(), ts,
                             w.windowNumber(), None, 0, 1, 1.0,
                         ).ok_or("no RightMouse NSEvent")?;
+                        let button = ev.buttonNumber();
+                        if button != 1 {
+                            return Err(format!("RightMouse NSEvent had buttonNumber {button}"));
+                        }
                         w.sendEvent(&ev);
                     }
                     Ok::<_, String>(())
