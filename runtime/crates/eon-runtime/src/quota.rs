@@ -1304,8 +1304,18 @@ fn fetch(
     if provider == "google" {
         return google::fetch(program, timeout, stop);
     }
+    fetch_with(program, provider, move |command, remaining| {
+        run_command(command, Instant::now() + timeout, remaining, stop)
+    })
+}
+
+fn fetch_with(
+    program: &Path,
+    provider: &str,
+    run: impl FnOnce(Command, &mut usize) -> CommandResult,
+) -> Result<Option<Vec<u8>>, Failure> {
     let mut remaining = MAX_BYTES;
-    run_command(quota_command(program, provider), Instant::now() + timeout, &mut remaining, stop)?
+    run(quota_command(program, provider), &mut remaining)?
         .map(|(bytes, status)| {
             if status.success() {
                 return Ok(bytes);
@@ -1890,10 +1900,34 @@ mod tests {
         let (_stop, stopped) = mpsc::channel();
         let program = root.join("flood");
         script(&program, "while :; do printf '%01024d' 0; done");
-        assert_eq!(
-            fetch(&program, "codex", Duration::from_secs(1), &stopped),
-            Err(Failure::OutputLimit)
+        use std::os::unix::process::ExitStatusExt;
+        // Real processes can reach either bound first; fetch_with pins the byte cap.
+        let fetched = fetch(&program, "codex", Duration::from_secs(1), &stopped)
+            .map(|bytes| bytes.map(|b| b.len()));
+        assert!(
+            matches!(fetched, Err(Failure::OutputLimit | Failure::Deadline)),
+            "flood: expected OutputLimit or Deadline, got {fetched:?}"
         );
+        let cap_bin = Path::new("/managed/codexbar");
+        let (ok, over) = (Ok(Some(MAX_BYTES)), Err(Failure::OutputLimit));
+        for (label, provider, chunks, expected) in [
+            ("exact cap", "codex", &[MAX_BYTES][..], ok),
+            ("split cap", "claude", &[8192, MAX_BYTES - 8192], ok),
+            ("over cap", "codex", &[MAX_BYTES + 1], over),
+            ("split over", "claude", &[MAX_BYTES, 1], over),
+        ] {
+            let result = fetch_with(cap_bin, provider, |command, remaining| {
+                assert!(command.get_args().any(|arg| arg == provider), "{label}");
+                let mut total = 0usize;
+                for &chunk in chunks {
+                    consume_output(remaining, chunk)?;
+                    total += chunk;
+                }
+                Ok(Some((vec![b'0'; total], process::ExitStatus::from_raw(0))))
+            });
+            let len = result.map(|bytes| bytes.map(|b| b.len()));
+            assert_eq!(len, expected, "{label}");
+        }
         let program = root.join("exits");
         script(&program, "exit 3");
         assert_eq!(
