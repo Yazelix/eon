@@ -1918,6 +1918,7 @@
             for operand in "" -c; do check 2 ${tools.cc} -arch "$operand" </dev/null; done
             check 2 ${tools.cc} -arch </dev/null
           '';
+          eonTest = import ./nix/test-sandbox.nix { inherit pkgs rustToolchain; };
           archivePackages = (perSystem system { archive = true; }).packages.${system};
         in
         {
@@ -2031,6 +2032,7 @@
             # Workflows and shell scripts, and the release pin script (pull request checks).
             lint = lintCheck;
             darwin-clippy-wrappers = darwinClippyWrappersCheck;
+            eon-test-stress = eonTest.passthru.stressCheck;
             pin-latest-release = pinLatestReleaseCheck;
             # The pair's quick search against a slow stand-in fzf (EON-C18), its marker
             # removed before fzf starts and after it ends, a pick or Esc reported while
@@ -2058,7 +2060,7 @@
               pkgs.pkg-config
               zig
               pkgs.bun
-              (import ./nix/test-sandbox.nix { inherit pkgs; })
+              eonTest
               (darwinClippy (if pkgs.stdenv.isLinux then darwinCrossTools "${zig}/bin/zig" else null))
               # Runtime tests paste printed commands into Eon's Nushell.
               nushellPackage

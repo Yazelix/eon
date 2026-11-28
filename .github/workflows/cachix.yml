@@ -95,3 +95,7 @@ jobs:
       - name: Check the unsafe policy
         if: ${{ !cancelled() }}
         run: nix build --print-build-logs --no-link .#checks.x86_64-linux.unsafe-policy
+
+      - name: Check eon-test stress exit status
+        if: ${{ !cancelled() }}
+        run: nix build --print-build-logs --no-link .#checks.x86_64-linux.eon-test-stress

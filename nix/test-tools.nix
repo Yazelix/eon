@@ -1,15 +1,32 @@
 { pkgs }:
 let
   linux = pkgs.lib.optionals pkgs.stdenv.isLinux;
+  # Rota cap fixtures copy or rename sleep, which multicall cannot support.
+  coreutils = pkgs.coreutils.override { singleBinary = false; };
+  # Temporary patch for cargo-nextest < 0.9.148 (nextest-rs/nextest#3624):
+  # retain earlier stress iteration failures in the final RunStats under --no-fail-fast.
+  cargoNextest =
+    assert pkgs.lib.assertMsg (pkgs.lib.versionOlder pkgs.cargo-nextest.version "0.9.148")
+      "cargo-nextest ${pkgs.cargo-nextest.version} >= 0.9.148 includes upstream #3624; remove nix/cargo-nextest-stress-exit.patch";
+    pkgs.cargo-nextest.overrideAttrs (old: {
+      postPatch = (old.postPatch or "") + ''
+        patch -p1 < ${./cargo-nextest-stress-exit.patch}
+      '';
+      # Run only the fast dispatcher unit tests (including the patched stress test)
+      # rather than nextest's broader suite on every Linux/macOS build.
+      cargoTestFlags = [ "-p" "nextest-runner" "--lib" ];
+      checkFlags = [ "runner::dispatcher::tests" ];
+    });
 in
 {
+  inherit coreutils cargoNextest;
+
   common = [
     # Orbit lifecycle runs bash. The Boat fixtures use Bash 4+ features.
     pkgs.bash
     # The Boat probe validates the guest's metadata JSON.
     pkgs.python3
-    # Rota cap fixtures copy or rename sleep, which multicall cannot support.
-    (pkgs.coreutils.override { singleBinary = false; })
+    coreutils
     # The harness finds the worktree root and rota fixtures create repos.
     pkgs.git
   ] ++ linux [
@@ -34,6 +51,6 @@ in
     pkgs.openssh
   ] ++ [
     # The eon-test runner.
-    pkgs.cargo-nextest
+    cargoNextest
   ];
 }

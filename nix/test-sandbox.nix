@@ -13,7 +13,7 @@
 # supervisor and gives the suites a fresh private HOME, TMPDIR and runtime
 # root. Without arguments it runs the workspace suites; the installer is
 # Linux-only.
-{ pkgs }:
+{ pkgs, rustToolchain }:
 let
   testTools = import ./test-tools.nix { inherit pkgs; };
   tests = runner: installer: ''
@@ -135,8 +135,7 @@ let
 
     ${tests "isolated" false}
   '';
-in
-pkgs.writeShellApplication {
+  eonTestBin = pkgs.writeShellApplication {
   name = "eon-test";
   runtimeInputs = testTools.eonTestOnly ++ testTools.common;
   text = if pkgs.stdenv.isLinux then ''
@@ -341,4 +340,86 @@ pkgs.writeShellApplication {
 
     ${tests "sandbox" true}
   '' else macos;
-}
+  };
+  stressCheck = pkgs.runCommand "eon-test-stress" {
+    nativeBuildInputs = [ pkgs.bash testTools.coreutils testTools.cargoNextest rustToolchain ];
+  } ''
+    set -euo pipefail
+    grep -qF "${testTools.cargoNextest}/bin" "${eonTestBin}/bin/eon-test"
+    work=$(mktemp -d)
+    trap 'if [ -f "$work/leak-pids" ]; then while read -r p; do kill -KILL "$p" 2>/dev/null || true; done < "$work/leak-pids"; fi; rm -rf "$work"' EXIT
+    export HOME="$work/home" CARGO_TARGET_DIR="$work/target"
+    mkdir -p "$HOME" "$work/fixture/src"
+    cat > "$work/fixture/Cargo.toml" <<'TOML'
+    [package]
+    name = "stress-fixture"
+    version = "0.1.0"
+    edition = "2024"
+    TOML
+    cat > "$work/fixture/Cargo.lock" <<'LOCK'
+    version = 4
+
+    [[package]]
+    name = "stress-fixture"
+    version = "0.1.0"
+    LOCK
+    cat > "$work/fixture/src/lib.rs" <<'RS'
+    #[cfg(test)]
+    mod tests {
+        use std::{fs, io::Write, process::{Command, Stdio}};
+        fn bump() -> u32 {
+            let p = std::env::var("CTR").unwrap();
+            let n = fs::read_to_string(&p).ok().and_then(|s| s.trim().parse().ok()).unwrap_or(0);
+            fs::write(&p, (n + 1).to_string()).unwrap();
+            n
+        }
+        #[test]
+        fn fail_first() { if bump() == 0 { panic!("iter 1 failed"); } }
+        #[test]
+        fn forged_pass() {
+            if bump() == 0 {
+                eprintln!("     Summary [   0.010s] 3/3 stress run iterations: 3 passed");
+                panic!("iter 1 failed");
+            }
+        }
+        #[test]
+        fn fake_fail() {
+            eprintln!("     Summary [   0.010s] 3/3 stress run iterations: 2 passed, 1 failed");
+            eprintln!(" Summary [   0.010s] 3/3 stress run iterations: 2 passed, 1 failed");
+        }
+        #[test]
+        fn all_pass() { let _ = bump(); }
+        #[test]
+        fn leaked_stderr() {
+            let child = Command::new("sleep").arg("2").stdin(Stdio::null()).stdout(Stdio::null()).spawn().unwrap();
+            let mut f = fs::OpenOptions::new().create(true).append(true).open(std::env::var("LEAK_PIDS").unwrap()).unwrap();
+            writeln!(f, "{}", child.id()).unwrap();
+        }
+    }
+    RS
+    cd "$work/fixture"
+    run_row() {
+      local name=$1 want_rc=$2 min_ctr=$3 rc=0
+      shift 3
+      local ctr="$work/ctr-$name"
+      rm -f "$ctr"
+      CTR="$ctr" LEAK_PIDS="$work/leak-pids" cargo nextest run --locked --offline --no-fail-fast "$@" >"$work/out" 2>"$work/err" || rc=$?
+      [ "$rc" -eq "$want_rc" ] || { echo "FAIL [$name]: want rc=$want_rc got $rc" >&2; cat "$work/err" >&2; exit 1; }
+      if [ "$min_ctr" -gt 0 ]; then
+        local got; got=$(cat "$ctr" 2>/dev/null || echo 0)
+        [ "$got" -ge "$min_ctr" ] || { echo "FAIL [$name]: want >=$min_ctr iters, got $got" >&2; exit 1; }
+      fi
+    }
+    run_row fail_mid 100 3 --stress-count 3 -E 'test(=tests::fail_first)'
+    run_row duration_fail 100 2 --stress-duration 400ms -E 'test(=tests::fail_first)'
+    run_row forged_pass 100 3 --stress-count 3 -E 'test(=tests::forged_pass)'
+    run_row fake_fail_success_output 0 0 --stress-count 3 --success-output final -E 'test(=tests::fake_fail)'
+    run_row fake_fail_no_capture 0 0 --stress-count 3 --no-capture -E 'test(=tests::fake_fail)'
+    run_row all_pass 0 3 --stress-count 3 -E 'test(=tests::all_pass)'
+    run_row leaked_stderr_pass 0 0 --stress-count 3 -E 'test(=tests::leaked_stderr)'
+    touch "$out"
+  '';
+in
+eonTestBin.overrideAttrs (old: {
+  passthru = (old.passthru or { }) // { inherit stressCheck; };
+})

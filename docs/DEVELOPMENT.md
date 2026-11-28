@@ -132,6 +132,13 @@ retries. Executable-test counts appear in nextest's
 belong to the separate doctest step. Executable test failures exit 100; build
 failures exit 101. Use the exit status to decide whether the run passed.
 
+Stress runs (`--stress-count`, `--stress-duration`) run directly through the
+pinned `cargo-nextest` with `--no-fail-fast`, preserving native TTY, signal, and
+`grace-period` handling, and print `Summary [...] ... stress run iterations: P
+passed[, F failed]` on stderr. They exit 100 whenever any iteration fails—even
+if the final iteration passes—via `nix/cargo-nextest-stress-exit.patch`
+(temporary for upstream #3624; an eval assert forces removal at `0.9.148`).
+
 Arguments pass to nextest, for example `eon-test -p yazelix-venus`.
 `eon-test list --workspace --message-format json` lists tests and ignored status;
 `eon-test --doc -p eon-runtime` selects doctests separately. Focused executable

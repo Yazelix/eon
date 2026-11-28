@@ -1,0 +1,132 @@
+--- a/nextest-runner/src/runner/dispatcher.rs
++++ b/nextest-runner/src/runner/dispatcher.rs
+@@ -19,8 +19,8 @@
+     reporter::events::{
+         CancelReason, ChildExecutionOutputDescription, ExecuteStatus, ExecutionResultDescription,
+         ExecutionStatuses, FailureDescription, FinalRunStats, InfoResponse, ReporterEvent,
+-        RunFinishedStats, RunStats, StressIndex, StressProgress, StressRunStats, TestEvent,
+-        TestEventKind, TestsNotSeen,
++        RunFinishedStats, RunStats, RunStatsFailureKind, StressIndex, StressProgress,
++        StressRunStats, TestEvent, TestEventKind, TestsNotSeen,
+     },
+     runner::{ExecutorEvent, RunUnitQuery, SignalRequest, StressCondition, StressCount},
+     signal::{
+@@ -1166,7 +1166,22 @@
+     }
+
+     pub(super) fn run_stats(&self) -> RunStats {
+-        self.run_stats
++        let mut stats = self.run_stats;
++        if let DispatcherStressContext::Stress {
++            failed,
++            setup_script_failed,
++            ..
++        } = &self.stress_cx
++            && *failed > 0
++            && !stats.has_failures()
++        {
++            if *setup_script_failed {
++                stats.setup_scripts_failed += 1;
++            } else {
++                stats.failed += *failed as usize;
++            }
++        }
++        stats
+     }
+ }
+
+@@ -1178,6 +1193,7 @@
+         sub_stopwatch: StopwatchStart,
+         completed: u32,
+         failed: u32,
++        setup_script_failed: bool,
+         cancelled: bool,
+     },
+ }
+@@ -1240,6 +1256,7 @@
+                 sub_stopwatch: crate::time::stopwatch(),
+                 completed: 0,
+                 failed: 0,
++                setup_script_failed: false,
+                 cancelled: false,
+             }
+         } else {
+@@ -1262,6 +1279,7 @@
+                 sub_stopwatch: _,
+                 completed,
+                 failed: _,
++                setup_script_failed: _,
+                 cancelled: _,
+             } => match condition {
+                 StressCondition::Count(total) => Some(StressProgress::Count {
+@@ -1310,6 +1328,7 @@
+                 sub_stopwatch,
+                 completed,
+                 failed,
++                setup_script_failed,
+                 cancelled,
+             } => {
+                 *completed += 1;
+@@ -1319,8 +1338,11 @@
+                         // TODO: We should figure out whether to terminate the
+                         // test run based on this.
+                     }
+-                    FinalRunStats::Failed { .. } => {
++                    FinalRunStats::Failed { kind } => {
+                         *failed += 1;
++                        if matches!(kind, RunStatsFailureKind::SetupScript) {
++                            *setup_script_failed = true;
++                        }
+                     }
+                     FinalRunStats::Cancelled { .. } => {
+                         // In this case, we don't add to the failed count. The
+@@ -1344,6 +1366,7 @@
+                 sub_stopwatch: _,
+                 completed,
+                 failed,
++                setup_script_failed: _,
+                 cancelled,
+             } => {
+                 let mut success_count = completed.saturating_sub(*failed);
+@@ -1800,6 +1823,41 @@
+     }
+
++    #[test]
++    fn stress_run_stats_retains_earlier_failures() {
++        let run_case = |condition: StressCondition, first: RunStats, second: RunStats| {
++            let mut cx = DispatcherContext::new(
++                |_| {},
++                ReportUuid::new_v4(),
++                "default",
++                vec![],
++                1,
++                MaxFail::All,
++                crate::time::far_future_duration(),
++                Some(condition),
++                None,
++            );
++            for sub in [first, second] {
++                let progress = cx.stress_progress().expect("stress progress");
++                cx.stress_sub_run_started(progress);
++                cx.run_stats = sub;
++                cx.stress_sub_run_finished();
++            }
++            cx.run_stats().summarize_final()
++        };
++        let pass = RunStats { initial_run_count: 1, finished_count: 1, passed: 1, ..Default::default() };
++        let fail = RunStats { initial_run_count: 1, finished_count: 1, failed: 1, ..Default::default() };
++        let setup_fail = RunStats { setup_scripts_initial_count: 1, setup_scripts_finished_count: 1, setup_scripts_failed: 1, ..Default::default() };
++        let count = || StressCondition::Count(StressCount::Count { count: std::num::NonZero::new(2).unwrap() });
++        let dur = || StressCondition::Duration(Duration::from_secs(60));
++        let test_failed = FinalRunStats::Failed { kind: RunStatsFailureKind::Test { initial_run_count: 1, not_run: 0 } };
++
++        assert_eq!(run_case(count(), fail, pass), test_failed);
++        assert_eq!(run_case(dur(), fail, pass), test_failed);
++        assert_eq!(run_case(count(), setup_fail, pass), FinalRunStats::Failed { kind: RunStatsFailureKind::SetupScript });
++        assert_eq!(run_case(count(), pass, pass), FinalRunStats::Success);
++    }
++
+     #[track_caller]
+     fn assert_noop(response: HandleEventResponse, events: &Mutex<Vec<Box<TestEvent<'_>>>>) {
+         assert_eq!(response, HandleEventResponse::None, "expected no response");
+         assert_eq!(events.lock().unwrap().len(), 0, "expected no new events");

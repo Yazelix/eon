@@ -39,6 +39,8 @@ attrs = [
   ".#checks.aarch64-darwin.accelerando",
   ".#checks.x86_64-linux.default",
   ".#checks.x86_64-linux.eon-tests",
+  ".#checks.x86_64-linux.eon-test-stress",
+  ".#checks.aarch64-darwin.eon-test-stress",
   ".#checks.x86_64-linux.managed-command-path",
   ".#checks.x86_64-linux.orbit-boundary",
   ".#checks.x86_64-linux.orbit-governance",
