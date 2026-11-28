@@ -27400,8 +27400,9 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
         .collect::<Vec<_>>();
     let mut command = window.command(&[]);
     command.env("PATH", std::env::join_paths(path).unwrap());
-    let supervisor = window.start(command);
+    let mut supervisor = window.start(command);
     wait_for_ready(&window.control());
+    let generation = window.generation();
     let deadline = Instant::now() + Duration::from_secs(5);
     let mut request = 0;
     let failure = loop {
@@ -27425,7 +27426,11 @@ fn google_collection_never_executes_agy_planted_in_the_supervisor_start_director
         failure.reason,
         eon_workspace_protocol::v51::QuotaFailureReason::Start
     );
-    drop(supervisor);
+    window.stop_generation(&mut supervisor);
+    assert!(
+        !generation.try_exists().unwrap(),
+        "generation remains after supervisor exit: {generation:?}"
+    );
 }
 
 #[cfg(target_os = "linux")]
@@ -27483,8 +27488,9 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
         );
         let mut command = window.command(&[]);
         command.env("EON_CODEXBAR", &collector);
-        let supervisor = window.start(command);
+        let mut supervisor = window.start(command);
         wait_for_ready(&window.control());
+        let generation = window.generation();
         if failed {
             wait_for_snapshot(&window.control(), "quota-failure", |snapshot| {
                 snapshot.codex_quota_failure.is_some() && snapshot.claude_quota_failure.is_some()
@@ -27627,7 +27633,11 @@ fn agent_native_quota_matches_session_json_for_stored_facts_without_spawning_eon
             );
         }
         assert!(!marker.exists(), "{case}: spawned PATH eon");
-        drop(supervisor);
+        window.stop_generation(&mut supervisor);
+        assert!(
+            !generation.try_exists().unwrap(),
+            "{case}: generation remains after supervisor exit: {generation:?}"
+        );
     }
 }
 
