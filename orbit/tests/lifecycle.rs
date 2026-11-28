@@ -6,7 +6,7 @@ use rustix::process::{Pid, Signal};
 
 use std::{
     fs::{self, OpenOptions},
-    io::{BufReader, Read, Write},
+    io::{self, BufReader, Read, Write},
     net::Shutdown,
     os::unix::{
         ffi::OsStringExt,
@@ -108,19 +108,59 @@ impl Drop for ProcessCleanup {
     }
 }
 
+fn io_context(step: &str, path: &Path, error: io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("{step} {}: {error}", path.display()))
+}
+
+fn error_context(
+    step: &str,
+    path: &Path,
+    error: Box<dyn std::error::Error>,
+) -> Box<dyn std::error::Error> {
+    match error.downcast::<io::Error>() {
+        Ok(io_error) => Box::new(io_context(step, path, *io_error)),
+        Err(other) => format!("{step} {}: {other}", path.display()).into(),
+    }
+}
+
 struct ManagementClient {
+    socket: PathBuf,
     reader: BufReader<UnixStream>,
 }
 
 impl ManagementClient {
+    fn send(&mut self, message: &ManagementClientMessage) -> TestResult {
+        let encoded = management::encode_client_message(message)?;
+        self.reader
+            .get_mut()
+            .write_all(&encoded)
+            .map_err(|e| io_context("write management message", &self.socket, e).into())
+    }
+
     fn request(
         &mut self,
         message: &ManagementClientMessage,
     ) -> TestResult<ManagementServerMessage> {
+        self.send(message)?;
+        read_management_message(&mut self.reader)
+            .map_err(|e| error_context("read management response", &self.socket, e))
+    }
+
+    fn wait_eof(mut self, step: &str) -> TestResult {
+        let read = self
+            .reader
+            .read(&mut [0; 1])
+            .map_err(|e| io_context(step, &self.socket, e))?;
+        assert_eq!(read, 0, "expected EOF on {}", self.socket.display());
+        Ok(())
+    }
+
+    fn release(mut self) -> TestResult {
         self.reader
             .get_mut()
-            .write_all(&management::encode_client_message(message)?)?;
-        read_management_message(&mut self.reader)
+            .shutdown(Shutdown::Write)
+            .map_err(|e| io_context("half-close management socket", &self.socket, e))?;
+        self.wait_eof("wait for management lease release EOF")
     }
 }
 
@@ -208,7 +248,7 @@ impl Client {
             let mut reader = BufReader::new(stream);
             if let Err(error) = reader.get_mut().write_all(&hello) {
                 if Instant::now() >= deadline {
-                    return Err(error.into());
+                    return Err(io_context("write presentation Hello", socket, error).into());
                 }
                 thread::yield_now();
                 continue;
@@ -225,12 +265,22 @@ impl Client {
                     }
                     Ok(ServerMessage::Busy) if !attached && Instant::now() < deadline => break,
                     Ok(message) => {
-                        return Err(format!("unexpected attach response: {message:?}").into());
+                        return Err(format!(
+                            "unexpected attach response on {}: {message:?}",
+                            socket.display()
+                        )
+                        .into());
                     }
                     Err(error) if Instant::now() < deadline && error.is::<std::io::Error>() => {
                         break;
                     }
-                    Err(error) => return Err(error),
+                    Err(error) => {
+                        return Err(error_context(
+                            "read presentation attach response",
+                            socket,
+                            error,
+                        ));
+                    }
                 }
             }
             thread::yield_now();
@@ -506,7 +556,8 @@ fn acquire_management(
     record_path: &Path,
     identity: &LiveIdentity,
 ) -> TestResult<(ManagementServerMessage, ManagementClient)> {
-    let metadata = fs::symlink_metadata(record_path)?;
+    let metadata = fs::symlink_metadata(record_path)
+        .map_err(|error| io_context("stat management record", record_path, error))?;
     let record = ObjectIdentity {
         device: metadata.dev(),
         inode: metadata.ino(),
@@ -524,7 +575,12 @@ fn acquire_management(
         if let Err(error) = set
             && error.raw_os_error() != Some(libc::EINVAL)
         {
-            return Err(error.into());
+            return Err(io_context(
+                "configure management socket timeouts",
+                &management_path,
+                error,
+            )
+            .into());
         }
     }
     let write = stream.write_all(&management::encode_client_message(
@@ -534,13 +590,20 @@ fn acquire_management(
         },
     )?);
     let mut client = ManagementClient {
+        socket: management_path,
         reader: BufReader::new(stream),
     };
     let response = match read_management_message(&mut client.reader) {
         Ok(response) => response,
         Err(error) => {
-            write?;
-            return Err(error);
+            write.map_err(|write_error| {
+                io_context("write management Acquire", &client.socket, write_error)
+            })?;
+            return Err(error_context(
+                "read management Acquire response",
+                &client.socket,
+                error,
+            ));
         }
     };
     Ok((response, client))
@@ -559,7 +622,7 @@ fn connect_bounded(socket: &Path, deadline: Instant) -> TestResult<UnixStream> {
             {
                 thread::yield_now();
             }
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(io_context("connect to socket", socket, error).into()),
         }
     }
 }
@@ -585,7 +648,7 @@ fn connect_with_read_bound(
         {
             Ok(()) => return Ok(stream),
             Err(_) if Instant::now() < deadline => thread::yield_now(),
-            Err(error) => return Err(error.into()),
+            Err(error) => return Err(io_context("configure socket timeouts", socket, error).into()),
         }
     }
 }
@@ -741,9 +804,137 @@ fn invalid_process_ids_are_gone_and_cleanup_does_not_panic() {
     );
 }
 
+fn check_fd_entries(
+    fd_dir: &Path,
+    inherited_sockets: &[String],
+    read_link: impl Fn(&Path) -> io::Result<PathBuf>,
+    child_alive: impl Fn() -> bool,
+) -> TestResult {
+    let entries =
+        fs::read_dir(fd_dir).map_err(|e| io_context("read PTY child fd directory", fd_dir, e))?;
+    let (mut checked, mut vanished) = (0usize, false);
+    for descriptor in entries {
+        let entry_path = descriptor
+            .map_err(|e| io_context("iterate PTY child fd directory", fd_dir, e))?
+            .path();
+        match read_link(&entry_path) {
+            Ok(target) => {
+                checked += 1;
+                if inherited_sockets.iter().any(|s| target == Path::new(s)) {
+                    return Err(format!(
+                        "PTY child inherited an Orbit listener at {}: {}",
+                        entry_path.display(),
+                        target.display()
+                    )
+                    .into());
+                }
+            }
+            Err(e) if e.kind() == io::ErrorKind::NotFound => vanished = true,
+            Err(e) => return Err(io_context("read PTY child fd symlink", &entry_path, e).into()),
+        }
+    }
+    if checked == 0 || (vanished && !child_alive()) {
+        return Err(format!(
+            "PTY child fd scan of {} checked {checked} descriptors (vanished={vanished})",
+            fd_dir.display()
+        )
+        .into());
+    }
+    Ok(())
+}
+
+#[test]
+fn fd_dir_listener_check_annotates_errors_and_handles_transient_fds() -> TestResult {
+    use io::ErrorKind::{NotFound, PermissionDenied};
+    use std::os::unix::fs::symlink;
+
+    let dir = TestDir::new("fd-check")?;
+    let sockets = [String::from("socket:[999]")];
+    let check_io = |err: Box<dyn std::error::Error>, kind, step: &str, path: &Path| {
+        let actual = err.downcast_ref::<io::Error>().map(io::Error::kind);
+        assert_eq!(actual, Some(kind));
+        let msg = err.to_string();
+        assert!(
+            msg.contains(step) && msg.contains(&path.display().to_string()),
+            "{msg}"
+        );
+    };
+    let read_fd = |p: &Path| fs::read_link(p);
+    let missing_dir = dir.0.join("missing-fd");
+    let err = check_fd_entries(&missing_dir, &sockets, read_fd, || true).unwrap_err();
+    check_io(err, NotFound, "read PTY child fd directory", &missing_dir);
+
+    let fd_dir = dir.0.join("fd");
+    fs::create_dir(&fd_dir)?;
+    assert!(check_fd_entries(&fd_dir, &sockets, read_fd, || true).is_err());
+
+    symlink("pipe:[1]", fd_dir.join("0"))?;
+    check_fd_entries(&fd_dir, &sockets, read_fd, || true)?;
+
+    let leaked = fd_dir.join("3");
+    symlink("socket:[999]", &leaked)?;
+    let leak = check_fd_entries(&fd_dir, &sockets, read_fd, || true)
+        .unwrap_err()
+        .to_string();
+    assert!(leak.contains(&leaked.display().to_string()) && leak.contains("socket:[999]"));
+    fs::remove_file(&leaked)?;
+
+    let transient = fd_dir.join("10");
+    symlink("pipe:[10]", &transient)?;
+    let fail_on = |kind| {
+        let target = transient.as_path();
+        move |p: &Path| {
+            if p == target {
+                Err(io::Error::from(kind))
+            } else {
+                fs::read_link(p)
+            }
+        }
+    };
+    check_fd_entries(&fd_dir, &sockets, fail_on(NotFound), || true)?;
+    assert!(check_fd_entries(&fd_dir, &sockets, fail_on(NotFound), || false).is_err());
+    let err = check_fd_entries(&fd_dir, &sockets, fail_on(PermissionDenied), || true).unwrap_err();
+    check_io(
+        err,
+        PermissionDenied,
+        "read PTY child fd symlink",
+        &transient,
+    );
+
+    let (missing_record, missing_sock) = (dir.0.join("missing.record"), dir.0.join("missing.sock"));
+    let ep = management::EndpointIdentity {
+        path: missing_sock.clone().into_os_string().into_vec(),
+        object: ObjectIdentity {
+            device: 0,
+            inode: 0,
+        },
+    };
+    let id = LiveIdentity {
+        session_id: "s".into(),
+        run_id: "r".into(),
+        component_generation: "c".into(),
+        record_generation: 1,
+        management_generation: 1,
+        process_id: 1,
+        process_start: 1,
+        uid: 0,
+        presentation: ep.clone(),
+        management: ep,
+    };
+    let err = acquire_management(&missing_record, &id).err().unwrap();
+    check_io(err, NotFound, "stat management record", &missing_record);
+    let err = Client::attach_with_bounds(&missing_sock, Duration::ZERO, STREAM_READ_BOUND)
+        .err()
+        .unwrap();
+    check_io(err, NotFound, "connect to socket", &missing_sock);
+    Ok(())
+}
+
 #[cfg(target_os = "linux")]
 fn process_start_identity(pid: u32) -> TestResult<u64> {
-    let stat = fs::read_to_string(format!("/proc/{pid}/stat"))?;
+    let stat_path = PathBuf::from(format!("/proc/{pid}/stat"));
+    let stat = fs::read_to_string(&stat_path)
+        .map_err(|error| io_context("read process stat", &stat_path, error))?;
     let fields = stat.rsplit_once(')').ok_or("malformed process stat")?.1;
     Ok(fields
         .split_whitespace()
@@ -754,7 +945,12 @@ fn process_start_identity(pid: u32) -> TestResult<u64> {
 
 #[cfg(target_os = "macos")]
 fn process_start_identity(pid: u32) -> TestResult<u64> {
-    let info = native_process::bsd_info(pid.try_into()?, false)?;
+    let info = native_process::bsd_info(pid.try_into()?, false).map_err(|error| {
+        std::io::Error::new(
+            error.kind(),
+            format!("read macOS process info for pid {pid}: {error}"),
+        )
+    })?;
     if info.pbi_pid != pid || info.pbi_start_tvusec >= 1_000_000 {
         return Err("invalid macOS process start identity".into());
     }
@@ -2234,9 +2430,10 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
             "--",
             "/bin/sh",
             "-c",
-            "printf '%s' \"$$\" > \"$ORBIT_PTY_PID\"; \
+            "printf '%s' \"$$\" > \"$ORBIT_PTY_PID.tmp\" && mv \"$ORBIT_PTY_PID.tmp\" \"$ORBIT_PTY_PID\"; \
              while [ ! -e \"$ORBIT_WORK\" ]; do sleep 0.01; done; \
-             printf '\\033]2;survived\\033\\\\'; printf survived > \"$ORBIT_DONE\"; \
+             printf '\\033]2;survived\\033\\\\'; \
+             printf survived > \"$ORBIT_DONE.tmp\" && mv \"$ORBIT_DONE.tmp\" \"$ORBIT_DONE\"; \
              while :; do sleep 1; done",
         ])
         .env("ORBIT_PTY_PID", &pty_pid_path)
@@ -2246,7 +2443,11 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     let mut launcher = Command::new("/bin/sh");
     launcher
         .arg("-c")
-        .arg("\"$@\" & orbit=$!; printf '%s' \"$orbit\" > \"$ORBIT_PID\"; wait \"$orbit\"")
+        .arg(
+            "\"$@\" & orbit=$!; \
+             printf '%s' \"$orbit\" > \"$ORBIT_PID.tmp\" && mv \"$ORBIT_PID.tmp\" \"$ORBIT_PID\"; \
+             wait \"$orbit\"",
+        )
         .arg("orbit-launcher")
         .arg(orbit.get_program())
         .args(orbit.get_args())
@@ -2259,7 +2460,9 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    let mut launcher = launcher.spawn()?;
+    let mut launcher = launcher
+        .spawn()
+        .map_err(|error| io_context("spawn orbit launcher", Path::new("/bin/sh"), error))?;
 
     let orbit_pid = wait_file_text(&orbit_pid_path)?.parse::<u32>()?;
     let mut cleanup = ProcessCleanup(None);
@@ -2281,16 +2484,15 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
             format!("socket:[{}]", identity.presentation.object.inode),
             format!("socket:[{}]", identity.management.object.inode),
         ];
-        for descriptor in fs::read_dir(format!("/proc/{pty_pid}/fd"))? {
-            let target = fs::read_link(descriptor?.path())?;
-            assert!(
-                !inherited_sockets
-                    .iter()
-                    .any(|socket| target == Path::new(socket)),
-                "PTY child inherited an Orbit listener: {}",
-                target.display()
-            );
-        }
+        check_fd_entries(
+            &PathBuf::from(format!("/proc/{pty_pid}/fd")),
+            &inherited_sockets,
+            |path| fs::read_link(path),
+            || {
+                positive_pid(pty_pid)
+                    .is_some_and(|pid| rustix::process::test_kill_process(pid).is_ok())
+            },
+        )?;
     }
 
     let mut wrong_identity = identity.clone();
@@ -2301,20 +2503,25 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
         ManagementServerMessage::Failure(ref failure)
             if failure.code == ManagementFailureCode::InvalidIdentity
     ));
-    drop(rejected);
-    thread::sleep(Duration::from_millis(50));
+    rejected.wait_eof("wait for rejected management connection EOF")?;
 
     let (response, mut initial_manager) = acquire_management(&record_path, &identity)?;
     assert_eq!(response, ManagementServerMessage::Lease(identity.clone()));
     allow_this_process(&mut initial_manager)?;
     let initial_revision = Client::attach(&socket)?.frame.revision;
 
-    rustix::process::kill_process(Pid::from_child(&launcher), Signal::KILL)?;
-    assert!(!launcher.wait()?.success());
-    drop(initial_manager);
-    thread::sleep(Duration::from_millis(150));
+    rustix::process::kill_process(Pid::from_child(&launcher), Signal::KILL)
+        .map_err(|error| format!("kill launcher pid {}: {error}", launcher.id()))?;
+    assert!(
+        !launcher
+            .wait()
+            .map_err(|error| format!("wait for launcher pid {}: {error}", launcher.id()))?
+            .success()
+    );
+    initial_manager.release()?;
 
-    fs::write(&work, b"continue")?;
+    fs::write(&work, b"continue")
+        .map_err(|error| io_context("write work release marker", &work, error))?;
     assert_eq!(wait_file_text(&done)?, "survived");
 
     let barrier = Arc::new(Barrier::new(3));
@@ -2325,7 +2532,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
         let identity = identity.clone();
         attempts.push(thread::spawn(move || {
             barrier.wait();
-            acquire_management(&record_path, &identity).unwrap()
+            acquire_management(&record_path, &identity).map_err(|error| error.to_string())
         }));
     }
     barrier.wait();
@@ -2333,7 +2540,10 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     let mut winner = None;
     let mut busy = 0;
     for attempt in attempts {
-        let (response, client) = attempt.join().map_err(|_| "management race panicked")?;
+        let (response, client) = attempt
+            .join()
+            .map_err(|_| "management race thread panicked")?
+            .map_err(|error| format!("management race acquire failed: {error}"))?;
         match response {
             ManagementServerMessage::Lease(current) => {
                 assert_eq!(current, identity);
@@ -2358,8 +2568,7 @@ fn managed_run_survives_launcher_loss_and_has_one_replacement_owner() -> TestRes
     assert!(process_identity_matches(orbit_pid, identity.process_start));
     assert!(rustix::process::test_kill_process(positive_pid(pty_pid).unwrap()).is_ok());
 
-    let stop = management::encode_client_message(&ManagementClientMessage::Stop)?;
-    winner.reader.get_mut().write_all(&stop)?;
+    winner.send(&ManagementClientMessage::Stop)?;
     drop(winner);
     wait_process_gone(orbit_pid)?;
     let ManagementRecord::Tombstone(stopped) = wait_management_record(&record_path)? else {
