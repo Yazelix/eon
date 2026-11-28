@@ -88,15 +88,47 @@ pub(super) fn read(path: &Path, maximum: usize) -> Result<Option<Vec<u8>>, Strin
 }
 
 pub(super) fn publish(path: &Path, bytes: &[u8]) -> Result<(), String> {
-    publish_sync(path, bytes, File::sync_all)
+    publish_with(path, bytes, |_| Ok(())).map_err(PublishError::into_detail)
 }
 
-fn publish_sync(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum Stage {
+    Write,
+    FileSync,
+    Rename,
+    DirectorySync,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(super) enum PublishError {
+    Failed(String),
+    Uncertain(String),
+    Cancelled,
+}
+
+impl From<String> for PublishError {
+    fn from(detail: String) -> Self {
+        Self::Failed(detail)
+    }
+}
+
+impl PublishError {
+    fn into_detail(self) -> String {
+        match self {
+            Self::Failed(detail) | Self::Uncertain(detail) => detail,
+            Self::Cancelled => "publication cancelled before rename".into(),
+        }
+    }
+}
+
+pub(super) fn publish_with(
     path: &Path,
     bytes: &[u8],
-    sync_directory: impl FnOnce(&File) -> std::io::Result<()>,
-) -> Result<(), String> {
-    let directory = path.parent().ok_or("private file has no parent")?;
+    mut before: impl FnMut(Stage) -> Result<(), PublishError>,
+) -> Result<(), PublishError> {
+    let directory = path
+        .parent()
+        .ok_or_else(|| "private file has no parent".to_owned())?;
     validate_private_directory(directory)?;
     let parent = object(directory)?;
     let directory_file = OpenOptions::new()
@@ -110,7 +142,10 @@ fn publish_sync(
         .map(|file| validate(file, path, effective_uid()))
         .transpose()?;
     let mut temporary_name = std::ffi::OsString::from(".");
-    temporary_name.push(path.file_name().ok_or("private file has no name")?);
+    temporary_name.push(
+        path.file_name()
+            .ok_or_else(|| "private file has no name".to_owned())?,
+    );
     temporary_name.push(".tmp");
     let temporary = directory.join(temporary_name);
     // The lifecycle lock settles this publisher's fixed temp after a crash.
@@ -130,21 +165,28 @@ fn publish_sync(
     validate(&file, &temporary, effective_uid())?;
     let mut published = false;
     let result = (|| {
+        before(Stage::Write)?;
         file.write_all(bytes)
-            .and_then(|()| file.sync_all())
+            .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
+        before(Stage::FileSync)?;
+        file.sync_all()
             .map_err(|error| format!("cannot write {}: {error}", temporary.display()))?;
         revalidate_directory(directory, parent)?;
         revalidate(path, expected)?;
         validate(&file, &temporary, effective_uid())?;
+        before(Stage::Rename)?;
         fs::rename(&temporary, path)
             .map_err(|error| format!("cannot publish {}: {error}", path.display()))?;
         published = true;
-        sync_directory(&directory_file).map_err(|error| {
-            format!(
-                "{} publication is uncertain after rename: {error}",
-                path.display()
-            )
-        })
+        before(Stage::DirectorySync)
+            .map_err(PublishError::into_detail)
+            .and_then(|()| directory_file.sync_all().map_err(|error| error.to_string()))
+            .map_err(|detail| {
+                PublishError::Uncertain(format!(
+                    "{} publication is uncertain after rename: {detail}",
+                    path.display()
+                ))
+            })
     })();
     if !published && validate(&file, &temporary, effective_uid()).is_ok() {
         let _ = fs::remove_file(&temporary);
@@ -183,10 +225,14 @@ mod tests {
         assert_eq!(read(&path, 100).unwrap().unwrap(), b"new whole record");
         assert!(!temp.exists());
         assert_eq!(fs::read_dir(&root).unwrap().count(), 1);
-        let error = publish_sync(&path, b"committed but uncertain", |_| {
-            Err(std::io::Error::other("injected sync failure"))
+        let error = publish_with(&path, b"committed but uncertain", |stage| {
+            if stage == Stage::DirectorySync {
+                return Err("injected sync failure".to_owned().into());
+            }
+            Ok(())
         })
-        .unwrap_err();
+        .unwrap_err()
+        .into_detail();
         assert!(error.contains("uncertain after rename"), "{error}");
         assert_eq!(
             read(&path, 100).unwrap().unwrap(),
