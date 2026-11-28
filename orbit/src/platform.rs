@@ -867,6 +867,7 @@ mod descriptor_tests {
     fn signals_validate_ids_and_fall_back_to_the_direct_child() {
         use std::{os::unix::process::ExitStatusExt, process::Command};
 
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
         for pid in [0, -1, i32::MIN] {
             assert!(positive_pid(pid).is_none());
             assert_eq!(
@@ -886,6 +887,7 @@ mod descriptor_tests {
 
     #[test]
     fn polling_skips_slots_and_drain_reads_until_empty() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
         let (mut reader, mut writer) = pipe(true).unwrap();
         let slots = [
             (None, POLLIN),
@@ -908,6 +910,7 @@ mod descriptor_tests {
 
     #[test]
     fn pipes_keep_descriptor_flags_and_deliver_eof() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
         for nonblocking in [false, true] {
             let (mut reader, mut writer) = pipe(nonblocking).unwrap();
             for end in [&reader, &writer] {
@@ -1068,6 +1071,7 @@ mod bench_trace_tests {
 
     #[test]
     fn bench_trace_permanent_errors_do_not_retry() {
+        let _guard = crate::test_support::FORK_AND_SOCKET_TEST.lock().unwrap();
         for closed in [false, true] {
             let (sender, receiver) = UnixDatagram::pair().unwrap();
             sender.set_nonblocking(true).unwrap();

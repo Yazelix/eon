@@ -78,6 +78,10 @@ mod test_support {
         result.err().and_then(|error| error.raw_os_error())
     }
 
+    /// Held for its whole body by every test that spawns a process, or that
+    /// expects EOF, hangup or an error once it closes one end of a pair it
+    /// made: a child forked by a concurrent test holds every descriptor until
+    /// exec, and on macOS keeps a pipe or socket that is not yet close-on-exec.
     pub(crate) static FORK_AND_SOCKET_TEST: Mutex<()> = Mutex::new(());
 
     pub(crate) struct TestDir(pub(crate) PathBuf);

@@ -1785,6 +1785,7 @@ mod tests {
 
     #[test]
     fn pressured_interactive_client_is_reported_without_waiting() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
         let (stream, mut peer) = UnixStream::pair().unwrap();
         stream.set_nonblocking(true).unwrap();
         let mut socket = Peer::new(stream);
