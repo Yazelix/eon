@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- After Esc closes a popup, the next popup shortcut works on the first press
+  (`eon-tsrto`).
 - `eon session registry set-aside` moves an invalid session registry aside,
   unchanged, so new sessions and windows start again with a fresh registry;
   registry failures now name the damaged file and this command, and a file

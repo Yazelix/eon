@@ -18,7 +18,8 @@ use crate::{WindowCommand, external_command};
 use accesskit_winit::{Event as AccessKitEvent, WindowEvent as AccessKitWindowEvent};
 use eon_workspace_protocol::v51::{
     Action as WorkspaceAction, CloseConsent, CloseEnd, CloseScope, FocusReport, InvokeIntent,
-    PopupEntry, PopupTarget, Sidebar, Snapshot, WorkspaceAction as CommonAction,
+    PopupEntry, PopupTarget, Response as WorkspaceResponse, Sidebar, Snapshot,
+    WorkspaceAction as CommonAction,
 };
 use orbit_protocol::{
     PlacementState,
@@ -205,12 +206,25 @@ struct PresentationIdentity {
     revision: Option<u64>,
 }
 
+#[derive(Debug)]
+enum PopupClose {
+    Ready,
+    /// The Closed sequence (absent for a pending startup pane) and one held catalog entry.
+    Waiting(Option<u64>, Option<String>),
+}
+
 #[derive(Debug, Default)]
 struct PresentationState {
     generation: u64,
     /// Counts invalidations; output revisions keep it, so a link target survives them.
     epoch: u64,
     presented: Option<PresentationIdentity>,
+    /// One post-close admission, or a shortcut waiting for the close to settle.
+    popup_close: Option<PopupClose>,
+    /// Whether the current attachment has published a terminal frame. Survives geometry
+    /// invalidation, including a departing attachment's `Exited`. Resets on attachment changes,
+    /// surface withdrawal and a covered Rune frame.
+    terminal_presented: bool,
 }
 
 impl PresentationState {
@@ -237,9 +251,20 @@ impl PresentationState {
         self.unpublish();
     }
 
+    fn withdraw(&mut self) {
+        self.popup_close = None;
+        self.terminal_presented = false;
+        self.invalidate();
+    }
+
     fn publish(&mut self, candidate: PresentationIdentity) {
         if candidate.generation == self.generation {
             self.presented = Some(candidate);
+            if candidate.revision.is_some() {
+                self.terminal_presented = true;
+                self.popup_close
+                    .take_if(|close| matches!(close, PopupClose::Ready));
+            }
         }
     }
 
@@ -1199,7 +1224,10 @@ impl PendingClose {
             // A `Confirm` followed by anything else answered another request.
             WorkspaceEvent::Answered { .. } | WorkspaceEvent::Response(_) => pending.answer = None,
             WorkspaceEvent::Unavailable { .. } | WorkspaceEvent::NoWorker { .. } => *slot = None,
-            WorkspaceEvent::Slow | WorkspaceEvent::Degraded { .. } => {}
+            WorkspaceEvent::Slow
+            | WorkspaceEvent::Degraded { .. }
+            | WorkspaceEvent::PopupClosed(..)
+            | WorkspaceEvent::PopupCloseInspected(_) => {}
         }
         None
     }
@@ -1539,7 +1567,9 @@ impl QuitProgress {
             WorkspaceEvent::Slow | WorkspaceEvent::Degraded { .. } => {
                 unreachable!("handle_workspace returns before a slow or degraded report")
             }
-            WorkspaceEvent::Response(_) => return None,
+            WorkspaceEvent::Response(_)
+            | WorkspaceEvent::PopupClosed(..)
+            | WorkspaceEvent::PopupCloseInspected(_) => return None,
         };
         if *self == Self::Pending {
             *self = Self::Idle;
@@ -2854,6 +2884,7 @@ impl Application {
 
     /// Opens or closes a dialog, reporting the terminal's focus change with it.
     fn change_dialog(&mut self, change: impl FnOnce(&mut Self)) {
+        self.presentation.popup_close = None;
         self.forget_pending();
         let was_terminal_focused =
             terminal_focused(self.window_focused, self.workspace_focus) && !self.dialog_open();
@@ -3094,10 +3125,29 @@ impl Application {
     /// Offers a key to Venus's own shortcuts in precedence order; true when one took it, so
     /// it reaches no terminal.
     fn handle_shortcut_key(&mut self, event: &ShortcutKey) -> bool {
+        let fresh =
+            shortcut_is_ready(event.state, event.repeat) && !modifier_key(event.physical_key);
+        if fresh && let Some(PopupClose::Waiting(_, entry)) = &mut self.presentation.popup_close {
+            *entry = None;
+        }
+        if fresh
+            && !self.dialog_open()
+            && !self.input_locked()
+            && let PhysicalKey::Code(code) = event.physical_key
+            && let Some(snapshot) = self.workspace_model.snapshot()
+            && active_popup(snapshot).is_some()
+            && popup_shortcut(code, self.input.modifiers(), snapshot, false).is_some()
+            && let Some(transport) = &self.workspace_transport
+        {
+            self.apply_workspace_events(transport.catch_up());
+        }
+        let popup_close = fresh
+            .then(|| self.presentation.popup_close.take())
+            .flatten();
         let pending_picker = if event.state == ElementState::Pressed {
             let pending = self.pending_picker.take();
             self.forget_pending();
-            if event.repeat || modifier_key(event.physical_key) {
+            if !fresh {
                 self.pending_picker = pending;
                 None
             } else {
@@ -3119,7 +3169,7 @@ impl Application {
             || self.handle_shortcut_viewer_key(event)
             || (locked && self.dialog_open())
             || (!locked && self.handle_link_copy(event.physical_key, event.state, event.repeat))
-            || self.handle_workspace_key(event, pending_picker)
+            || self.handle_workspace_key(event, pending_picker, popup_close)
     }
 
     /// Runtime toggles the current value, which may have changed since Venus last read it.
@@ -3602,6 +3652,9 @@ impl Application {
         self.cancel_terminal_scroll();
         let sidebar_scroll = self.sidebar_scroll;
         self.workspace_focus = focus;
+        if focus != WorkspaceFocus::Terminal {
+            self.presentation.popup_close = None;
+        }
         if focus == WorkspaceFocus::Sidebar {
             self.reveal_sidebar_row();
         }
@@ -3777,6 +3830,7 @@ impl Application {
     fn set_orbit_attachment(&mut self, endpoint: Option<Vec<u8>>, live: bool) {
         // Every path below swaps in another view or replaces this one's transport.
         self.attachments += 1;
+        self.presentation.terminal_presented = false;
         let same_endpoint = self.terminal.active_endpoint == endpoint;
         // A terminal that stays visible in another column keeps its view; one that Orbit
         // still owes an ordered viewport response reattaches after the retry delay, giving
@@ -4498,6 +4552,7 @@ impl Application {
                 event,
                 WorkspaceEvent::Response(eon_workspace_protocol::v51::Response::Ended(_))
             ) {
+                self.presentation.popup_close = None;
                 self.native_requests.exit = true;
                 return;
             }
@@ -4519,6 +4574,16 @@ impl Application {
             return;
         };
         let event = match event {
+            WorkspaceEvent::PopupClosed(seq) => {
+                if self.presentation.terminal_presented && !self.workspace_model.unavailable() {
+                    self.presentation.popup_close = Some(PopupClose::Waiting(Some(seq), None));
+                }
+                return;
+            }
+            WorkspaceEvent::PopupCloseInspected(seq) => {
+                self.finish_popup_close(Some(seq));
+                return;
+            }
             WorkspaceEvent::NoWorker { detail } => WorkspaceEvent::Unavailable {
                 notice: no_worker_notice(self.workspace_model.snapshot()),
                 detail: Some(detail),
@@ -4566,6 +4631,11 @@ impl Application {
         let next = match &event {
             WorkspaceEvent::Response(eon_workspace_protocol::v51::Response::Snapshot(next)) => {
                 Some(next)
+            }
+            WorkspaceEvent::Unavailable { .. }
+            | WorkspaceEvent::Response(WorkspaceResponse::Failure(_)) => {
+                self.presentation.popup_close = None;
+                None
             }
             _ => None,
         };
@@ -4616,6 +4686,30 @@ impl Application {
             .unwrap_or(0);
         let unavailable = matches!(&event, WorkspaceEvent::Unavailable { .. });
         let quota_expired = unavailable && self.workspace_model.snapshot().is_some_and(has_quota);
+        if let Some((before, after)) = changes {
+            let old = active_popup(before).map(|popup| &popup.id);
+            let shown = active_popup(after).map(|popup| &popup.id);
+            let tab = after.tabs.iter().find(|tab| tab.id == after.active_tab);
+            let retained = tab.is_some_and(|tab| tab.popups.iter().any(|p| Some(&p.id) == old));
+            let switched = old != shown && shown.is_some() && (old.is_none() || retained);
+            if switched
+                || before.generation != after.generation
+                || before.workspace != after.workspace
+                || before.active_workspace != after.active_workspace
+                || before.active_tab != after.active_tab
+                || before.entries != after.entries
+                || lock_changed
+            {
+                self.presentation.popup_close = None;
+            } else if old != shown && self.presentation.terminal_presented {
+                let close = if tab.is_some_and(|tab| tab.pending) {
+                    PopupClose::Waiting(None, None)
+                } else {
+                    PopupClose::Ready
+                };
+                self.presentation.popup_close.get_or_insert(close);
+            }
+        }
         let (view_changed, workspace_changed) = match event {
             WorkspaceEvent::Response(eon_workspace_protocol::v51::Response::Failure(failure))
                 if failure.code == "stop-incomplete" =>
@@ -4640,8 +4734,10 @@ impl Application {
             WorkspaceEvent::Answered { .. }
             | WorkspaceEvent::Slow
             | WorkspaceEvent::Degraded { .. }
-            | WorkspaceEvent::NoWorker { .. } => {
-                unreachable!("answers, slow and degraded reports return above; no-worker is worded")
+            | WorkspaceEvent::NoWorker { .. }
+            | WorkspaceEvent::PopupClosed(..)
+            | WorkspaceEvent::PopupCloseInspected(_) => {
+                unreachable!("workspace notifications return above")
             }
         };
         if dialog_changed {
@@ -4734,6 +4830,7 @@ impl Application {
         if received_snapshot {
             self.settle_pane_action(None);
             self.settle_attention_jump(None);
+            self.finish_popup_close(None);
         } else if unavailable {
             // Workspace loss ends a pending jump with focus on its row, beside the notice.
             self.attention_jump = None;
@@ -4965,16 +5062,40 @@ impl Application {
         }
     }
 
-    fn picker_key(&mut self, action: WorkspaceAction, pending: Option<PendingPicker>) {
+    fn finish_popup_close(&mut self, refresh: Option<u64>) {
+        let attached = self.workspace_model.active_attachment().is_some();
+        let close = &mut self.presentation.popup_close;
+        let waiting = |close: &mut PopupClose| {
+            matches!(close, PopupClose::Waiting(seq, _) if *seq == refresh)
+                && (refresh.is_some() || attached)
+        };
+        let Some(PopupClose::Waiting(_, entry)) = close.take_if(waiting) else {
+            return;
+        };
+        *close = (!self.presentation.terminal_presented).then_some(PopupClose::Ready);
+        let focused = attached && terminal_focused(self.window_focused, self.workspace_focus);
+        if let Some(entry) = entry
+            && let Some(snapshot) = self.workspace_model.snapshot()
+            && let Some(action) = invoke_popup(snapshot, &entry, focused)
+        {
+            *close = None;
+            self.popup_key(action, None, true);
+        }
+    }
+
+    fn popup_key(&mut self, action: WorkspaceAction, pending: Option<PendingPicker>, closed: bool) {
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return;
         };
-        let WorkspaceAction::InvokePopup { tab, intent, .. } = &action else {
+        let WorkspaceAction::InvokePopup {
+            tab, entry, intent, ..
+        } = &action
+        else {
             return;
         };
-        let selected =
-            active_popup(snapshot).filter(|popup| popup.entry == shortcuts::WORKSPACES_ENTRY);
-        if let Some(mut pending) = pending
+        let picker = entry == shortcuts::WORKSPACES_ENTRY;
+        if picker
+            && let Some(mut pending) = pending
             && pending.in_scope(snapshot)
             && terminal_focused(self.window_focused, self.workspace_focus)
         {
@@ -4989,22 +5110,24 @@ impl Application {
                 return;
             }
         }
-        if !self.presentation.has_presented_geometry() {
+        if !closed && !self.presentation.has_presented_geometry() {
             return;
         }
-        let mut pending = PendingPicker {
+        let pending = picker.then(|| PendingPicker {
             workspace: snapshot.workspace.clone(),
             tab: tab.clone(),
             ticket: None,
-            instance: selected
-                .filter(|_| *intent == InvokeIntent::Toggle)
+            instance: active_popup(snapshot)
+                .filter(|popup| popup.entry == *entry && *intent == InvokeIntent::Toggle)
                 .map(|popup| popup.id.clone()),
             confirm: false,
-        };
+        });
         if let Some(ticket) = self.queue_workspace_ticket(action) {
             self.set_workspace_focus(WorkspaceFocus::Terminal);
-            pending.ticket = Some(ticket);
-            self.pending_picker = Some(pending);
+            self.pending_picker = pending.map(|mut pending| {
+                pending.ticket = Some(ticket);
+                pending
+            });
         }
     }
 
@@ -5050,6 +5173,7 @@ impl Application {
         &mut self,
         event: &ShortcutKey,
         pending_picker: Option<PendingPicker>,
+        popup_close: Option<PopupClose>,
     ) -> bool {
         let Some(snapshot) = self.workspace_model.snapshot() else {
             return false;
@@ -5169,10 +5293,13 @@ impl Application {
                 } else if let Some(action) = action
                     .filter(|action| sends_workspace_shortcut(action, event.state, event.repeat))
                 {
-                    if matches!(&action, WorkspaceAction::InvokePopup { entry, .. }
-                        if entry == shortcuts::WORKSPACES_ENTRY)
-                    {
-                        self.picker_key(action, pending_picker);
+                    if let WorkspaceAction::InvokePopup { entry, .. } = &action {
+                        if let Some(PopupClose::Waiting(seq, _)) = popup_close {
+                            self.presentation.popup_close =
+                                Some(PopupClose::Waiting(seq, Some(entry.clone())));
+                        } else {
+                            self.popup_key(action, pending_picker, popup_close.is_some());
+                        }
                         return true;
                     }
                     if !self.presentation.has_presented_geometry() {
@@ -5187,10 +5314,7 @@ impl Application {
                         }
                         return true;
                     }
-                    let popup = matches!(action, WorkspaceAction::InvokePopup { .. });
-                    if self.request_workspace(action) && popup {
-                        self.set_workspace_focus(WorkspaceFocus::Terminal);
-                    }
+                    self.request_workspace(action);
                 }
             }
             return true;
@@ -6659,7 +6783,7 @@ impl Application {
             Ok(PresentOutcome::Occluded) => self.stop_covered_motion(),
             Ok(PresentOutcome::Recovered) => {
                 self.links.unshifted = false;
-                self.presentation.invalidate();
+                self.presentation.withdraw();
                 state.native.request_redraw();
             }
             Err(error) => {
@@ -6784,7 +6908,7 @@ impl Application {
             self.terminal
                 .terminal_scroll
                 .cancel(&mut self.terminal.pending_viewport);
-            self.presentation.invalidate();
+            self.presentation.withdraw();
             self.cancel_pointer_sequence();
         }
     }
@@ -6841,6 +6965,7 @@ impl Application {
         }
         if local_input(&event) || matches!(event, WindowEvent::Focused(_)) {
             self.pending_picker = None;
+            self.presentation.popup_close = None;
         }
         PendingClose::on_window(&mut self.pending_close, &event);
         let hosted = self
@@ -6902,7 +7027,7 @@ impl Application {
                 self.cancel_native_pointer_sequence();
                 self.reveal_workspace_selection();
                 self.attention_inbox.reveal = self.attention_inbox.open;
-                self.presentation.invalidate();
+                self.presentation.withdraw();
                 trace_resized(hosted, size, self.presentation.generation);
                 self.send_resize();
                 self.refresh_client_view();
@@ -6924,7 +7049,7 @@ impl Application {
                     .cancel(&mut self.terminal.pending_viewport);
                 state.renderer.reset_cursor_animation();
                 if occluded {
-                    self.presentation.invalidate();
+                    self.presentation.withdraw();
                     self.cancel_native_pointer_sequence();
                 } else {
                     state.native.request_redraw();
@@ -7629,10 +7754,12 @@ impl Application {
                 match event.window_event {
                     AccessKitWindowEvent::InitialTreeRequested => self.refresh_client_view(),
                     AccessKitWindowEvent::ActionRequested(request) => {
-                        // As `forget_pending`, by field: `state` borrows the window.
+                        // As `forget_pending`, plus the held chord, by field while `state`
+                        // borrows the window.
                         self.pending_pane = None;
                         self.pending_close = None;
                         self.pending_picker = None;
+                        self.presentation.popup_close = None;
                         let target = state.native.accessibility().and_then(|(accessibility, _)| {
                             accessibility.action_target(request.target_node, request.action)
                         });
@@ -8063,7 +8190,7 @@ fn record_render_failure<'a>(
     set_title: impl FnOnce(&str),
     report: impl FnOnce(&str),
 ) -> Option<&'a str> {
-    presentation.invalidate();
+    presentation.withdraw();
     if render_notice.is_some() {
         return None;
     }

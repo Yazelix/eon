@@ -55,11 +55,13 @@ pub struct Transport {
 }
 
 /// One complete result from the Eon-owned workspace request boundary.
-// The queue holds at most 168 events; snapshot payloads are already heap-owned.
 #[allow(clippy::large_enum_variant)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum WorkspaceEvent {
     Response(WorkspaceResponse),
+    /// Follows the snapshot that still displays the now-closed popup.
+    PopupClosed(u64),
+    PopupCloseInspected(u64),
     /// A request has waited `Waits::slow` without an answer; its answer or failure follows.
     Slow,
     /// The workspace cannot be reached. `notice` is what the window shows; `detail`, which may
@@ -327,13 +329,9 @@ struct WorkspaceEventQueue(Mutex<VecDeque<WorkspaceEvent>>);
 
 impl WorkspaceEventQueue {
     fn push(&self, event: WorkspaceEvent) -> bool {
-        // A full action channel (32 queued and one in flight) answers with at most three events
-        // each: a slow report, a response and its `Answered`. A snapshot replaces a snapshot
-        // still waiting at the end, or one that only a slow report follows, which an `Answered`
-        // would otherwise follow, and a slow report adds nothing after another. So refreshes and
-        // hides add at most two events between answers: 33 × 5 = 165. Each helper thread that
-        // cannot start adds one `Degraded`, once: 167.
-        const CAPACITY: usize = 168;
+        // Each of 33 actions can leave three reply events and two coalesced refresh/hide
+        // events, plus a Closed notification and its Inspect barrier. Helpers add two reports.
+        const CAPACITY: usize = 234;
         let mut events = self.0.lock().expect("workspace event queue lock poisoned");
         let wake = events.is_empty();
         let snapshot = |event: &WorkspaceEvent| {
@@ -445,7 +443,7 @@ fn exchange_until_dropped(
     ));
     let mut ticket = None;
     loop {
-        let begun = subscription.presented().hides;
+        let begun = subscription.presented().changes;
         watch.begin(waits.slow);
         if bench_tracing() {
             bench_trace(
@@ -582,17 +580,18 @@ struct Reader {
 struct Presented {
     /// The worker's last snapshot, while it is what the window shows.
     snapshot: Option<workspace::Snapshot>,
-    /// How many hides the subscription has read.
-    hides: u64,
+    /// Position among the hide and close events this subscription has read.
+    changes: u64,
+    /// Subscription sequence and local position of the latest observed close.
+    closed: Option<(u64, u64)>,
     /// The latest hides that an answer begun before them may still show.
     hidden: VecDeque<Hidden>,
-    /// An answer to an exchange begun before this many hides is dropped: a hide it may still
-    /// show left `hidden` when that overflowed.
+    /// Drop answers to exchanges begun before this change. They may still show an evicted hide.
     floor: u64,
 }
 
 struct Hidden {
-    /// `Presented::hides` once this one was read.
+    /// `Presented::changes` once this hide was read.
     number: u64,
     workspace: String,
     tab: String,
@@ -632,10 +631,9 @@ impl Subscription {
             .expect("workspace presentation lock poisoned")
     }
 
-    /// Delivers the worker's answer to an exchange begun after `begun` hides, then its ticket's
-    /// `answered`. Eon wrote those hides before it read the exchange, so the answer holds them;
-    /// one read since may have come after the answer was written, so its popup is hidden here
-    /// too.
+    /// Delivers an answer to an exchange started at change `begun`, then acknowledges its ticket.
+    /// The answer includes hides read before that change. A hide read since may have come after
+    /// the answer was written, so its popup is hidden here too.
     fn deliver(&self, mut event: WorkspaceEvent, ticket: Option<u64>, begun: u64, notify: &Notify) {
         // Eon writes an action's events before its reply, so applying those already readable
         // first keeps a late hide from undoing what this answer shows.
@@ -658,7 +656,10 @@ impl Subscription {
             WorkspaceEvent::Response(WorkspaceResponse::Confirm(_)) => {}
             WorkspaceEvent::Response(WorkspaceResponse::Failure(failure))
                 if failure.code != "stop-incomplete" => {}
-            _ => presented.snapshot = None,
+            _ => {
+                presented.snapshot = None;
+                presented.closed = None;
+            }
         }
         // Under the lock, so a hide read meanwhile follows this answer.
         let accepted = matches!(
@@ -683,6 +684,13 @@ impl Subscription {
         };
         if !(stale && accepted) {
             notify(event);
+            // A same-generation Inspect begun after Closed cannot include that instance.
+            if ticket.is_none()
+                && let Some((seq, _)) = presented.closed.take_if(|(_, at)| *at <= begun)
+                && accepted
+            {
+                notify(WorkspaceEvent::PopupCloseInspected(seq));
+            }
         }
         if let Some(ticket) = ticket {
             notify(WorkspaceEvent::Answered {
@@ -799,6 +807,17 @@ impl Subscription {
                                 if let Some(dropped) = dropped {
                                     presented.floor = dropped;
                                 }
+                            } else if change == workspace::PopupChange::Closed
+                                && presented.snapshot.as_ref().is_some_and(|snapshot| {
+                                    snapshot.workspace == workspace
+                                        && snapshot.active_tab == tab
+                                        && crate::model::active_popup(snapshot)
+                                            .is_some_and(|shown| shown.id == popup.id)
+                                })
+                            {
+                                presented.changes += 1;
+                                presented.closed = Some((event.seq, presented.changes));
+                                notify(WorkspaceEvent::PopupClosed(event.seq));
                             } else if matches!(
                                 change,
                                 workspace::PopupChange::Shown | workspace::PopupChange::Created
@@ -891,14 +910,14 @@ impl Presented {
         popup: String,
         notify: &Notify,
     ) -> Option<u64> {
-        self.hides += 1;
+        self.changes += 1;
         let dropped = if self.hidden.len() == HIDDEN_CAPACITY {
             self.hidden.pop_front().map(|hidden| hidden.number)
         } else {
             None
         };
         let hidden = Hidden {
-            number: self.hides,
+            number: self.changes,
             workspace,
             tab,
             popup,
@@ -1581,7 +1600,8 @@ pub fn frame_elapsed(start: Option<u64>) -> u64 {
 pub(crate) mod tests {
     use super::*;
     use eon_workspace_protocol::v51::{
-        InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, Tab,
+        InvokeIntent, Pane, Popup, PopupEntry, PopupKey, Shortcut, Snapshot, SubscriptionMessage,
+        Tab,
     };
     use orbit_protocol::{
         Capabilities, Colors, Cursor, CursorShape, Dimensions, Frame, Rgb, Screen,
@@ -3346,7 +3366,7 @@ pub(crate) mod tests {
             self.until(|eon| eon.exchanges.pop_front())
         }
 
-        fn subscription(&mut self) -> UnixStream {
+        pub(crate) fn subscription(&mut self) -> UnixStream {
             self.until(|eon| eon.subscriptions.pop_front())
         }
 
@@ -3360,7 +3380,7 @@ pub(crate) mod tests {
         }
     }
 
-    fn write_response(stream: &mut UnixStream, snapshot: &Snapshot) {
+    pub(crate) fn write_response(stream: &mut UnixStream, snapshot: &Snapshot) {
         stream
             .write_all(
                 &workspace::encode_response(&WorkspaceResponse::Snapshot(snapshot.clone()))
@@ -3369,7 +3389,7 @@ pub(crate) mod tests {
             .unwrap();
     }
 
-    fn write_subscription(stream: &mut UnixStream, message: &workspace::SubscriptionMessage) {
+    pub(crate) fn write_subscription(stream: &mut UnixStream, message: &SubscriptionMessage) {
         stream
             .write_all(&workspace::encode_subscription_message(message).unwrap())
             .unwrap();
@@ -3379,7 +3399,7 @@ pub(crate) mod tests {
         WorkspaceEvent::Response(WorkspaceResponse::Snapshot(snapshot.clone()))
     }
 
-    fn subscribed() -> workspace::SubscriptionMessage {
+    pub(crate) fn subscribed() -> workspace::SubscriptionMessage {
         workspace::SubscriptionMessage::Subscribed(workspace::Subscribed {
             stream: "s1".into(),
             seq: 0,
@@ -3394,7 +3414,7 @@ pub(crate) mod tests {
         popup_event(seq, workspace::PopupChange::Hidden, "u1")
     }
 
-    fn popup_event(
+    pub(crate) fn popup_event(
         seq: u64,
         change: workspace::PopupChange,
         id: &str,

@@ -235,3 +235,43 @@ pub(super) fn noop_renderer() -> Renderer {
     )
     .unwrap()
 }
+
+pub(super) fn install_noop_window(app: &mut Application) {
+    app.window = Some(WindowState {
+        renderer: noop_renderer(),
+        scale_factor: 1.0,
+        native: NativeWindow::Rune(RuneWindow {
+            output: Cell::new(true),
+            ..RuneWindow::default()
+        }),
+        effects: NativeEffects::default(),
+    });
+    app.initial_scale_pending = false;
+}
+
+pub(super) fn terminal_input_through_marker(
+    app: &mut Application,
+    stream: &UnixStream,
+) -> Vec<ClientMessage> {
+    assert!(app.send(ClientMessage::ReturnToLive));
+    std::iter::repeat_with(|| OrbitPeer::read(stream))
+        .take_while(|message| *message != ClientMessage::ReturnToLive)
+        .filter(|message| matches!(message, ClientMessage::Key(_) | ClientMessage::Paste(_)))
+        .collect()
+}
+
+pub(super) fn terminal_test_key(
+    key: session::PhysicalKey,
+    action: session::KeyAction,
+    text: Option<&str>,
+) -> ClientMessage {
+    ClientMessage::Key(session::KeyEvent {
+        action,
+        key,
+        modifiers: session::Modifiers::empty(),
+        consumed_modifiers: session::Modifiers::empty(),
+        composing: false,
+        text: text.map(str::to_owned),
+        unshifted_codepoint: None,
+    })
+}

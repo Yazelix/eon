@@ -809,6 +809,7 @@ fn skips_withdraw_only_the_input_their_reason_requires() {
     host.apply_geometry(NATIVE);
     let receipt = host.app.presentation.candidate(Some(1));
     present(&mut host, receipt);
+    host.app.presentation.popup_close = Some(PopupClose::Ready);
     let copy = ClientMessage::Selection(SelectionAction::Copy);
     host.app.terminal.deferred_selection.push_back(copy.clone());
 
@@ -832,6 +833,8 @@ fn skips_withdraw_only_the_input_their_reason_requires() {
     );
     host.receive_frame(&mut Tx::default());
     assert!(!host.app.presentation.has_presented_geometry());
+    assert!(host.app.presentation.popup_close.is_none());
+    assert!(!host.app.presentation.terminal_presented);
     assert_eq!(host.app.terminal.deferred_selection.len(), 1);
     assert!(!host.app.terminal.terminal_scroll.phase_active);
     assert_eq!(
@@ -844,6 +847,8 @@ fn skips_withdraw_only_the_input_their_reason_requires() {
     assert!(!host.app.links.unshifted);
     assert!(host.app.next_animation.is_none());
 
+    host.app.presentation.publish(receipt);
+    host.app.presentation.popup_close = Some(PopupClose::Ready);
     assert!(host.frames.report(FrameOutcome::Skipped, None));
     assert!(
         !host
@@ -851,6 +856,8 @@ fn skips_withdraw_only_the_input_their_reason_requires() {
             .report(FrameOutcome::Skipped, Some(FrameSkip::Covered))
     );
     host.receive_frame(&mut Tx::default());
+    assert!(host.app.presentation.popup_close.is_none());
+    assert!(!host.app.presentation.terminal_presented);
     assert!(
         host.app.terminal.deferred_selection.is_empty(),
         "the surface withdrawal wins"

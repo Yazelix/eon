@@ -2645,42 +2645,14 @@ fn gpu_loss_withdraws_terminal_text_from_a_live_attachment() {
     let stream = orbit.accept();
     let frame = |revision| frame(revision, Screen::Primary);
     let resize = |width| WindowEvent::Resized(PhysicalSize::new(width, 600));
-    app.window = Some(WindowState {
-        renderer: super::noop_renderer(),
-        scale_factor: 1.0,
-        native: NativeWindow::Rune(RuneWindow {
-            output: Cell::new(true),
-            ..RuneWindow::default()
-        }),
-        effects: NativeEffects::default(),
-    });
-    app.initial_scale_pending = false;
+    super::install_noop_window(&mut app);
     app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
     app.route_window_event(WindowEvent::Focused(true));
 
-    let key_event = |action, text| session::KeyEvent {
-        action,
-        key: session::PhysicalKey::X,
-        modifiers: session::Modifiers::empty(),
-        consumed_modifiers: session::Modifiers::empty(),
-        composing: false,
-        text,
-        unshifted_codepoint: None,
-    };
-    let press = ClientMessage::Key(key_event(session::KeyAction::Press, Some("x".into())));
-    let text_through_marker = |app: &mut Application| {
-        assert!(app.send(ClientMessage::ReturnToLive));
-        let mut messages = Vec::new();
-        loop {
-            match super::OrbitPeer::read(&stream) {
-                ClientMessage::ReturnToLive => return messages,
-                message @ (ClientMessage::Key(_) | ClientMessage::Paste(_)) => {
-                    messages.push(message)
-                }
-                _ => {}
-            }
-        }
-    };
+    let key = |action, text| super::terminal_test_key(session::PhysicalKey::X, action, text);
+    let press = key(session::KeyAction::Press, Some("x"));
+    let text_through_marker =
+        |app: &mut Application| super::terminal_input_through_marker(app, &stream);
     let ime = |text: &str| WindowEvent::Ime(Ime::Commit(text.into()));
     assert!(!app.presentation.has_presented_geometry());
     app.send(press.clone());
@@ -2716,10 +2688,7 @@ fn gpu_loss_withdraws_terminal_text_from_a_live_attachment() {
     app.route_window_event(resize(962));
     app.render();
     assert!(app.terminal.model.is_attached());
-    app.send(ClientMessage::Key(key_event(
-        session::KeyAction::Release,
-        None,
-    )));
+    app.send(key(session::KeyAction::Release, None));
     app.route_window_event(ime("落"));
     app.complete_paste(Ok(ClientMessage::Paste(b"late".to_vec())));
     assert_eq!(

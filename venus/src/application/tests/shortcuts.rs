@@ -6,13 +6,49 @@ use crate::application::shortcuts::{
 use eon_workspace_protocol::shortcuts::PAIRED_ROWS;
 use eon_workspace_protocol::v51::{InvokeIntent, Side, Tab};
 
+use crate::transport::tests::{
+    FakeEon, TestSocket, popup_event, subscribed, workspace_snapshot, write_response,
+    write_subscription,
+};
+use eon_workspace_protocol::v51 as workspace;
+use std::{os::unix::net::UnixListener, sync::mpsc};
+use winit::keyboard::ModifiersState;
+
+fn shortcut_application() -> Application {
+    let mut app = Application::new(
+        crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
+            .unwrap(),
+        EventSink::Host(Arc::new(|_| true)),
+    );
+    app.window_focused = true;
+    app
+}
+
+fn shortcut_workspace() -> (TestSocket, FakeEon, Application, mpsc::Receiver<()>) {
+    let socket = TestSocket::new();
+    let eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
+    let (wake, waits) = mpsc::channel();
+    let mut app = shortcut_application();
+    app.workspace_transport = Some(WorkspaceTransport::start_with_refresh(
+        socket.path.clone(),
+        Duration::from_secs(30),
+        move || {
+            let _ = wake.send(());
+        },
+    ));
+    (socket, eon, app, waits)
+}
+
+fn shortcut_key(app: &mut Application, code: KeyCode, state: ElementState, repeat: bool) -> bool {
+    app.handle_shortcut_key(&ShortcutKey {
+        physical_key: PhysicalKey::Code(code),
+        state,
+        repeat,
+    })
+}
+
 #[test]
 fn rapid_sessions_key_confirms_the_exact_picker_before_its_first_paint() {
-    use crate::transport::tests::{FakeEon, TestSocket, workspace_snapshot};
-    use eon_workspace_protocol::v51 as workspace;
-    use std::{os::unix::net::UnixListener, sync::mpsc};
-    use winit::keyboard::ModifiersState;
-
     for (early, opens, already_shown, between) in [
         (true, true, false, None),
         (false, true, false, None),
@@ -21,22 +57,7 @@ fn rapid_sessions_key_confirms_the_exact_picker_before_its_first_paint() {
         (true, true, false, Some(KeyCode::AltLeft)),
         (true, true, false, Some(KeyCode::KeyU)),
     ] {
-        let socket = TestSocket::new();
-        let mut eon = FakeEon::new(UnixListener::bind(&socket.path).unwrap());
-        let (wake, waits) = mpsc::channel();
-        let mut app = Application::new(
-            crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
-                .unwrap(),
-            EventSink::Host(Arc::new(|_| true)),
-        );
-        app.workspace_transport = Some(WorkspaceTransport::start_with_refresh(
-            socket.path.clone(),
-            Duration::from_secs(30),
-            move || {
-                let _ = wake.send(());
-            },
-        ));
-        app.window_focused = true;
+        let (_socket, mut eon, mut app, waits) = shortcut_workspace();
         app.input
             .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
         let mut empty = workspace_snapshot();
@@ -65,11 +86,7 @@ fn rapid_sessions_key_confirms_the_exact_picker_before_its_first_paint() {
         eon.answer_refresh(initial);
         let press = |app: &mut Application| {
             for state in [ElementState::Pressed, ElementState::Released] {
-                assert!(app.handle_shortcut_key(&ShortcutKey {
-                    physical_key: PhysicalKey::Code(KeyCode::KeyS),
-                    state,
-                    repeat: false,
-                }));
+                assert!(shortcut_key(app, KeyCode::KeyS, state, false));
             }
         };
         let invoke = |expected_instance| WorkspaceAction::InvokePopup {
@@ -83,11 +100,7 @@ fn rapid_sessions_key_confirms_the_exact_picker_before_its_first_paint() {
         assert_eq!(action, invoke(already_shown.then(|| instance.clone())));
         if early {
             if let Some(code) = between {
-                assert!(!app.handle_shortcut_key(&ShortcutKey {
-                    physical_key: PhysicalKey::Code(code),
-                    state: ElementState::Pressed,
-                    repeat: false,
-                }));
+                assert!(!shortcut_key(&mut app, code, ElementState::Pressed, false));
                 // A fresh invocation needs geometry, while a retained follow-up can wait.
                 app.presentation.invalidate();
             }
@@ -1360,14 +1373,8 @@ fn ordinary_shortcuts_keep_exact_modifiers_and_native_paste_stays_unconditional(
 #[test]
 fn input_lock_respects_key_ownership_and_the_focused_surface() {
     use eon_workspace_protocol::v51::{ALT, Response, SHIFT};
-    use winit::keyboard::ModifiersState;
 
-    let mut app = Application::new(
-        crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
-            .unwrap(),
-        EventSink::Host(Arc::new(|_| true)),
-    );
-    app.window_focused = true;
+    let mut app = shortcut_application();
     let mut snapshot = super::chrome::stack_snapshot(&[&["p1"]]);
     snapshot.input_lock = Shortcut {
         key: "KeyP".into(),
@@ -1381,11 +1388,7 @@ fn input_lock_respects_key_ownership_and_the_focused_surface() {
     install(&mut app, &snapshot);
     let key = |app: &mut Application, code, mods, state, repeat| {
         app.input.set_modifiers(mods);
-        app.handle_shortcut_key(&ShortcutKey {
-            physical_key: PhysicalKey::Code(code),
-            state,
-            repeat,
-        })
+        shortcut_key(app, code, state, repeat)
     };
     use ElementState::{Pressed, Released};
     let none = ModifiersState::empty();
@@ -1464,14 +1467,8 @@ fn input_lock_respects_key_ownership_and_the_focused_surface() {
 #[test]
 fn input_lock_repeat_stays_with_toggle_when_its_modifier_releases_first() {
     use eon_workspace_protocol::v51::{ALT, Attention, AttentionState, QueueEntry, Response};
-    use winit::keyboard::ModifiersState;
 
-    let mut app = Application::new(
-        crate::launch::launch_arguments(["--workspace", "eon.sock"].map(OsString::from), None)
-            .unwrap(),
-        EventSink::Host(Arc::new(|_| true)),
-    );
-    app.window_focused = true;
+    let mut app = shortcut_application();
     let mut snapshot = super::chrome::stack_snapshot(&[&["p1", "p2"]]);
     snapshot.input_lock = Shortcut {
         key: "ArrowDown".into(),
@@ -1491,13 +1488,8 @@ fn input_lock_repeat_stays_with_toggle_when_its_modifier_releases_first() {
         .collect();
     app.workspace_model.apply(Response::Snapshot(snapshot));
     app.set_attention_inbox(true);
-    let send = |app: &mut Application, state, repeat| {
-        app.handle_shortcut_key(&ShortcutKey {
-            physical_key: PhysicalKey::Code(KeyCode::ArrowDown),
-            state,
-            repeat,
-        })
-    };
+    let send =
+        |app: &mut Application, state, repeat| shortcut_key(app, KeyCode::ArrowDown, state, repeat);
     assert_eq!(app.attention_inbox.target(), Some(("t1", "p1")));
     app.input.set_modifiers(ModifiersState::ALT);
     assert!(send(&mut app, ElementState::Pressed, false));
@@ -1507,4 +1499,181 @@ fn input_lock_repeat_stays_with_toggle_when_its_modifier_releases_first() {
     assert_eq!(app.attention_inbox.target(), Some(("t1", "p1")));
     assert!(send(&mut app, ElementState::Pressed, false));
     assert_eq!(app.attention_inbox.target(), Some(("t1", "p2")));
+}
+
+#[test]
+fn inspected_popup_close_dispatches_held_chord_without_rearming() {
+    let mut after = workspace_snapshot();
+    after.entries[0].id = "sessions".into();
+    after.tabs[0].popups.clear();
+    for entry in [None, Some("sessions")] {
+        let (_socket, mut eon, mut app, _) = shortcut_workspace();
+        eon.answer_refresh(&after);
+        app.workspace_model
+            .apply(WorkspaceResponse::Snapshot(after.clone()));
+        app.presentation.popup_close = Some(PopupClose::Waiting(Some(1), entry.map(String::from)));
+        app.presentation
+            .publish(app.presentation.candidate(Some(1)));
+        app.presentation.invalidate();
+        app.handle_workspace(WorkspaceEvent::PopupCloseInspected(1));
+        assert!(app.presentation.popup_close.is_none());
+
+        assert!(app.queue_workspace(WorkspaceAction::Workspace(CommonAction::Inspect)));
+        if let Some(entry) = entry {
+            let (mut exchange, action) = eon.exchange();
+            assert_eq!(
+                action,
+                WorkspaceAction::InvokePopup {
+                    tab: "t1".into(),
+                    entry: entry.into(),
+                    expected_instance: None,
+                    intent: InvokeIntent::Toggle,
+                }
+            );
+            write_response(&mut exchange, &after);
+        }
+        eon.answer_refresh(&after);
+    }
+}
+
+#[test]
+fn popup_shortcut_dispatches_once_after_close_before_repaint() {
+    use super::{OrbitPeer, terminal_input_through_marker as input, terminal_test_key};
+    use ElementState::{Pressed, Released};
+    use session::{KeyAction::Press, PhysicalKey as OrbitKey};
+    use workspace::PopupChange::{Closed, Hidden};
+
+    let inspect = WorkspaceAction::Workspace(CommonAction::Inspect);
+    let mut misses = Vec::new();
+    for (change, pending) in [(Closed, false), (Hidden, false), (Hidden, true)] {
+        let transient = change == Closed;
+        for (early, repaint, cancel) in
+            (0..8).map(|order| (order & 1 != 0, order & 2 != 0, order & 4 != 0))
+        {
+            if early && !transient && !pending || cancel && (!early || !transient) {
+                continue;
+            }
+            let old = OrbitPeer::new("popup-old");
+            let restored = OrbitPeer::new("popup-restored");
+            let (_socket, mut eon, mut app, waits) = shortcut_workspace();
+            super::install_noop_window(&mut app);
+
+            let (entry, code) = if transient {
+                ("sessions", KeyCode::KeyS)
+            } else {
+                ("files", KeyCode::KeyY)
+            };
+            let mut before = workspace_snapshot();
+            before.entries[0].id = entry.into();
+            before.entries[0].shortcut = PopupKey::Bound(Shortcut {
+                modifiers: workspace::ALT | workspace::SHIFT,
+                key: format!("{code:?}"),
+            });
+            let tab = &mut before.tabs[0];
+            tab.columns[0].panes[0].endpoint =
+                restored.socket.as_os_str().as_encoded_bytes().to_vec();
+            tab.popups[0].endpoint = old.socket.as_os_str().as_encoded_bytes().to_vec();
+            tab.popups[0].entry = entry.into();
+            let mut after = before.clone();
+            after.tabs[0].popups.retain(|_| !transient);
+            before.tabs[0].selected_popup = Some("u1".into());
+            if pending {
+                before.tabs[0].pending = true;
+                before.tabs[0].selected_pane = None;
+                before.tabs[0].columns.clear();
+            }
+            let drain = |app: &mut Application| {
+                let events = app.workspace_transport.as_ref().unwrap().catch_up();
+                let inspected = events.contains(&WorkspaceEvent::PopupCloseInspected(1));
+                app.apply_workspace_events(events);
+                inspected
+            };
+            let paint = |app: &mut Application, revision| {
+                app.presentation
+                    .publish(app.presentation.candidate(revision));
+            };
+            eon.answer_refresh(&before);
+            waits.recv_timeout(super::PEER_TIMEOUT).unwrap();
+            drain(&mut app);
+            let departing = old.accept();
+            app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+            paint(&mut app, Some(1));
+
+            assert!(!shortcut_key(&mut app, KeyCode::Escape, Pressed, false));
+            let escape = terminal_test_key(OrbitKey::ESCAPE, Press, None);
+            assert!(app.send(escape.clone()));
+            app.input
+                .commit_key(PhysicalKey::Code(KeyCode::Escape), Pressed);
+            assert_eq!(input(&mut app, &departing), [escape]);
+            let mut subscription = eon.subscription();
+            write_subscription(&mut subscription, &subscribed());
+            let (mut earlier, _) = eon.exchange();
+            if transient && early && !cancel {
+                app.handle_transport(TransportEvent::Server(ServerMessage::Exited { code: 0 }));
+            }
+            write_subscription(&mut subscription, &popup_event(1, change, "u1"));
+            let chord = |app: &mut Application| {
+                if repaint {
+                    drain(app);
+                    paint(app, None);
+                    if !early {
+                        app.handle_transport(super::native::frame(
+                            0,
+                            orbit_protocol::Screen::Primary,
+                        ));
+                    }
+                }
+                app.input
+                    .set_modifiers(ModifiersState::ALT | ModifiersState::SHIFT);
+                for (state, repeat) in [(Pressed, false), (Pressed, true), (Released, false)] {
+                    assert!(shortcut_key(app, code, state, repeat));
+                }
+            };
+            if early {
+                chord(&mut app);
+                if cancel {
+                    app.input.set_modifiers(ModifiersState::empty());
+                    assert!(!shortcut_key(&mut app, KeyCode::KeyX, Pressed, false));
+                    let text = terminal_test_key(OrbitKey::X, Press, Some("x"));
+                    assert!(app.send(text.clone()));
+                    assert_eq!(input(&mut app, &departing), [text]);
+                }
+            }
+            write_response(&mut earlier, &before);
+            let (mut refresh, action) = eon.exchange();
+            assert_eq!(action, inspect);
+            drain(&mut app);
+            write_response(&mut refresh, &after);
+            let mut inspected = !transient;
+            while !inspected || app.workspace_model.snapshot() != Some(&after) {
+                waits.recv_timeout(super::PEER_TIMEOUT).unwrap();
+                inspected |= drain(&mut app);
+            }
+            let pane = restored.accept();
+            app.handle_transport(TransportEvent::Server(ServerMessage::Attached));
+            assert!(shortcut_key(&mut app, KeyCode::Escape, Released, false));
+            if !early {
+                chord(&mut app);
+            }
+            assert!(input(&mut app, &pane).is_empty());
+            paint(&mut app, Some(1));
+            assert!(app.queue_workspace(inspect.clone()));
+            let (mut exchange, actual) = eon.exchange();
+            let invoke = WorkspaceAction::InvokePopup {
+                tab: "t1".into(),
+                entry: entry.into(),
+                expected_instance: (!transient).then(|| "u1".into()),
+                intent: InvokeIntent::Toggle,
+            };
+            let expected = if cancel { &inspect } else { &invoke };
+            if &actual != expected {
+                misses.push((change, pending, early, repaint, cancel, actual.clone()));
+            }
+            if actual != inspect {
+                write_response(&mut exchange, &after);
+                assert_eq!(eon.exchange().1, inspect);
+            }
+        }
+    }
+    assert!(misses.is_empty(), "{misses:?}");
 }

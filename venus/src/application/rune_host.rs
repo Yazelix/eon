@@ -559,6 +559,8 @@ impl Host {
             Some(Completion::Drawn(None)) => self.withdraw_surface(),
             Some(Completion::Covered) => {
                 self.app.presentation.unpublish();
+                self.app.presentation.popup_close = None;
+                self.app.presentation.terminal_presented = false;
                 self.app.stop_covered_motion();
                 self.app.reset_cursor_animation();
             }
@@ -572,7 +574,7 @@ impl Host {
             .rune_window()
             .is_some_and(|window| !window.withdrawn.get())
         {
-            self.app.presentation.invalidate();
+            self.app.presentation.withdraw();
         }
         self.app.cancel_native_pointer_sequence();
         self.app.input.reset_scroll();
