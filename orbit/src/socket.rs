@@ -14,15 +14,21 @@ use orbit_protocol::{
         VerticalDirection, WheelOutcome,
     },
 };
+use rustix::{
+    fs::{AtFlags, RenameFlags, renameat_with, statat},
+    net::{self, SocketAddrUnix},
+};
 use std::{
     collections::VecDeque,
+    ffi::OsStr,
     fs::{self, File},
     io::{self, Read, Write},
     os::{
         fd::{AsRawFd, RawFd},
         unix::{
+            ffi::OsStrExt,
             fs::{FileTypeExt, MetadataExt, PermissionsExt},
-            net::{UnixDatagram, UnixListener, UnixStream},
+            net::{SocketAddr, UnixDatagram, UnixListener, UnixStream},
         },
     },
     path::{Path, PathBuf},
@@ -49,6 +55,17 @@ struct SocketGuard {
 }
 
 impl SocketGuard {
+    fn capture(path: PathBuf) -> io::Result<Self> {
+        let metadata = fs::symlink_metadata(&path)?;
+        if !metadata.file_type().is_socket() {
+            return Err(errno(libc::EEXIST));
+        }
+        Ok(Self {
+            path,
+            identity: Some((metadata.dev(), metadata.ino())),
+        })
+    }
+
     /// Removes the pathname while it is still this socket; an observed
     /// replacement is left alone without an error.
     fn unlink_owned(&mut self) -> io::Result<()> {
@@ -83,8 +100,115 @@ pub(crate) struct Listener {
     guard: SocketGuard,
 }
 
+fn staging_names() -> impl Iterator<Item = String> {
+    std::iter::once("~".into())
+        .chain(
+            (b'0'..=b'9')
+                .chain(b'a'..=b'z')
+                .map(|byte| format!("~{}", char::from(byte))),
+        )
+        .chain((0..27).map(|index| format!("~{index:02}")))
+}
+
 impl Listener {
     pub(crate) fn open(path: &Path) -> io::Result<Self> {
+        Self::open_with(path, |_| {}, Self::rename)
+    }
+
+    fn open_with(
+        path: &Path,
+        after_bind: impl FnOnce(&Path),
+        rename: impl FnOnce(&File, &OsStr, &OsStr) -> io::Result<()>,
+    ) -> io::Result<Self> {
+        let parent = path.parent().ok_or_else(|| errno(libc::EINVAL))?;
+        let name = path.file_name().ok_or_else(|| errno(libc::EINVAL))?;
+        if path.as_os_str().as_bytes().ends_with(b"/") || parent.join(name) != path {
+            return Err(errno(libc::EINVAL));
+        }
+        if session::reserved_presentation_basename(name.as_bytes()) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "presentation socket basename beginning with '~' is reserved",
+            ));
+        }
+        SocketAddr::from_pathname(path)?;
+        let (claim, uid) = Self::claim(path)?;
+        for staging_name in staging_names() {
+            let staging = parent.join(&staging_name);
+            if SocketAddr::from_pathname(&staging).is_err() {
+                continue;
+            }
+            match Self::remove_stale(&staging, uid) {
+                Ok(()) => {}
+                Err(error)
+                    if error.kind() == io::ErrorKind::AddrInUse
+                        || matches!(
+                            error.raw_os_error(),
+                            Some(libc::EEXIST | libc::EPROTOTYPE)
+                        ) =>
+                {
+                    continue;
+                }
+                Err(error) => return Err(error),
+            }
+            let socket = platform::stream_socket()?;
+            match net::bind(&socket, &SocketAddrUnix::new(&staging)?) {
+                Ok(()) => {}
+                Err(rustix::io::Errno::ADDRINUSE) => continue,
+                Err(error) => return Err(error.into()),
+            }
+            let mut guard = SocketGuard::capture(staging)?;
+            after_bind(&guard.path);
+            fs::set_permissions(&guard.path, fs::Permissions::from_mode(0o600))?;
+            // Match the pinned std listener's backlog on Linux and macOS.
+            net::listen(&socket, -1)?;
+            let listener = UnixListener::from(socket);
+            listener.set_nonblocking(true)?;
+            let leaf = OsStr::new(&staging_name);
+            let source = statat(&claim, leaf, AtFlags::SYMLINK_NOFOLLOW)?;
+            if guard.identity != Some((platform::stat_device(&source), source.st_ino))
+                || source.st_mode & 0o7777 != 0o600
+            {
+                return Err(errno(libc::EEXIST));
+            }
+            rename(&claim, leaf, name).map_err(|error| {
+                io::Error::new(
+                    error.kind(),
+                    format!(
+                        "cannot publish {} with exclusive rename: {error}",
+                        path.display()
+                    ),
+                )
+            })?;
+            guard.path = path.to_owned();
+            return Ok(Self { listener, guard });
+        }
+        Err(io::Error::new(
+            io::ErrorKind::AddrInUse,
+            format!(
+                "no staging socket pathname available for {}",
+                path.display()
+            ),
+        ))
+    }
+
+    fn rename(claim: &File, stage: &OsStr, target: &OsStr) -> io::Result<()> {
+        renameat_with(claim, stage, claim, target, RenameFlags::NOREPLACE)?;
+        Ok(())
+    }
+
+    /// Management publishes its record after this listener is ready and
+    /// compares the directly bound pathname when carrying a lease.
+    pub(crate) fn open_before_record(path: &Path) -> io::Result<Self> {
+        let (_claim, _) = Self::claim(path)?;
+        let listener = UnixListener::bind(path)?;
+        let guard = SocketGuard::capture(path.to_owned())?;
+        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+        listener.set_nonblocking(true)?;
+        Ok(Self { listener, guard })
+    }
+
+    fn claim(path: &Path) -> io::Result<(File, u32)> {
         let parent = path.parent().ok_or_else(|| errno(libc::EINVAL))?;
         let metadata = fs::symlink_metadata(parent)?;
         let uid = platform::effective_uid();
@@ -102,16 +226,7 @@ impl Listener {
             fs::TryLockError::Error(error) => error,
         })?;
         Self::remove_stale(path, uid)?;
-        let listener = UnixListener::bind(path)?;
-        let mut guard = SocketGuard {
-            path: path.to_owned(),
-            identity: None,
-        };
-        let metadata = fs::symlink_metadata(path)?;
-        guard.identity = Some((metadata.dev(), metadata.ino()));
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-        listener.set_nonblocking(true)?;
-        Ok(Self { listener, guard })
+        Ok((claim, uid))
     }
 
     pub(crate) fn unlink_owned(&mut self) -> io::Result<()> {
@@ -148,7 +263,11 @@ impl Listener {
                     io::ErrorKind::ConnectionRefused | io::ErrorKind::NotFound
                 ) =>
             {
-                fs::remove_file(path)
+                SocketGuard {
+                    path: path.to_owned(),
+                    identity: Some((metadata.dev(), metadata.ino())),
+                }
+                .unlink_owned()
             }
             // A live datagram socket is refused and kept.
             Ok(()) => Err(errno(libc::EPROTOTYPE)),
@@ -2114,6 +2233,113 @@ mod tests {
                 .unwrap(),
             ObserverSend::Sent
         );
+    }
+
+    #[test]
+    fn listener_publishes_only_after_listen() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let directory = TestDir::new();
+        let path = directory.0.join("orbit.sock");
+        let mut staged = None;
+        let listener = Listener::open_with(
+            &path,
+            |stage| {
+                let error = UnixStream::connect(&path).unwrap_err();
+                assert_eq!(error.kind(), io::ErrorKind::NotFound, "{error}");
+                staged = Some(fs::symlink_metadata(stage).unwrap());
+            },
+            Listener::rename,
+        )
+        .unwrap();
+        let staged = staged.unwrap();
+        let public = fs::symlink_metadata(&path).unwrap();
+        assert_eq!((public.dev(), public.ino()), (staged.dev(), staged.ino()));
+        assert_eq!(public.mode() & 0o7777, 0o600);
+        let _client = UnixStream::connect(&path).unwrap();
+        listener.listener.accept().unwrap();
+    }
+
+    #[test]
+    fn listener_preserves_conflicts_and_cleans_up_failed_publication() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let directory = TestDir::new();
+        let path = directory.0.join("orbit.sock");
+        let stage = directory.0.join("~");
+        let error = Listener::open_with(
+            &path,
+            |_| fs::write(&path, "rival").unwrap(),
+            Listener::rename,
+        )
+        .err()
+        .unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "rival");
+        assert!(!stage.exists());
+        fs::remove_file(&path).unwrap();
+
+        for raw in [libc::EINVAL, libc::ENOTSUP, libc::ENOSYS] {
+            let error = Listener::open_with(&path, |_| {}, |_, _, _| Err(errno(raw)))
+                .err()
+                .unwrap();
+            assert_eq!(error.kind(), errno(raw).kind());
+            assert!(error.to_string().contains("exclusive rename"));
+            assert!(!path.exists());
+            assert!(!stage.exists());
+        }
+    }
+
+    #[test]
+    fn listener_reclaims_only_proven_stale_staging_sockets() {
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let directory = TestDir::new();
+        let path = directory.0.join("orbit.sock");
+        let earlier = directory.0.join("~");
+        let stale = directory.0.join("~0");
+        drop(UnixListener::bind(&earlier).unwrap());
+        fs::set_permissions(&earlier, fs::Permissions::from_mode(0o700)).unwrap();
+        let earlier_inode = fs::symlink_metadata(&earlier).unwrap().ino();
+        drop(UnixListener::bind(&stale).unwrap());
+        fs::set_permissions(&stale, fs::Permissions::from_mode(0o600)).unwrap();
+        let listener =
+            Listener::open_with(&path, |stage| assert_eq!(stage, stale), Listener::rename).unwrap();
+        let _client = UnixStream::connect(&path).unwrap();
+        listener.listener.accept().unwrap();
+        let untouched = fs::symlink_metadata(&earlier).unwrap();
+        assert_eq!(untouched.ino(), earlier_inode);
+        assert_eq!(untouched.mode() & 0o7777, 0o700);
+        assert!(!stale.exists());
+    }
+
+    #[test]
+    fn listener_validates_public_names_and_the_platform_path_limit() {
+        use std::os::unix::fs::DirBuilderExt;
+
+        let _guard = FORK_AND_SOCKET_TEST.lock().unwrap();
+        let directory = TestDir::new();
+        assert_eq!(staging_names().count(), 64);
+        for name in staging_names() {
+            let error = Listener::open(&directory.0.join(name)).err().unwrap();
+            assert!(error.to_string().contains("reserved"));
+        }
+        let slash = directory.0.join("trailing/");
+        assert_eq!(code(Listener::open(&slash)), Some(libc::EINVAL));
+        assert!(!directory.0.join("trailing").exists());
+        assert_eq!(code(Listener::open(Path::new("/"))), Some(libc::EINVAL));
+
+        let limit = if cfg!(target_os = "macos") { 103 } else { 107 };
+        let parent = directory
+            .0
+            .join("x".repeat(limit - directory.0.as_os_str().len() - 3));
+        fs::DirBuilder::new().mode(0o700).create(&parent).unwrap();
+        let path = parent.join("s");
+        assert_eq!(path.as_os_str().len(), limit);
+        drop(Listener::open(&path).unwrap());
+        assert!(Listener::open(&parent.join("ss")).is_err());
+        let stage = parent.join("~");
+        fs::write(&stage, "keep").unwrap();
+        let error = Listener::open(&path).err().unwrap();
+        assert_eq!(error.kind(), io::ErrorKind::AddrInUse);
+        assert_eq!(fs::read_to_string(stage).unwrap(), "keep");
     }
 
     #[test]

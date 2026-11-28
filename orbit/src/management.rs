@@ -81,7 +81,7 @@ impl Launch {
     /// Opens the management socket before the child starts.
     pub(crate) fn prepare(self, socket: &Path) -> io::Result<Prepared> {
         let path = artifact_path(socket, ".management");
-        let listener = Listener::open(&path)?;
+        let listener = Listener::open_before_record(&path)?;
         Ok(Prepared {
             launch: self,
             path,

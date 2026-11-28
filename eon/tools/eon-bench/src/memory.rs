@@ -14,7 +14,7 @@ use crate::{
     child::publish,
     environment,
     json::Value,
-    orbit::{Client, connect_new},
+    orbit::{Client, connect_new, procfs},
     pty,
     result::{Cell, Grid, RunResult, Sample, utc_timestamp},
     sha256::Sha256,
@@ -555,7 +555,14 @@ impl<'a> Session<'a> {
         Ok(())
     }
     fn wait(&self, what: &str, mut ready: impl FnMut() -> bool) -> Result {
-        while !ready() {
+        self.try_wait(what, || Ok(ready()))
+    }
+    fn try_wait(
+        &self,
+        what: &str,
+        mut ready: impl FnMut() -> std::result::Result<bool, String>,
+    ) -> Result {
+        while !ready()? {
             self.tick()
                 .map_err(|e| format!("{what}: {e}; evidence {}", self.evidence.display()))?;
             std::thread::sleep(Duration::from_millis(10));
@@ -693,8 +700,8 @@ impl<'a> Session<'a> {
                         return Err("Orbit did not settle".into());
                     }
                     reader.close()?;
-                    self.wait("Orbit detach", || {
-                        crate::orbit::procfs::connections(&dir.join("s")) == Some(0)
+                    self.try_wait("Orbit detach", || {
+                        Ok(procfs::connections(host, &socket)? == 0)
                     })?;
                 }
             }
@@ -1108,17 +1115,18 @@ pub fn presentation() -> Result {
     let socket = std::env::args().next_back().ok_or("missing Orbit socket")?;
     const WAIT: Duration = Duration::from_secs(20);
     let start = Instant::now();
-    // Only the first connection can meet the supervisor's Orbit before it
-    // listens; after Busy it has answered, so a reconnect connects once.
-    let mut stream = connect_new(Path::new(&socket), start + WAIT, || Ok(()))
+    let endpoint = Path::new(&socket);
+    let mut stream = connect_new(endpoint, start + WAIT, suite::interrupt::check)
         .map_err(|e| format!("supervisor Orbit: {e}"))?;
-    let reader = loop {
+    let (reader, host) = loop {
+        let host = procfs::peer_pid(&stream)?;
         let mut client = Client::new(stream)?;
         match client.attach(24, 80) {
-            Ok(_) => break client.discard_in_background()?,
+            Ok(_) => break (client.discard_in_background()?, host),
             Err(e) if e == "Orbit answered Busy" && start.elapsed() < WAIT => {
+                // The supervisor can name this process with AttachAllow after it starts (eon-uq50a).
                 std::thread::sleep(Duration::from_millis(50));
-                stream = UnixStream::connect(&socket).map_err(error)?;
+                stream = UnixStream::connect(endpoint).map_err(error)?;
             }
             Err(e) => return Err(e),
         }
@@ -1134,7 +1142,7 @@ pub fn presentation() -> Result {
         std::thread::sleep(Duration::from_millis(5));
     }
     reader.close()?;
-    while crate::orbit::procfs::connections(Path::new(&socket)) != Some(0) {
+    while procfs::connections(host, endpoint)? != 0 {
         std::thread::sleep(Duration::from_millis(5));
     }
     publish(&root.join("supervisor-detached"), "")?;
@@ -1527,18 +1535,18 @@ impl Session<'_> {
         })
     }
     fn check_codec(&mut self, token: &str) -> Result {
+        if self.terminals.len() != COUNT || self.worker_sets.len() != COUNT {
+            return Err("diagnostic terminal count changed".into());
+        }
         publish(&self.dir.join("client-check"), token)?;
         self.wait("diagnostic reader health", || {
             read(&self.dir.join("client-checked")).is_ok_and(|s| s == token)
         })?;
-        for dir in &self.terminals {
+        for (dir, workers) in self.terminals.iter().zip(&self.worker_sets) {
             let socket = fs::canonicalize(dir.join("s")).map_err(error)?;
-            if crate::orbit::procfs::connections(&socket) != Some(1) {
+            if procfs::connections(workers[0].pid, &socket)? != 1 {
                 return Err("diagnostic must hold exactly 50 live connections".into());
             }
-        }
-        if self.terminals.len() != COUNT {
-            return Err("diagnostic terminal count changed".into());
         }
         let client = self.client.as_ref().ok_or("no diagnostic client")?;
         fs::write(

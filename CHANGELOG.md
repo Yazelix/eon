@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- Orbit publishes its presentation socket once it is listening. Standalone
+  presentation socket names beginning with `~` are reserved (`eon-fsxwy`).
 - Pressing the Sessions shortcut twice confirms the picker even when the
   second key arrives before the opening reply or its first redraw
   (`eon-qx62f`).

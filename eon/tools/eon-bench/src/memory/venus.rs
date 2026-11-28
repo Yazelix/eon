@@ -239,12 +239,9 @@ impl Session<'_> {
             return Err("workspace must keep exactly 50 filled terminals".into());
         }
         let mut counts = Vec::new();
-        for dir in &self.terminals {
+        for (dir, workers) in self.terminals.iter().zip(&self.worker_sets) {
             let socket = fs::canonicalize(dir.join("s")).map_err(error)?;
-            counts.push(
-                crate::orbit::procfs::connections(&socket)
-                    .ok_or("cannot inspect workspace attachments")?,
-            );
+            counts.push(crate::orbit::procfs::connections(workers[0].pid, &socket)?);
         }
         if !connections_match(&counts, attached) {
             return Err(format!("workspace attachment set differs: {counts:?}"));

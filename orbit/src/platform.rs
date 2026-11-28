@@ -29,6 +29,36 @@ pub(crate) fn effective_uid() -> u32 {
     rustix::process::geteuid().as_raw()
 }
 
+/// A Unix stream socket with the same descriptor setup as std's listener.
+pub(crate) fn stream_socket() -> io::Result<OwnedFd> {
+    use rustix::net::{self, AddressFamily, SocketType};
+
+    #[cfg(target_os = "linux")]
+    let socket = net::socket_with(
+        AddressFamily::UNIX,
+        SocketType::STREAM,
+        net::SocketFlags::CLOEXEC,
+        None,
+    )?;
+    #[cfg(target_os = "macos")]
+    let socket = {
+        let socket = net::socket(AddressFamily::UNIX, SocketType::STREAM, None)?;
+        rustix::io::fcntl_setfd(&socket, FdFlags::CLOEXEC)?;
+        net::sockopt::set_socket_nosigpipe(&socket, true)?;
+        socket
+    };
+    Ok(socket)
+}
+
+/// The device number in the same form as std's Unix MetadataExt.
+pub(crate) fn stat_device(stat: &rustix::fs::Stat) -> u64 {
+    #[cfg(target_os = "linux")]
+    let device = stat.st_dev;
+    #[cfg(target_os = "macos")]
+    let device = stat.st_dev as u64;
+    device
+}
+
 /// A pipe whose ends close on exec, nonblocking if asked.
 pub(crate) fn pipe(nonblocking: bool) -> io::Result<(File, File)> {
     let (reader, writer) = io::pipe()?;

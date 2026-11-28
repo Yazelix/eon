@@ -45,6 +45,13 @@ than 100 ms, so the host checks the direct child at least that often. Each turn 
 ready source, starting after the one served last, so a source that stays
 ready, such as a busy PTY, cannot starve the others.
 
+Orbit binds the presentation listener at a reserved staging name, configures
+it, then exclusively renames the listening socket to the requested pathname.
+`getsockname` and `getpeername` retain the original staging pathname. Clients
+connect to the published pathname. Management binds directly because a
+supervisor carrying a lease checks its peer pathname against the record. The
+host publishes that record after both listeners are configured.
+
 The exchange is synchronous. The host sends one fact as one line in one write
 under `PIPE_BUF`, carrying every fact the decision needs, then reads decision
 lines until `end`. The worker reads the fact with `File.read_line`, which

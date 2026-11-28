@@ -147,6 +147,14 @@ rule keeps its wire representation.
 - **Trigger:** A peer negotiates an explicit role on the private presentation
   endpoint.
 - **Result:**
+  - Orbit reserves presentation socket basenames beginning with the ASCII byte
+    `~` for internal publication. Orbit rejects these basenames in public
+    presentation addresses, and supported clients exclude them from connection
+    and discovery. Orbit publishes a new presentation pathname only after its
+    private mode-0600 stream socket is listening. If the host cannot stage and
+    publish the endpoint within the platform's pathname limit, startup fails
+    explicitly. Accept-queue pressure, process exit, and role admission keep
+    their existing outcomes.
   - One client may own input while one observer receives only initial and changed
     terminal-authored title, raw working directory, presentation revision, and
     lifecycle.
@@ -188,7 +196,8 @@ rule keeps its wire representation.
   `eon-title-utf8-ends-terminal-atq2` commit for invalid metadata and the
   `eon-agent-parity-a9g0.15` commit (`9c90032`) for interactive admission,
   proved installed by the `eon-agent-parity-a9g0.19` commit and on Darwin at
-  `6ea9181` (`eon-mac-launch-kz4p.47`)
+  `6ea9181` (`eon-mac-launch-kz4p.47`). The `eon-fsxwy` publication change has
+  desk Rule 1 approval on 2026-11-27 under Lucca's 2026-11-13 delegation.
   - **Environment:** x86_64 Linux; `nix flake check -L` (`orbit-laws`,
     `orbit-boundary`, `orbit-terminfo`, every `orbit-<name>` real-PTY
     check); sandboxed `nix develop -c eon-test` (workspace and installer,
@@ -203,7 +212,9 @@ rule keeps its wire representation.
     edge `6ea9181` (tree `62b7f53`), a GitHub `macos-15` runner (Apple M1
     virtual machine `VirtualMac2,1`, 3 CPUs, 7 GiB, macOS 15.8.2 (24H232),
     Nix 2.35.2 without sandbox) in its logged-in GUI session, with the Eon
-    built there (`/nix/store/p3vnvzr45lw8pbfl35w9ljfnkc3imj7d-eon-0.1.9`)
+    built there (`/nix/store/p3vnvzr45lw8pbfl35w9ljfnkc3imj7d-eon-0.1.9`).
+    For `eon-fsxwy`, exact-tree `x86_64-linux` workspace `eon-test` passed 2812/2812
+    and optimized attach stress passed 200/200. Native `aarch64-darwin` runs are recorded at landing.
   - **Evidence:**
     - [`metadata_observer_is_canonical_read_only_and_reports_changes`](../src/socket.rs)
     - [`nonreading_observer_converges_on_the_latest_metadata`](../src/socket.rs)
@@ -217,6 +228,11 @@ rule keeps its wire representation.
     - Laws [`admission_answers_are_accounted`](../LAWS.bend) and
       [`admission_strangers_are_busy`](../LAWS.bend) (`orbit-laws`)
     - Workspace suite
+    - [`listener_publishes_only_after_listen`](../src/socket.rs)
+    - [`listener_preserves_conflicts_and_cleans_up_failed_publication`](../src/socket.rs)
+    - [`listener_reclaims_only_proven_stale_staging_sockets`](../src/socket.rs)
+    - [`listener_validates_public_names_and_the_platform_path_limit`](../src/socket.rs)
+    - [`standalone_rejects_reserved_presentation_name`](../../venus/src/launch.rs)
     - Installed: the `eon-ahzkt` ORBS probe's `Hello` got `Busy`, so its
       command was never sent, on a hidden tab's terminal, a hidden
       keep-alive popup's terminal, and the shown tab's terminal while the

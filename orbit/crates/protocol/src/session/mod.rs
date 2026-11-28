@@ -41,6 +41,11 @@ pub const MAX_METADATA_BYTES: usize = 8 * 1024;
 /// Largest absolute whole-row distance accepted in one viewport commit.
 pub const MAX_SCROLL_ROWS: i16 = 1024;
 
+/// Whether a presentation socket basename belongs to Orbit's publication namespace (ORB-C3).
+pub fn reserved_presentation_basename(basename: &[u8]) -> bool {
+    basename.starts_with(b"~")
+}
+
 /// A local-session validation or framing failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 #[non_exhaustive]

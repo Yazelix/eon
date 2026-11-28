@@ -8,7 +8,7 @@ use std::{
     ffi::OsString,
     fs,
     hash::{BuildHasher, Hash, Hasher},
-    os::unix::fs::MetadataExt,
+    os::unix::{ffi::OsStrExt, fs::MetadataExt},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -496,6 +496,15 @@ pub(super) fn launch_arguments(
     if orbit_socket.is_none() && workspace_socket.is_none() {
         orbit_socket = Some(default_socket_path()?);
     }
+    if orbit_socket
+        .as_deref()
+        .and_then(Path::file_name)
+        .is_some_and(|name| {
+            orbit_protocol::session::reserved_presentation_basename(name.as_bytes())
+        })
+    {
+        return Err("presentation socket basename beginning with '~' is reserved".into());
+    }
     let endpoint = workspace_socket
         .as_deref()
         .or(orbit_socket.as_deref())
@@ -713,6 +722,11 @@ fn default_socket_path() -> Result<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn standalone_rejects_reserved_presentation_name() {
+        assert!(launch_arguments([OsString::from("/tmp/~0")], None).is_err());
+    }
 
     #[test]
     fn padding_color_launch_values_are_strict() {

@@ -541,9 +541,7 @@ struct Outcome {
 const SETUP_WAIT: Duration = Duration::from_secs(10);
 /// How long one handshake read blocks before it checks for an interrupt.
 const READ_POLL: Duration = Duration::from_millis(100);
-/// How often a connect to a just-started server retries: its bind-to-listen
-/// window is a few syscalls, so a longer pause only delays the setup.
-const CONNECT_RETRY: Duration = Duration::from_millis(1);
+const SETUP_POLL: Duration = Duration::from_millis(1);
 const QUIET: Duration = Duration::from_millis(100);
 const QUIET_WAIT: Duration = Duration::from_secs(2);
 
@@ -581,14 +579,23 @@ impl Server {
         what: &str,
         mut done: impl FnMut() -> bool,
     ) -> Result<(), String> {
+        self.try_wait_for(limit, what, || Ok(done()))
+    }
+
+    fn try_wait_for(
+        &mut self,
+        limit: Duration,
+        what: &str,
+        mut done: impl FnMut() -> Result<bool, String>,
+    ) -> Result<(), String> {
         let start = Instant::now();
-        while !done() {
+        while !done()? {
             self.alive()?;
             suite::interrupt::check()?;
             if start.elapsed() >= limit {
                 return Err(format!("no {what} within {} s", limit.as_secs_f64()));
             }
-            std::thread::sleep(Duration::from_millis(1));
+            std::thread::sleep(SETUP_POLL);
         }
         Ok(())
     }
@@ -602,13 +609,8 @@ impl Server {
     }
 }
 
-/// Connects to the socket of a server that has just started. Its path is
-/// missing before bind() and refuses connections between bind() and
-/// listen(), so both errors retry every `CONNECT_RETRY` while `alive` agrees,
-/// until `deadline`; no attempt starts after it, and the last error is
-/// returned then. `alive` runs first, so a server that died reports its own
-/// error rather than the connect's. Callers connect before any timed span,
-/// so the retries are never measured.
+/// Waits for a fresh Orbit to publish its listening socket. An absent path
+/// can appear before the deadline, but a refusal fails the sample immediately.
 pub(crate) fn connect_new(
     path: &Path,
     deadline: Instant,
@@ -620,14 +622,11 @@ pub(crate) fn connect_new(
             Ok(stream) => return Ok(stream),
             Err(error) => error,
         };
-        if matches!(
-            error.kind(),
-            std::io::ErrorKind::NotFound | std::io::ErrorKind::ConnectionRefused
-        ) {
+        if error.kind() == std::io::ErrorKind::NotFound {
             alive()?;
             let left = deadline.saturating_duration_since(Instant::now());
             if !left.is_zero() {
-                std::thread::sleep(left.min(CONNECT_RETRY));
+                std::thread::sleep(left.min(SETUP_POLL));
                 if Instant::now() < deadline {
                     continue;
                 }
@@ -706,6 +705,7 @@ fn sample(spec: &Spec) -> Result<Outcome, String> {
         .spawn()
         .map_err(|error| format!("{}: {error}", options.orbit.display()))?;
     let mut server = Server { child, log };
+    let host_pid = server.child.id();
     let stream = server.connect(&socket)?;
     let attach_start = monotonic_ns();
     let mut client = Client::new(stream)?;
@@ -730,13 +730,12 @@ fn sample(spec: &Spec) -> Result<Outcome, String> {
             Some(reader)
         }
         Mode::Detached if cfg!(target_os = "linux") => {
-            // A path no line matches would read as dropped at once.
-            if procfs::connections(&socket).unwrap_or(0) == 0 {
+            if procfs::connections(host_pid, &socket)? == 0 {
                 return Err("the client's connection is not in /proc/net/unix".into());
             }
             reader.close()?;
-            server.wait_for(SETUP_WAIT, "detach", || {
-                procfs::connections(&socket) == Some(0)
+            server.try_wait_for(SETUP_WAIT, "detach", || {
+                Ok(procfs::connections(host_pid, &socket)? == 0)
             })?;
             None
         }
@@ -748,7 +747,6 @@ fn sample(spec: &Spec) -> Result<Outcome, String> {
             None
         }
     };
-    let host_pid = server.child.id();
     let processes = procfs::Processes::find(host_pid, child_pid);
     let before = processes.as_ref().map(procfs::Processes::read);
     let client_before = reader.as_ref().and_then(|reader| reader.cpu_ns());
@@ -1318,7 +1316,12 @@ fn table(result: &RunResult) -> String {
 
 /// Orbit's processes and this harness's threads, read from `/proc` (Linux).
 pub(crate) mod procfs {
-    use std::path::Path;
+    use std::{
+        collections::HashSet,
+        fs, io,
+        os::unix::{ffi::OsStrExt, net::UnixStream},
+        path::Path,
+    };
 
     /// Orbit's host and its Bend worker.
     pub struct Processes {
@@ -1435,20 +1438,84 @@ pub(crate) mod procfs {
         None
     }
 
-    /// The connections Orbit holds on `socket`: each accepted socket in
-    /// `/proc/net/unix` carries its listener's path, and the listener alone
-    /// is unconnected (state 01).
-    pub fn connections(socket: &Path) -> Option<usize> {
-        let table = std::fs::read_to_string("/proc/net/unix").ok()?;
-        let path = socket.to_str()?;
-        Some(
-            table
-                .lines()
-                .skip(1)
-                .map(|line| line.split_whitespace().collect::<Vec<_>>())
-                .filter(|fields| fields.len() == 8 && fields[5] == "03" && fields[7] == path)
-                .count(),
-        )
+    #[cfg(target_os = "linux")]
+    pub fn peer_pid(stream: &UnixStream) -> Result<u32, String> {
+        let credentials =
+            rustix::net::sockopt::socket_peercred(stream).map_err(|error| error.to_string())?;
+        u32::try_from(credentials.pid.as_raw_pid()).map_err(|error| error.to_string())
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    pub fn peer_pid(_: &UnixStream) -> Result<u32, String> {
+        Err("memory diagnostic peer identification requires Linux".into())
+    }
+
+    /// Linux reports the original bind address even after rename. Match the
+    /// Orbit host's own descriptors so two hosts can use the same bind name.
+    pub fn connections(host: u32, socket: &Path) -> Result<usize, String> {
+        let observe = || -> io::Result<Option<usize>> {
+            let mut inodes = HashSet::new();
+            for entry in fs::read_dir(format!("/proc/{host}/fd"))? {
+                let target = match fs::read_link(entry?.path()) {
+                    Ok(target) => target,
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => continue,
+                    Err(error) => return Err(error),
+                };
+                if let Some(inode) = target
+                    .as_os_str()
+                    .as_bytes()
+                    .strip_prefix(b"socket:[")
+                    .and_then(|name| name.strip_suffix(b"]"))
+                {
+                    inodes.insert(inode.to_vec());
+                }
+            }
+            let table = fs::read("/proc/net/unix")?;
+            let mut management = socket.as_os_str().to_os_string();
+            management.push(".management");
+            let rows = || {
+                table
+                    .split(|&byte| byte == b'\n')
+                    .skip(1)
+                    .filter_map(|line| {
+                        let mut fields = line.splitn(7, |&byte| byte == b' ').skip(3);
+                        let flags = fields.next()?;
+                        let kind = fields.next()?;
+                        let state = fields.next()?;
+                        let mut named = fields
+                            .next()?
+                            .trim_ascii_start()
+                            .splitn(2, |&byte| byte == b' ');
+                        let inode = named.next()?;
+                        let address = named.next()?;
+                        (kind == b"0001" && inodes.contains(inode))
+                            .then_some((flags, state, address))
+                    })
+            };
+            let mut listeners = rows().filter(|(flags, state, address)| {
+                *flags == b"00010000" && *state == b"01" && *address != management.as_bytes()
+            });
+            let address = match (listeners.next(), listeners.next()) {
+                (Some((_, _, address)), None) => address,
+                _ => return Ok(None),
+            };
+            Ok(Some(
+                rows()
+                    .filter(|(_, state, peer)| *state == b"03" && *peer == address)
+                    .count(),
+            ))
+        };
+        match observe() {
+            Ok(Some(count)) => Ok(count),
+            Ok(None) => Err(format!(
+                "no unique presentation listener for Orbit {host} at {}",
+                socket.display()
+            )),
+            Err(error) => Err(format!(
+                "cannot inspect Orbit {host} connections at {}: {error}",
+                socket.display()
+            )),
+        }
     }
 }
 
@@ -1458,93 +1525,85 @@ mod tests {
 
     use super::Received;
 
-    /// A Unix stream socket bound at `path` that is not yet listening: the
-    /// window between Orbit's bind() and listen().
-    fn bound(path: &std::path::Path) -> rustix::fd::OwnedFd {
-        use rustix::net::{AddressFamily, SocketAddrUnix, SocketType, bind, socket};
-        let fd = socket(AddressFamily::UNIX, SocketType::STREAM, None).unwrap();
-        bind(&fd, &SocketAddrUnix::new(path).unwrap()).unwrap();
-        fd
-    }
-
     #[test]
-    fn connect_new_waits_through_a_missing_then_refusing_socket() {
-        use std::{os::unix::net::UnixStream, time::Instant};
+    fn connect_new_waits_for_a_missing_socket() {
+        use std::{os::unix::net::UnixListener, time::Instant};
         let dir = super::run_dir(901).unwrap();
         let path = dir.0.join("s");
-        // Each failed attempt advances the server one step, so the attempts
-        // meet a missing path, then a bound socket, then a listening one.
-        let mut fd = None;
-        let mut calls = 0;
-        let stream = super::connect_new(&path, Instant::now() + super::SETUP_WAIT, || {
-            calls += 1;
-            match calls {
-                1 => fd = Some(bound(&path)),
-                2 => {
-                    // The case this helper exists for, on this platform.
-                    let refused = UnixStream::connect(&path).unwrap_err();
-                    assert_eq!(refused.kind(), std::io::ErrorKind::ConnectionRefused);
-                    rustix::net::listen(fd.as_ref().unwrap(), 1).unwrap();
-                }
-                _ => panic!("connected only after attempt {calls}"),
-            }
+        let mut listener = None;
+        super::connect_new(&path, Instant::now() + super::SETUP_WAIT, || {
+            assert!(listener.is_none());
+            listener = Some(UnixListener::bind(&path).unwrap());
             Ok(())
-        });
-        stream.unwrap();
-        assert_eq!(calls, 2);
+        })
+        .unwrap();
     }
 
     #[test]
-    fn connect_new_keeps_the_last_error_once_its_deadline_passes() {
-        use std::time::{Duration, Instant};
+    fn connect_new_keeps_the_deadline_and_server_exit() {
+        use std::{os::unix::net::UnixListener, time::Instant};
         let dir = super::run_dir(902).unwrap();
-        let path = dir.0.join("s");
-        // Missing on the first attempt, then bound and never listening: the
-        // error returned is the last one, the refusal.
-        let mut fd = None;
-        let limit = Duration::from_millis(200);
-        let start = Instant::now();
-        let error = super::connect_new(&path, start + limit, || {
-            fd.get_or_insert_with(|| bound(&path));
-            Ok(())
-        })
-        .unwrap_err();
-        let elapsed = start.elapsed();
-        assert!(error.to_lowercase().contains("refused"), "{error}");
-        // Bounded by its deadline, plus slack for a loaded machine.
-        assert!(
-            elapsed >= limit && elapsed < limit + Duration::from_secs(5),
-            "{elapsed:?}"
-        );
-        // No attempt starts once the deadline has passed, even when the
-        // server listens by then.
+        let absent = dir.0.join("absent");
+        let error = super::connect_new(&absent, Instant::now() + super::SETUP_WAIT, || {
+            Err("gone".into())
+        });
+        assert_eq!(error.unwrap_err(), "gone");
+
         let late = dir.0.join("late");
         let mut listener = None;
         let error = super::connect_new(&late, Instant::now(), || {
-            listener = Some(std::os::unix::net::UnixListener::bind(&late).unwrap());
+            listener = Some(UnixListener::bind(&late).unwrap());
             Ok(())
         });
         assert!(error.unwrap_err().contains("No such file"));
-        // A server that has died ends the wait at once with its own error.
-        let start = Instant::now();
-        let error = super::connect_new(&path, start + super::SETUP_WAIT, || Err("gone".into()));
-        assert_eq!(error.unwrap_err(), "gone");
-        assert!(start.elapsed() < Duration::from_secs(1));
     }
 
     #[test]
-    fn connect_new_fails_at_once_on_an_error_a_starting_server_cannot_cause() {
-        use std::time::{Duration, Instant};
+    fn connect_new_fails_at_once_on_a_transport_error() {
+        use std::{os::unix::net::UnixListener, time::Instant};
         let dir = super::run_dir(903).unwrap();
+        let stale = dir.0.join("stale");
+        drop(UnixListener::bind(&stale).unwrap());
         let file = dir.0.join("file");
         std::fs::write(&file, "").unwrap();
-        // A path through a regular file (ENOTDIR) never becomes a socket.
-        let start = Instant::now();
-        let error = super::connect_new(&file.join("s"), start + super::SETUP_WAIT, || {
-            panic!("retried a connect that cannot succeed")
-        });
-        assert!(error.unwrap_err().contains("Not a directory"));
-        assert!(start.elapsed() < Duration::from_secs(1));
+        for (path, reason) in [(stale, "refused"), (file.join("s"), "Not a directory")] {
+            let error = super::connect_new(&path, Instant::now() + super::SETUP_WAIT, || {
+                panic!("retried a transport error at {}", path.display())
+            });
+            assert!(error.unwrap_err().contains(reason));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn counts_only_the_hosts_presentation_connections() {
+        use std::{
+            fs,
+            os::unix::net::{UnixListener, UnixStream},
+        };
+        let dir = super::run_dir(905).unwrap();
+        let path = dir.0.join("s");
+        let host = std::process::id();
+        let manage = dir.0.join("s.management");
+        let management = UnixListener::bind(&manage).unwrap();
+        let _manager = UnixStream::connect(&manage).unwrap();
+        let _managed = management.accept().unwrap();
+        let _other = UnixStream::pair().unwrap();
+        for original in [&path, &dir.0.join("staging address")] {
+            let listener = UnixListener::bind(original).unwrap();
+            if original != &path {
+                fs::rename(original, &path).unwrap();
+            }
+            let client = UnixStream::connect(&path).unwrap();
+            let (accepted, _) = listener.accept().unwrap();
+            assert_eq!(super::procfs::peer_pid(&client).unwrap(), host);
+            assert_eq!(super::procfs::connections(host, &path).unwrap(), 1);
+            drop(accepted);
+            assert_eq!(super::procfs::connections(host, &path).unwrap(), 0);
+            drop(listener);
+            fs::remove_file(&path).unwrap();
+        }
+        assert!(super::procfs::connections(host, &path).is_err());
     }
 
     #[test]

@@ -6,6 +6,12 @@ remain canonical in `docs/CONTRACTS.md`, dependency decisions in
 
 ## Unreleased
 
+- Orbit publishes a private presentation socket after it starts listening and
+  reserves basenames beginning with `~` for that setup (ORB-C3, `eon-fsxwy`).
+  ORBS v15, ORBF v3 and management v10 stay unchanged. `orbit-protocol` adds
+  the compatible `reserved_presentation_basename` helper. Standalone Venus
+  rejects `~` basenames. Eon Runtime and Eon need no changes.
+
 - A paste that writes PTY bytes returns a scrolled-back primary viewport to
   live output, as a key does; management lease input still never moves it
   (ORB-C8, `eon-41sxd`). ORBS, ORBF and the management wire are unchanged;

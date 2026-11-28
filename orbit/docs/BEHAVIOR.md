@@ -104,6 +104,10 @@ keeps its pathname and exits with its child's code. The socket unit test
 `listener_keeps_a_live_socket_whose_accept_queue_is_full` refuses a start beside
 a listener with a full accept queue without stalling, keeps its pathname, and
 replaces it once that listener closes; Darwin workspace tests run it on macOS.
+The presentation socket pathname appears after the host starts listening.
+Basenames beginning with `~` are reserved for publication (ORB-C3). The
+socket unit test `listener_publishes_only_after_listen` checks the first
+connection and the published socket's mode and identity.
 
 ## Terminal identity
 
