@@ -5,6 +5,8 @@
 //! Strings and byte fields carry a little-endian `u16` length prefix, except
 //! pasted, visible and history terminal text, which carry a `u32` one. Every
 //! message is at most 2 MiB, except a `History` response.
+//! The checked cursor and explicit little-endian fields follow Orbit's
+//! codec in `orbit/crates/protocol/src/lib.rs`.
 //!
 //! Snapshot's optional Google quota/failure records are independent of Codex
 //! and Claude. Google permits only fresh/stale readings with one to six
@@ -18,6 +20,26 @@ use std::{collections::HashSet, fmt, str};
 
 use crate::shortcuts::ReleasedShortcuts;
 
+// These are wire values, independent of the enum's Rust discriminants.
+macro_rules! wire_tags {
+    ($ty:ident: $($variant:ident = $tag:literal),+ $(,)?) => {
+        impl $ty {
+            fn wire_tag(self) -> u8 {
+                match self {
+                    $(Self::$variant => $tag,)+
+                }
+            }
+
+            fn from_wire_tag(value: u8, field: &'static str) -> Result<Self> {
+                match value {
+                    $($tag => Ok(Self::$variant),)+
+                    value => Err(Error::InvalidTag { field, value }),
+                }
+            }
+        }
+    };
+}
+
 mod subscription;
 
 pub use subscription::{
@@ -26,6 +48,19 @@ pub use subscription::{
     SubscriptionMessage, TabChange, Tabs, WindowSnapshot, WorkspaceChange, WorkspaceEntry,
     decode_subscription_message, encode_subscription_message,
 };
+
+wire_tags!(InvokeIntent: Toggle = 0, Focus = 1, Show = 2);
+wire_tags!(InputLock: Unlock = 0, Lock = 1, Toggle = 2);
+wire_tags!(CloseEnd: Column = 0, Session = 1, Window = 2);
+wire_tags!(Screen: Primary = 0, Alternate = 1);
+wire_tags!(Sidebar: Open = 0, Closed = 1, Off = 2);
+wire_tags!(CodexQuotaState: Fresh = 0, Stale = 1, Blocked = 2, Unknown = 3);
+wire_tags!(QuotaFailureReason: Start = 0, Deadline = 1, OutputLimit = 2, ExitStatus = 3,
+    Malformed = 4, ProviderError = 5, Estimated = 6, ObservationTime = 7, InvalidWindow = 8);
+wire_tags!(WindowState: Live = 0, Incompatible = 1, Unreachable = 2);
+wire_tags!(AttentionKind: Permission = 1, Question = 2, Auth = 3);
+wire_tags!(AttentionState: NeedsInput = 1, Error = 2, Finished = 3, Working = 4,
+    Idle = 5, Unavailable = 6, Background = 7);
 
 pub const VERSION: u16 = 51;
 pub const HEADER_BYTES: usize = 12;
@@ -1127,9 +1162,10 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
     if let Some(caller) = &request.caller {
         identity("caller", caller)?;
     }
+    validate_direct_action(&request.action)?;
     let mut payload = Encoder::default();
     payload.string(&request.id);
-    encode_optional(&mut payload, &request.caller);
+    payload.optional_string(request.caller.as_deref());
     match &request.action {
         Action::Workspace(action) => encode_workspace_action(&mut payload, action)?,
         Action::InvokePopup {
@@ -1141,12 +1177,8 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             payload.byte(INVOKE_POPUP);
             payload.string(tab);
             payload.string(entry);
-            encode_optional(&mut payload, expected_instance);
-            payload.byte(match intent {
-                InvokeIntent::Toggle => 0,
-                InvokeIntent::Focus => 1,
-                InvokeIntent::Show => 2,
-            });
+            payload.optional_string(expected_instance.as_deref());
+            payload.byte(intent.wire_tag());
         }
         Action::DismissPopup(target) => {
             payload.byte(DISMISS_POPUP);
@@ -1155,91 +1187,63 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
         }
         Action::CreateColumn => payload.byte(CREATE_COLUMN),
         Action::ClosePane { pane } => {
-            identity("pane id", pane)?;
             payload.byte(CLOSE_PANE);
             payload.string(pane);
         }
         Action::CloseColumn { pane, consent } => {
-            identity("pane id", pane)?;
             payload.byte(CLOSE_COLUMN);
             payload.string(pane);
-            payload.byte(u8::from(consent.is_some()));
-            if let Some(consent) = consent {
-                validate_close_consent(consent)?;
-                payload.string(&consent.generation);
-                payload.count(consent.runs.len());
-                for run in &consent.runs {
-                    payload.string(run);
-                }
-                encode_close_end(&mut payload, consent.end);
-            }
+            payload.optional(consent.as_ref(), |encoder, consent| {
+                encoder.string(&consent.generation);
+                encoder.strings(&consent.runs);
+                encoder.byte(consent.end.wire_tag());
+            });
         }
         Action::RenamePane { pane, name, tag } => {
-            identity("pane id", pane)?;
-            validate_pane_rename(name.as_deref(), tag.as_deref())?;
             payload.byte(RENAME_PANE);
             payload.string(pane);
-            encode_optional(&mut payload, name);
-            encode_optional(&mut payload, tag);
+            payload.optional_string(name.as_deref());
+            payload.optional_string(tag.as_deref());
         }
         Action::MovePaneSideways(side) => payload.byte(match side {
             Side::Left => MOVE_PANE_LEFT,
             Side::Right => MOVE_PANE_RIGHT,
         }),
         Action::Edit { file } => {
-            validate_file(file)?;
             payload.byte(EDIT);
             payload.raw(file);
         }
         Action::RevealFiles { tab, path } => {
-            validate_reveal(tab.as_deref(), path)?;
             payload.byte(REVEAL_FILES);
-            encode_optional(&mut payload, tab);
+            payload.optional_string(tab.as_deref());
             payload.string(path);
         }
         Action::CreatePane { tab, argv, focus } => {
-            validate_pane_creation(tab.as_deref(), argv)?;
             payload.byte(CREATE_PANE);
-            payload.byte(u8::from(*focus));
-            encode_optional(&mut payload, tab);
-            payload.count(argv.len());
-            for argument in argv {
-                payload.raw(argument);
-            }
+            payload.boolean(*focus);
+            payload.optional_string(tab.as_deref());
+            payload.items(argv, |encoder, value| encoder.raw(value));
         }
         Action::LaunchTab {
             directory,
             argv,
             focus,
         } => {
-            validate_directory(directory)?;
-            if !argv.is_empty() {
-                validate_command(argv)?;
-            }
             payload.byte(LAUNCH_TAB);
             payload.raw(directory);
-            payload.count(argv.len());
-            for argument in argv {
-                payload.raw(argument);
-            }
-            payload.byte(u8::from(*focus));
+            payload.items(argv, |encoder, value| encoder.raw(value));
+            payload.boolean(*focus);
         }
         Action::InputLock(operation) => {
             payload.byte(INPUT_LOCK);
-            payload.byte(match operation {
-                InputLock::Unlock => 0,
-                InputLock::Lock => 1,
-                InputLock::Toggle => 2,
-            });
+            payload.byte(operation.wire_tag());
         }
         Action::ToggleSidebar => payload.byte(TOGGLE_SIDEBAR),
         Action::SetSidebar { open } => {
             payload.byte(SET_SIDEBAR);
-            payload.byte(u8::from(*open));
+            payload.boolean(*open);
         }
         Action::FocusAttention { tab, target } => {
-            identity("tab id", tab)?;
-            identity("attention target", target)?;
             payload.byte(FOCUS_ATTENTION);
             payload.string(tab);
             payload.string(target);
@@ -1247,17 +1251,14 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
         Action::NextAttention => payload.byte(NEXT_ATTENTION),
         Action::PreviousAttention => payload.byte(PREVIOUS_ATTENTION),
         Action::ReadTerminal { target } => {
-            identity("terminal target", target)?;
             payload.byte(READ_TERMINAL);
             payload.string(target);
         }
         Action::ReadTerminalHistory { target } => {
-            identity("terminal target", target)?;
             payload.byte(READ_TERMINAL_HISTORY);
             payload.string(target);
         }
         Action::EditTerminalHistory { target } => {
-            identity("terminal target", target)?;
             payload.byte(EDIT_TERMINAL_HISTORY);
             payload.string(target);
         }
@@ -1266,7 +1267,6 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             input,
             force,
         } => {
-            validate_send_target(target)?;
             payload.byte(SEND_TERMINAL);
             match target {
                 SendTarget::Id(id) => {
@@ -1275,19 +1275,17 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
                 }
                 SendTarget::Focused { expected_terminal } => {
                     payload.byte(1);
-                    encode_optional(&mut payload, expected_terminal);
+                    payload.optional_string(expected_terminal.as_deref());
                 }
             }
-            payload.byte(u8::from(*force));
+            payload.boolean(*force);
             match input {
                 TerminalInput::Paste(text) => {
-                    validate_paste(text)?;
                     payload.byte(0);
                     payload.long_raw(text.as_bytes());
                 }
                 TerminalInput::Enter => payload.byte(1),
                 TerminalInput::Key(key) => {
-                    key.validate()?;
                     payload.byte(2);
                     payload.byte(key.modifiers);
                     payload.string(&key.key);
@@ -1295,7 +1293,6 @@ pub fn encode_request(request: &Request) -> Result<Vec<u8>> {
             }
         }
         Action::Subscribe { filter, after } => {
-            subscription::validate_subscribe(filter, after.as_ref())?;
             subscription::encode_subscribe(&mut payload, filter, after.as_ref());
         }
     }
@@ -1307,8 +1304,8 @@ fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> R
     match action {
         WorkspaceAction::NewWorkspace { name, focus } => {
             payload.byte(32);
-            encode_optional(payload, name);
-            payload.byte(u8::from(*focus));
+            payload.optional_string(name.as_deref());
+            payload.boolean(*focus);
         }
         WorkspaceAction::SwitchWorkspace { workspace } => {
             payload.byte(33);
@@ -1316,10 +1313,7 @@ fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> R
         }
         WorkspaceAction::RenameWorkspace { workspace, name } => {
             payload.byte(34);
-            payload.byte(u8::from(workspace.is_some()));
-            if let Some(workspace) = workspace {
-                encode_workspace_target(payload, workspace);
-            }
+            payload.optional(workspace.as_ref(), encode_workspace_target);
             payload.string(name);
         }
         WorkspaceAction::CloseWorkspace { workspace } => {
@@ -1341,7 +1335,7 @@ fn encode_workspace_action(payload: &mut Encoder, action: &WorkspaceAction) -> R
         WorkspaceAction::InspectRuntime => payload.byte(8),
         WorkspaceAction::Present { workspace } => {
             payload.byte(10);
-            payload.byte(u8::from(*workspace));
+            payload.boolean(*workspace);
         }
         WorkspaceAction::ReloadPresentation {
             venus,
@@ -1413,7 +1407,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
     }
     let mut decoder = Decoder::new(payload);
     let id = decoder.string("request id", MAX_ID_BYTES)?;
-    let caller = decode_optional(&mut decoder, "caller")?;
+    let caller = decoder.optional_id("caller")?;
     if let Some(caller) = &caller {
         identity("caller", caller)?;
     }
@@ -1426,25 +1420,20 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         }
         CLOSE_COLUMN => Some(Action::CloseColumn {
             pane: decoder.string("pane id", MAX_ID_BYTES)?,
-            consent: if decode_bool(&mut decoder, "close consent")? {
-                let generation = decoder.string("generation", MAX_ID_BYTES)?;
-                let count = decoder.count("close runs", MAX_SESSIONS + 1)?;
-                let runs = (0..count)
-                    .map(|_| decoder.string("run id", MAX_ID_BYTES))
-                    .collect::<Result<_>>()?;
-                Some(CloseConsent {
-                    generation,
-                    runs,
-                    end: decode_close_end(&mut decoder)?,
+            consent: decoder.optional("close consent", |decoder| {
+                Ok(CloseConsent {
+                    generation: decoder.string("generation", MAX_ID_BYTES)?,
+                    runs: decoder.items("close runs", MAX_SESSIONS + 1, |decoder| {
+                        decoder.string("run id", MAX_ID_BYTES)
+                    })?,
+                    end: CloseEnd::from_wire_tag(decoder.byte()?, "close end")?,
                 })
-            } else {
-                None
-            },
+            })?,
         }),
         RENAME_PANE => Some(Action::RenamePane {
             pane: decoder.string("pane id", MAX_ID_BYTES)?,
-            name: decode_pane_name(&mut decoder)?,
-            tag: decode_pane_tag(&mut decoder)?,
+            name: decoder.optional_string("pane name", MAX_PANE_NAME_BYTES)?,
+            tag: decoder.optional_string("pane tag", MAX_PANE_NAME_BYTES)?,
         }),
         MOVE_PANE_LEFT => Some(Action::MovePaneSideways(Side::Left)),
         MOVE_PANE_RIGHT => Some(Action::MovePaneSideways(Side::Right)),
@@ -1452,53 +1441,32 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             file: decoder.raw("file", MAX_DIRECTORY_BYTES)?.to_vec(),
         }),
         REVEAL_FILES => Some(Action::RevealFiles {
-            tab: decode_optional(&mut decoder, "tab id")?,
+            tab: decoder.optional_id("tab id")?,
             path: decoder.string("path", MAX_DIRECTORY_BYTES)?,
         }),
         CREATE_PANE => {
-            let focus = decode_bool(&mut decoder, "pane focus")?;
-            let tab = decode_optional(&mut decoder, "tab id")?;
-            let count = decoder.count("command", MAX_COMMAND_ARGUMENTS)?;
-            let argv = (0..count)
-                .map(|_| {
-                    Ok(decoder
-                        .raw("command argument", MAX_COMMAND_ARGUMENT_BYTES)?
-                        .to_vec())
-                })
-                .collect::<Result<_>>()?;
+            let focus = decoder.boolean("pane focus")?;
+            let tab = decoder.optional_id("tab id")?;
+            let argv = decode_argv(&mut decoder)?;
             Some(Action::CreatePane { tab, argv, focus })
         }
         LAUNCH_TAB => {
             let directory = decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec();
-            let count = decoder.count("command", MAX_COMMAND_ARGUMENTS)?;
-            let argv = (0..count)
-                .map(|_| {
-                    Ok(decoder
-                        .raw("command argument", MAX_COMMAND_ARGUMENT_BYTES)?
-                        .to_vec())
-                })
-                .collect::<Result<_>>()?;
-            let focus = decode_bool(&mut decoder, "tab focus")?;
+            let argv = decode_argv(&mut decoder)?;
+            let focus = decoder.boolean("tab focus")?;
             Some(Action::LaunchTab {
                 directory,
                 argv,
                 focus,
             })
         }
-        INPUT_LOCK => Some(Action::InputLock(match decoder.byte()? {
-            0 => InputLock::Unlock,
-            1 => InputLock::Lock,
-            2 => InputLock::Toggle,
-            value => {
-                return Err(Error::InvalidTag {
-                    field: "input lock operation",
-                    value,
-                });
-            }
-        })),
+        INPUT_LOCK => Some(Action::InputLock(InputLock::from_wire_tag(
+            decoder.byte()?,
+            "input lock operation",
+        )?)),
         TOGGLE_SIDEBAR => Some(Action::ToggleSidebar),
         SET_SIDEBAR => Some(Action::SetSidebar {
-            open: decode_bool(&mut decoder, "sidebar open")?,
+            open: decoder.boolean("sidebar open")?,
         }),
         FOCUS_ATTENTION => Some(Action::FocusAttention {
             tab: decoder.string("tab id", MAX_ID_BYTES)?,
@@ -1519,7 +1487,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
             target: match decoder.byte()? {
                 0 => SendTarget::Id(decoder.string("terminal target", MAX_ID_BYTES)?),
                 1 => SendTarget::Focused {
-                    expected_terminal: decode_optional(&mut decoder, "expected terminal")?,
+                    expected_terminal: decoder.optional_id("expected terminal")?,
                 },
                 value => {
                     return Err(Error::InvalidTag {
@@ -1528,7 +1496,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
                     });
                 }
             },
-            force: decode_bool(&mut decoder, "force")?,
+            force: decoder.boolean("force")?,
             input: match decoder.byte()? {
                 0 => TerminalInput::Paste(decoder.long_string("paste", MAX_PASTE_BYTES)?),
                 1 => TerminalInput::Enter,
@@ -1553,49 +1521,7 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
     if let Some(action) = action {
         decoder.finish()?;
         identity("request id", &id)?;
-        match &action {
-            Action::ClosePane { pane } => identity("pane id", pane)?,
-            Action::CloseColumn { pane, consent } => {
-                identity("pane id", pane)?;
-                if let Some(consent) = consent {
-                    validate_close_consent(consent)?;
-                }
-            }
-            Action::RenamePane { pane, name, tag } => {
-                identity("pane id", pane)?;
-                validate_pane_rename(name.as_deref(), tag.as_deref())?;
-            }
-            Action::Edit { file } => validate_file(file)?,
-            Action::RevealFiles { tab, path } => validate_reveal(tab.as_deref(), path)?,
-            Action::CreatePane { tab, argv, .. } => validate_pane_creation(tab.as_deref(), argv)?,
-            Action::LaunchTab {
-                directory, argv, ..
-            } => {
-                validate_directory(directory)?;
-                if !argv.is_empty() {
-                    validate_command(argv)?;
-                }
-            }
-            Action::FocusAttention { tab, target } => {
-                identity("tab id", tab)?;
-                identity("attention target", target)?;
-            }
-            Action::ReadTerminal { target }
-            | Action::ReadTerminalHistory { target }
-            | Action::EditTerminalHistory { target } => identity("terminal target", target)?,
-            Action::SendTerminal { target, input, .. } => {
-                validate_send_target(target)?;
-                match input {
-                    TerminalInput::Paste(text) => validate_paste(text)?,
-                    TerminalInput::Key(key) => key.validate()?,
-                    TerminalInput::Enter => (),
-                }
-            }
-            Action::Subscribe { filter, after } => {
-                subscription::validate_subscribe(filter, after.as_ref())?
-            }
-            _ => (),
-        }
+        validate_direct_action(&action)?;
         return Ok(Request { id, caller, action });
     }
     identity("request id", &id)?;
@@ -1603,18 +1529,8 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
         INVOKE_POPUP => Action::InvokePopup {
             tab: decoder.string("tab id", MAX_ID_BYTES)?,
             entry: decoder.string("entry id", MAX_ENTRY_ID_BYTES)?,
-            expected_instance: decode_optional(&mut decoder, "expected instance")?,
-            intent: match decoder.byte()? {
-                0 => InvokeIntent::Toggle,
-                1 => InvokeIntent::Focus,
-                2 => InvokeIntent::Show,
-                value => {
-                    return Err(Error::InvalidTag {
-                        field: "popup intent",
-                        value,
-                    });
-                }
-            },
+            expected_instance: decoder.optional_id("expected instance")?,
+            intent: InvokeIntent::from_wire_tag(decoder.byte()?, "popup intent")?,
         },
         DISMISS_POPUP => Action::DismissPopup(PopupTarget {
             tab: decoder.string("tab id", MAX_ID_BYTES)?,
@@ -1627,6 +1543,61 @@ pub fn decode_request(bytes: &[u8]) -> Result<Request> {
     Ok(Request { id, caller, action })
 }
 
+fn validate_direct_action(action: &Action) -> Result<()> {
+    match action {
+        Action::ClosePane { pane } => identity("pane id", pane)?,
+        Action::CloseColumn { pane, consent } => {
+            identity("pane id", pane)?;
+            if let Some(consent) = consent {
+                validate_close_consent(consent)?;
+            }
+        }
+        Action::RenamePane { pane, name, tag } => {
+            identity("pane id", pane)?;
+            validate_pane_rename(name.as_deref(), tag.as_deref())?;
+        }
+        Action::Edit { file } => validate_file(file)?,
+        Action::RevealFiles { tab, path } => validate_reveal(tab.as_deref(), path)?,
+        Action::CreatePane { tab, argv, .. } => validate_pane_creation(tab.as_deref(), argv)?,
+        Action::LaunchTab {
+            directory, argv, ..
+        } => {
+            validate_directory(directory)?;
+            if !argv.is_empty() {
+                validate_command(argv)?;
+            }
+        }
+        Action::FocusAttention { tab, target } => {
+            identity("tab id", tab)?;
+            identity("attention target", target)?;
+        }
+        Action::ReadTerminal { target }
+        | Action::ReadTerminalHistory { target }
+        | Action::EditTerminalHistory { target } => identity("terminal target", target)?,
+        Action::SendTerminal { target, input, .. } => {
+            validate_send_target(target)?;
+            match input {
+                TerminalInput::Paste(text) => validate_paste(text)?,
+                TerminalInput::Key(key) => key.validate()?,
+                TerminalInput::Enter => (),
+            }
+        }
+        Action::Subscribe { filter, after } => {
+            subscription::validate_subscribe(filter, after.as_ref())?
+        }
+        _ => (),
+    }
+    Ok(())
+}
+
+fn decode_argv(decoder: &mut Decoder<'_>) -> Result<Vec<Vec<u8>>> {
+    decoder.items("command", MAX_COMMAND_ARGUMENTS, |decoder| {
+        Ok(decoder
+            .raw("command argument", MAX_COMMAND_ARGUMENT_BYTES)?
+            .to_vec())
+    })
+}
+
 fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<WorkspaceAction> {
     let direction = |offset| match offset {
         0 => Direction::Left,
@@ -1636,16 +1607,14 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
     };
     let action = match tag {
         32 => WorkspaceAction::NewWorkspace {
-            name: decode_workspace_optional(decoder)?,
-            focus: decode_bool(decoder, "workspace focus")?,
+            name: decoder.optional_string("workspace name", MAX_WORKSPACE_NAME_BYTES)?,
+            focus: decoder.boolean("workspace focus")?,
         },
         33 => WorkspaceAction::SwitchWorkspace {
             workspace: decode_workspace_target(decoder)?,
         },
         34 => WorkspaceAction::RenameWorkspace {
-            workspace: decode_bool(decoder, "workspace target")?
-                .then(|| decode_workspace_target(decoder))
-                .transpose()?,
+            workspace: decoder.optional("workspace target", decode_workspace_target)?,
             name: decoder.string("workspace name", MAX_WORKSPACE_NAME_BYTES)?,
         },
         35 => WorkspaceAction::CloseWorkspace {
@@ -1664,7 +1633,7 @@ fn decode_workspace_action(decoder: &mut Decoder<'_>, tag: u8) -> Result<Workspa
         4..=7 => WorkspaceAction::Focus(direction(tag - 4)),
         8 => WorkspaceAction::InspectRuntime,
         10 => WorkspaceAction::Present {
-            workspace: decode_bool(decoder, "presentation mode")?,
+            workspace: decoder.boolean("presentation mode")?,
         },
         11 => WorkspaceAction::InspectPresentation,
         46 => WorkspaceAction::ReloadPresentation {
@@ -1741,20 +1710,6 @@ fn validate_pane_text(field: &'static str, name: &str) -> Result<()> {
         return Err(Error::InvalidValue { field });
     }
     Ok(())
-}
-
-fn decode_pane_name(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
-    Ok(if decode_bool(decoder, "pane name")? {
-        Some(decoder.string("pane name", MAX_PANE_NAME_BYTES)?)
-    } else {
-        None
-    })
-}
-
-fn decode_pane_tag(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
-    decode_bool(decoder, "pane tag")?
-        .then(|| decoder.string("pane tag", MAX_PANE_NAME_BYTES))
-        .transpose()
 }
 
 fn validate_pane_label(pane: &Pane) -> Result<()> {
@@ -1855,14 +1810,6 @@ fn validate_workspace_target(target: &WorkspaceTarget) -> Result<()> {
     }
 }
 
-fn decode_workspace_optional(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
-    Ok(if decode_bool(decoder, "workspace name")? {
-        Some(decoder.string("workspace name", MAX_WORKSPACE_NAME_BYTES)?)
-    } else {
-        None
-    })
-}
-
 fn validate_popup_action(action: &Action) -> Result<()> {
     match action {
         Action::InvokePopup {
@@ -1932,31 +1879,39 @@ pub fn validate_paste(text: &str) -> Result<()> {
     Ok(())
 }
 
-/// A tab as the snapshot payload carries it: panes flattened in column
-/// order, with the column layout sent ahead of the workspace.
+/// A received tab's panes are flat until its independently carried layout is applied.
 struct WireTab {
-    id: String,
-    directory: Vec<u8>,
-    pending: bool,
-    selected_pane: Option<String>,
-    selected_popup: Option<String>,
+    tab: Tab,
     panes: Vec<Pane>,
-    popups: Vec<Popup>,
-    attention_rollup: Option<AttentionState>,
 }
 
-impl From<&Tab> for WireTab {
-    fn from(tab: &Tab) -> Self {
+#[derive(Clone, Copy)]
+struct TabRef<'a> {
+    tab: &'a Tab,
+    flat_panes: &'a [Pane],
+}
+
+impl<'a> From<&'a Tab> for TabRef<'a> {
+    fn from(tab: &'a Tab) -> Self {
         Self {
-            id: tab.id.clone(),
-            directory: tab.directory.clone(),
-            pending: tab.pending,
-            selected_pane: tab.selected_pane.clone(),
-            selected_popup: tab.selected_popup.clone(),
-            panes: tab.panes().cloned().collect(),
-            popups: tab.popups.clone(),
-            attention_rollup: tab.attention_rollup,
+            tab,
+            flat_panes: &[],
         }
+    }
+}
+
+impl<'a> From<&'a WireTab> for TabRef<'a> {
+    fn from(wire: &'a WireTab) -> Self {
+        Self {
+            tab: &wire.tab,
+            flat_panes: &wire.panes,
+        }
+    }
+}
+
+impl<'a> TabRef<'a> {
+    fn panes(self) -> impl Iterator<Item = &'a Pane> {
+        self.tab.panes().chain(self.flat_panes)
     }
 }
 
@@ -1965,20 +1920,31 @@ impl From<&Tab> for WireTab {
 /// quota and last failure, sidebar,
 /// workspace summaries, the window-wide attention queue and running windows.
 pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
+    macro_rules! terminal_read_prefix {
+        ($payload:ident, $read:ident) => {
+            encode_target(&mut $payload, &$read.target);
+            encode_caller(&mut $payload, $read.caller.as_ref());
+            $payload.u64($read.revision);
+            $payload.byte($read.screen.wire_tag());
+            $payload.number($read.rows);
+            $payload.number($read.columns);
+            $payload.string(&$read.title);
+            $payload.raw(&$read.directory);
+        };
+    }
     let mut payload = Encoder::default();
     let kind = match response {
         Response::Snapshot(snapshot) => {
-            let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
-            let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
+            let claude = snapshot.claude_quota.as_ref().map(QuotaRef::from);
             validate_snapshot_identity(snapshot)?;
             validate_focus(snapshot.focus.as_ref())?;
-            let google = snapshot.google_quota.as_ref().map(google_as_codex);
-            validate_workspace(snapshot, &tabs)?;
+            let google = snapshot.google_quota.as_ref().map(QuotaRef::from);
+            validate_workspace(snapshot, snapshot.tabs.iter().map(TabRef::from))?;
             validate_running(snapshot.running.as_ref())?;
             validate_busy(snapshot.busy.as_ref())?;
-            validate_codex(snapshot.codex_quota.as_ref())?;
-            validate_claude(claude.as_ref())?;
-            validate_google(google.as_ref())?;
+            validate_codex(snapshot.codex_quota.as_ref().map(QuotaRef::from))?;
+            validate_claude(claude)?;
+            validate_google(google)?;
             validate_failure(snapshot.google_quota_failure)?;
             validate_failure(snapshot.codex_quota_failure)?;
             validate_failure(snapshot.claude_quota_failure)?;
@@ -1986,14 +1952,17 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             for tab in &snapshot.tabs {
                 encode_layout(&mut payload, tab)?;
             }
-            encode_workspace(&mut payload, snapshot, &tabs);
-            encode_quota(&mut payload, snapshot.codex_quota.as_ref());
-            encode_quota(&mut payload, claude.as_ref());
+            encode_workspace(&mut payload, snapshot);
+            encode_quota(
+                &mut payload,
+                snapshot.codex_quota.as_ref().map(QuotaRef::from),
+            );
+            encode_quota(&mut payload, claude);
             encode_failure_record(&mut payload, snapshot.codex_quota_failure);
             encode_failure_record(&mut payload, snapshot.claude_quota_failure);
-            encode_quota(&mut payload, google.as_ref());
+            encode_quota(&mut payload, google);
             encode_failure_record(&mut payload, snapshot.google_quota_failure);
-            encode_sidebar(&mut payload, snapshot.sidebar);
+            payload.byte(snapshot.sidebar.wire_tag());
             encode_workspace_set(&mut payload, snapshot);
             encode_attention_queue(&mut payload, &snapshot.attention_queue);
             encode_running(&mut payload, snapshot.running.as_ref());
@@ -2001,15 +1970,14 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             payload.string(&snapshot.generation);
             payload.string(&snapshot.created_build);
             payload.string(&snapshot.active_build);
-            payload.byte(u8::from(snapshot.focus.is_some()));
-            if let Some(focus) = &snapshot.focus {
-                payload.byte(match focus.window_focused {
+            payload.optional(snapshot.focus.as_ref(), |encoder, focus| {
+                encoder.byte(match focus.window_focused {
                     None => 0,
                     Some(false) => 1,
                     Some(true) => 2,
                 });
-                encode_caller(&mut payload, focus.target.as_ref());
-            }
+                encode_caller(encoder, focus.target.as_ref());
+            });
             encode_window_keys(&mut payload, snapshot);
             SNAPSHOT
         }
@@ -2021,14 +1989,14 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             validate_close_scope(scope)?;
             payload.string(&scope.generation);
             payload.string(&scope.pane);
-            encode_close_end(&mut payload, scope.end);
+            payload.byte(scope.end.wire_tag());
             payload.string(&scope.session);
             payload.count(scope.terminals.len());
             for terminal in &scope.terminals {
                 encode_target(&mut payload, &terminal.target);
                 payload.string(&terminal.run);
                 payload.string(&terminal.name);
-                payload.byte(u8::from(terminal.busy));
+                payload.boolean(terminal.busy);
             }
             payload.count(scope.untracked.len());
             for run in &scope.untracked {
@@ -2044,46 +2012,16 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
         }
         Response::Text(text) => {
             validate_terminal_text(text)?;
-            encode_target(&mut payload, &text.target);
-            encode_caller(&mut payload, text.caller.as_ref());
-            payload
-                .bytes
-                .extend_from_slice(&text.revision.to_le_bytes());
-            payload.byte(match text.screen {
-                Screen::Primary => 0,
-                Screen::Alternate => 1,
-            });
-            payload.number(text.rows);
-            payload.number(text.columns);
-            payload.string(&text.title);
-            payload.raw(&text.directory);
-            payload
-                .bytes
-                .extend_from_slice(&text.omitted_rows.to_le_bytes());
+            terminal_read_prefix!(payload, text);
+            payload.u32(text.omitted_rows);
             payload.long_raw(text.text.as_bytes());
             TEXT
         }
         Response::History(history) => {
             validate_terminal_history(history)?;
-            encode_target(&mut payload, &history.target);
-            encode_caller(&mut payload, history.caller.as_ref());
-            payload
-                .bytes
-                .extend_from_slice(&history.revision.to_le_bytes());
-            payload.byte(match history.screen {
-                Screen::Primary => 0,
-                Screen::Alternate => 1,
-            });
-            payload.number(history.rows);
-            payload.number(history.columns);
-            payload.string(&history.title);
-            payload.raw(&history.directory);
-            payload
-                .bytes
-                .extend_from_slice(&history.omitted_lines.to_le_bytes());
-            payload
-                .bytes
-                .extend_from_slice(&history.cut_bytes.to_le_bytes());
+            terminal_read_prefix!(payload, history);
+            payload.u32(history.omitted_lines);
+            payload.u32(history.cut_bytes);
             payload.long_raw(history.text.as_bytes());
             HISTORY
         }
@@ -2095,7 +2033,7 @@ pub fn encode_response(response: &Response) -> Result<Vec<u8>> {
             validate_enter_delay(sent.enter_delay_ms)?;
             encode_target(&mut payload, &sent.target);
             encode_caller(&mut payload, sent.caller.as_ref());
-            payload.byte(u8::from(sent.bracketed));
+            payload.boolean(sent.bracketed);
             payload.number(sent.enter_delay_ms);
             SENT
         }
@@ -2118,26 +2056,6 @@ fn validate_target(target: &TerminalTarget) -> Result<()> {
         TargetId::Popup(id) => identity("target popup", id)?,
     }
     identity("target terminal", &target.terminal)
-}
-
-fn encode_close_end(encoder: &mut Encoder, end: CloseEnd) {
-    encoder.byte(match end {
-        CloseEnd::Column => 0,
-        CloseEnd::Session => 1,
-        CloseEnd::Window => 2,
-    });
-}
-
-fn decode_close_end(decoder: &mut Decoder<'_>) -> Result<CloseEnd> {
-    match decoder.byte()? {
-        0 => Ok(CloseEnd::Column),
-        1 => Ok(CloseEnd::Session),
-        2 => Ok(CloseEnd::Window),
-        value => Err(Error::InvalidTag {
-            field: "close end",
-            value,
-        }),
-    }
 }
 
 fn validate_close_runs<'a>(runs: impl Iterator<Item = &'a str>) -> Result<()> {
@@ -2236,16 +2154,11 @@ fn decode_target(decoder: &mut Decoder<'_>) -> Result<TerminalTarget> {
 }
 
 fn encode_caller(encoder: &mut Encoder, caller: Option<&TerminalTarget>) {
-    encoder.byte(u8::from(caller.is_some()));
-    if let Some(caller) = caller {
-        encode_target(encoder, caller);
-    }
+    encoder.optional(caller, encode_target);
 }
 
 fn decode_caller(decoder: &mut Decoder<'_>) -> Result<Option<TerminalTarget>> {
-    decode_bool(decoder, "caller")?
-        .then(|| decode_target(decoder))
-        .transpose()
+    decoder.optional("caller", decode_target)
 }
 
 fn validate_terminal_text(text: &TerminalText) -> Result<()> {
@@ -2297,17 +2210,6 @@ fn validate_terminal_read(
     Ok(())
 }
 
-fn decode_screen(decoder: &mut Decoder<'_>) -> Result<Screen> {
-    match decoder.byte()? {
-        0 => Ok(Screen::Primary),
-        1 => Ok(Screen::Alternate),
-        value => Err(Error::InvalidTag {
-            field: "screen",
-            value,
-        }),
-    }
-}
-
 fn validate_enter_delay(delay: u16) -> Result<()> {
     if delay > MAX_ENTER_DELAY_MS {
         return Err(Error::InvalidValue {
@@ -2328,28 +2230,22 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     if kind == CONFIRM {
         let generation = decoder.string("generation", MAX_ID_BYTES)?;
         let pane = decoder.string("pane id", MAX_ID_BYTES)?;
-        let end = decode_close_end(&mut decoder)?;
+        let end = CloseEnd::from_wire_tag(decoder.byte()?, "close end")?;
         let session = decoder.string("session name", MAX_WORKSPACE_NAME_BYTES)?;
-        let count = decoder.count("close terminals", MAX_SESSIONS)?;
-        let terminals = (0..count)
-            .map(|_| {
-                Ok(CloseTerminal {
-                    target: decode_target(&mut decoder)?,
-                    run: decoder.string("run id", MAX_ID_BYTES)?,
-                    name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
-                    busy: decode_bool(&mut decoder, "close busy")?,
-                })
+        let terminals = decoder.items("close terminals", MAX_SESSIONS, |decoder| {
+            Ok(CloseTerminal {
+                target: decode_target(decoder)?,
+                run: decoder.string("run id", MAX_ID_BYTES)?,
+                name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
+                busy: decoder.boolean("close busy")?,
             })
-            .collect::<Result<_>>()?;
-        let count = decoder.count("untracked runs", MAX_SESSIONS + 1)?;
-        let untracked = (0..count)
-            .map(|_| {
-                Ok(UntrackedRun {
-                    terminal: decoder.string("terminal id", MAX_ID_BYTES)?,
-                    run: decoder.string("run id", MAX_ID_BYTES)?,
-                })
+        })?;
+        let untracked = decoder.items("untracked runs", MAX_SESSIONS + 1, |decoder| {
+            Ok(UntrackedRun {
+                terminal: decoder.string("terminal id", MAX_ID_BYTES)?,
+                run: decoder.string("run id", MAX_ID_BYTES)?,
             })
-            .collect::<Result<_>>()?;
+        })?;
         let scope = CloseScope {
             generation,
             pane,
@@ -2374,15 +2270,15 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         let text = TerminalText {
             target: decode_target(&mut decoder)?,
             caller: decode_caller(&mut decoder)?,
-            revision: decode_u64(&mut decoder)?,
-            screen: decode_screen(&mut decoder)?,
+            revision: decoder.u64()?,
+            screen: Screen::from_wire_tag(decoder.byte()?, "screen")?,
             rows: decoder.number()?,
             columns: decoder.number()?,
             title: decoder.string("terminal title", MAX_TERMINAL_METADATA_BYTES)?,
             directory: decoder
                 .raw("terminal directory", MAX_TERMINAL_METADATA_BYTES)?
                 .to_vec(),
-            omitted_rows: decode_u32(&mut decoder)?,
+            omitted_rows: decoder.u32()?,
             text: decoder.long_string("terminal text", MAX_TERMINAL_TEXT_BYTES)?,
         };
         decoder.finish()?;
@@ -2393,16 +2289,16 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         let history = TerminalHistory {
             target: decode_target(&mut decoder)?,
             caller: decode_caller(&mut decoder)?,
-            revision: decode_u64(&mut decoder)?,
-            screen: decode_screen(&mut decoder)?,
+            revision: decoder.u64()?,
+            screen: Screen::from_wire_tag(decoder.byte()?, "screen")?,
             rows: decoder.number()?,
             columns: decoder.number()?,
             title: decoder.string("terminal title", MAX_TERMINAL_METADATA_BYTES)?,
             directory: decoder
                 .raw("terminal directory", MAX_TERMINAL_METADATA_BYTES)?
                 .to_vec(),
-            omitted_lines: decode_u32(&mut decoder)?,
-            cut_bytes: decode_u32(&mut decoder)?,
+            omitted_lines: decoder.u32()?,
+            cut_bytes: decoder.u32()?,
             text: decoder.long_string("history text", MAX_HISTORY_TEXT_BYTES)?,
         };
         decoder.finish()?;
@@ -2413,7 +2309,7 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         let sent = Sent {
             target: decode_target(&mut decoder)?,
             caller: decode_caller(&mut decoder)?,
-            bracketed: decode_bool(&mut decoder, "bracketed")?,
+            bracketed: decoder.boolean("bracketed")?,
             enter_delay_ms: decoder.number()?,
         };
         decoder.finish()?;
@@ -2433,18 +2329,21 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
     if kind != SNAPSHOT {
         return Err(Error::InvalidKind { value: kind });
     }
-    let tab_count = decoder.count("tabs", MAX_TABS)?;
-    let layouts = (0..tab_count)
-        .map(|_| decode_layout(&mut decoder))
-        .collect::<Result<Vec<_>>>()?;
-    let (mut snapshot, wire_tabs) = decode_workspace(&mut decoder)?;
-    snapshot.codex_quota = decode_quota(&mut decoder)?;
+    let layouts = decoder.items("tabs", MAX_TABS, decode_layout)?;
+    let WorkspaceBody {
+        active_tab,
+        geometry,
+        entries,
+        tabs: wire_tabs,
+    } = decode_workspace(&mut decoder)?;
+    let tabs = Vec::with_capacity(wire_tabs.len());
+    let codex_quota = decode_quota(&mut decoder)?;
     let claude = decode_quota(&mut decoder)?;
-    snapshot.codex_quota_failure = decode_failure_record(&mut decoder)?;
-    snapshot.claude_quota_failure = decode_failure_record(&mut decoder)?;
+    let codex_quota_failure = decode_failure_record(&mut decoder)?;
+    let claude_quota_failure = decode_failure_record(&mut decoder)?;
     let google = decode_quota(&mut decoder)?;
-    validate_google(google.as_ref())?;
-    snapshot.google_quota = google.map(|quota| GoogleQuota {
+    validate_google(google.as_ref().map(QuotaRef::from))?;
+    let google_quota = google.map(|quota| GoogleQuota {
         state: if quota.state == CodexQuotaState::Stale {
             GoogleQuotaState::Stale
         } else {
@@ -2453,46 +2352,30 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
         observed_at: quota.observed_at,
         windows: quota.windows,
     });
-    snapshot.google_quota_failure = decode_failure_record(&mut decoder)?;
-    validate_failure(snapshot.google_quota_failure)?;
-    snapshot.sidebar = match decoder.byte()? {
-        0 => Sidebar::Open,
-        1 => Sidebar::Closed,
-        2 => Sidebar::Off,
-        value => {
-            return Err(Error::InvalidTag {
-                field: "sidebar",
-                value,
-            });
-        }
-    };
-    snapshot.workspace = decoder.string("workspace", MAX_ID_BYTES)?;
-    snapshot.active_workspace = decoder.string("active workspace", MAX_ID_BYTES)?;
-    let count = decoder.count("workspaces", MAX_WORKSPACES)?;
-    for _ in 0..count {
-        snapshot
-            .workspaces
-            .push(decode_workspace_info(&mut decoder)?);
-    }
-    let count = decoder.count("attention queue", MAX_SESSIONS)?;
-    for _ in 0..count {
-        snapshot.attention_queue.push(QueueEntry {
+    let google_quota_failure = decode_failure_record(&mut decoder)?;
+    validate_failure(google_quota_failure)?;
+    let sidebar = Sidebar::from_wire_tag(decoder.byte()?, "sidebar")?;
+    let workspace = decoder.string("workspace", MAX_ID_BYTES)?;
+    let active_workspace = decoder.string("active workspace", MAX_ID_BYTES)?;
+    let workspaces = decoder.items("workspaces", MAX_WORKSPACES, decode_workspace_info)?;
+    let attention_queue = decoder.items("attention queue", MAX_SESSIONS, |decoder| {
+        Ok(QueueEntry {
             workspace: decoder.string("queue workspace", MAX_ID_BYTES)?,
             tab: decoder.string("queue tab", MAX_ID_BYTES)?,
             target: decoder.string("queue target", MAX_ID_BYTES)?,
-            attention: decode_attention(&mut decoder)?.ok_or(Error::InvalidSnapshot {
+            attention: decode_attention(decoder)?.ok_or(Error::InvalidSnapshot {
                 field: "attention queue",
             })?,
-        });
-    }
-    snapshot.running = decode_running(&mut decoder)?;
-    validate_running(snapshot.running.as_ref())?;
-    snapshot.busy = decode_busy(&mut decoder)?;
-    snapshot.generation = decoder.string("generation", 35)?;
-    snapshot.created_build = decoder.string("created build", 35)?;
-    snapshot.active_build = decoder.string("active build", 35)?;
-    snapshot.focus = if decode_bool(&mut decoder, "window focus")? {
-        Some(Focus {
+        })
+    })?;
+    let running = decode_running(&mut decoder)?;
+    validate_running(running.as_ref())?;
+    let busy = decode_busy(&mut decoder)?;
+    let generation = decoder.string("generation", 35)?;
+    let created_build = decoder.string("created build", 35)?;
+    let active_build = decoder.string("active build", 35)?;
+    let focus = decoder.optional("window focus", |decoder| {
+        Ok(Focus {
             window_focused: match decoder.byte()? {
                 0 => None,
                 1 => Some(false),
@@ -2504,20 +2387,44 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
                     });
                 }
             },
-            target: decode_caller(&mut decoder)?,
+            target: decode_caller(decoder)?,
         })
-    } else {
-        None
+    })?;
+    let released_shortcuts = ReleasedShortcuts(decoder.byte()?);
+    let input_locked = decoder.boolean("input locked")?;
+    let input_lock = decode_shortcut(&mut decoder)?;
+    let mut snapshot = Snapshot {
+        focus,
+        released_shortcuts,
+        input_locked,
+        input_lock,
+        generation,
+        created_build,
+        active_build,
+        workspace,
+        active_workspace,
+        workspaces,
+        active_tab,
+        geometry,
+        entries,
+        tabs,
+        codex_quota,
+        claude_quota: None,
+        google_quota,
+        google_quota_failure,
+        codex_quota_failure,
+        claude_quota_failure,
+        sidebar,
+        attention_queue,
+        running,
+        busy,
     };
-    snapshot.released_shortcuts = ReleasedShortcuts(decoder.byte()?);
-    snapshot.input_locked = decode_bool(&mut decoder, "input locked")?;
-    snapshot.input_lock = decode_shortcut(&mut decoder)?;
     validate_focus(snapshot.focus.as_ref())?;
     validate_snapshot_identity(&snapshot)?;
     validate_busy(snapshot.busy.as_ref())?;
-    validate_workspace(&snapshot, &wire_tabs)?;
-    validate_codex(snapshot.codex_quota.as_ref())?;
-    validate_claude(claude.as_ref())?;
+    validate_workspace(&snapshot, wire_tabs.iter().map(TabRef::from))?;
+    validate_codex(snapshot.codex_quota.as_ref().map(QuotaRef::from))?;
+    validate_claude(claude.as_ref().map(QuotaRef::from))?;
     validate_failure(snapshot.codex_quota_failure)?;
     validate_failure(snapshot.claude_quota_failure)?;
     snapshot.claude_quota = claude.map(|quota| ClaudeQuota {
@@ -2541,33 +2448,29 @@ pub fn decode_response(bytes: &[u8]) -> Result<Response> {
 }
 
 fn encode_attention_queue(encoder: &mut Encoder, queue: &[QueueEntry]) {
-    encoder.count(queue.len());
-    for entry in queue {
+    encoder.items(queue, |encoder, entry| {
         encoder.string(&entry.workspace);
         encoder.string(&entry.tab);
         encoder.string(&entry.target);
         encode_attention(encoder, Some(&entry.attention));
-    }
+    });
 }
 
 fn encode_workspace_set(encoder: &mut Encoder, snapshot: &Snapshot) {
     encoder.string(&snapshot.workspace);
     encoder.string(&snapshot.active_workspace);
-    encoder.count(snapshot.workspaces.len());
-    for workspace in &snapshot.workspaces {
-        encode_workspace_info(encoder, workspace);
-    }
+    encoder.items(&snapshot.workspaces, encode_workspace_info);
 }
 
 fn encode_workspace_info(encoder: &mut Encoder, workspace: &WorkspaceInfo) {
     encoder.string(&workspace.id);
-    encode_optional(encoder, &workspace.persistent_id);
-    encoder.byte(u8::from(workspace.registration_error.is_some()));
+    encoder.optional_string(workspace.persistent_id.as_deref());
+    encoder.boolean(workspace.registration_error.is_some());
     if let Some(error) = &workspace.registration_error {
         encoder.string(&error.code);
         encoder.string(&error.detail);
     }
-    encode_optional(encoder, &workspace.name);
+    encoder.optional_string(workspace.name.as_deref());
     encoder.count(workspace.tab_count);
     encode_state(encoder, workspace.attention);
     encoder.byte(workspace.recency);
@@ -2576,24 +2479,22 @@ fn encode_workspace_info(encoder: &mut Encoder, workspace: &WorkspaceInfo) {
 fn decode_workspace_info(decoder: &mut Decoder<'_>) -> Result<WorkspaceInfo> {
     Ok(WorkspaceInfo {
         id: decoder.string("workspace id", MAX_ID_BYTES)?,
-        persistent_id: decode_optional(decoder, "persistent id")?,
-        registration_error: decode_bool(decoder, "registration error")?
-            .then(|| decode_failure(decoder))
-            .transpose()?,
-        name: decode_workspace_optional(decoder)?,
+        persistent_id: decoder.optional_id("persistent id")?,
+        registration_error: decoder.optional("registration error", decode_failure)?,
+        name: decoder.optional_string("workspace name", MAX_WORKSPACE_NAME_BYTES)?,
         tab_count: decoder.count("workspace tabs", MAX_TABS)?,
         attention: decode_state(decoder, "workspace attention")?,
         recency: decoder.byte()?,
     })
 }
 
-fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]) {
+fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot) {
     encoder.string(&snapshot.active_tab);
     for margin in [
         snapshot.geometry.side_margin,
         snapshot.geometry.vertical_margin,
     ] {
-        encoder.bytes.extend_from_slice(&margin.to_le_bytes());
+        encoder.u32(margin.to_bits());
     }
     encoder.count(snapshot.entries.len());
     for entry in &snapshot.entries {
@@ -2601,26 +2502,20 @@ fn encode_workspace(encoder: &mut Encoder, snapshot: &Snapshot, tabs: &[WireTab]
         encoder.string(&entry.label);
         encode_popup_key(encoder, &entry.shortcut);
     }
-    encoder.count(tabs.len());
-    for tab in tabs {
-        encode_wire_tab(encoder, tab);
-    }
+    encoder.items(&snapshot.tabs, encode_wire_tab);
 }
 
-fn encode_wire_tab(encoder: &mut Encoder, tab: &WireTab) {
+fn encode_wire_tab(encoder: &mut Encoder, tab: &Tab) {
     encoder.string(&tab.id);
     encoder.raw(&tab.directory);
-    encoder.byte(u8::from(tab.pending));
-    encode_optional(encoder, &tab.selected_pane);
-    encode_optional(encoder, &tab.selected_popup);
-    encoder.count(tab.panes.len());
-    for pane in &tab.panes {
+    encoder.boolean(tab.pending);
+    encoder.optional_string(tab.selected_pane.as_deref());
+    encoder.optional_string(tab.selected_popup.as_deref());
+    encoder.count(tab.panes().count());
+    for pane in tab.panes() {
         encode_pane(encoder, pane);
     }
-    encoder.count(tab.popups.len());
-    for popup in &tab.popups {
-        encode_popup(encoder, popup);
-    }
+    encoder.items(&tab.popups, encode_popup);
     encode_state(encoder, tab.attention_rollup);
 }
 
@@ -2628,10 +2523,10 @@ fn encode_pane(encoder: &mut Encoder, pane: &Pane) {
     encoder.string(&pane.id);
     encoder.string(&pane.session);
     encoder.raw(&pane.endpoint);
-    encoder.byte(u8::from(pane.live));
+    encoder.boolean(pane.live);
     encoder.string(&pane.label);
-    encode_optional(encoder, &pane.pinned_name);
-    encode_optional(encoder, &pane.tag);
+    encoder.optional_string(pane.pinned_name.as_deref());
+    encoder.optional_string(pane.tag.as_deref());
     encode_attention(encoder, pane.attention.as_ref());
 }
 
@@ -2673,11 +2568,11 @@ fn decode_layout(decoder: &mut Decoder<'_>) -> Result<Layout> {
 }
 
 /// Rebuilds a carried tab's columns from its layout.
-fn assemble_tab(tab: WireTab, layout: Layout) -> Result<Tab> {
-    if layout.iter().map(|(panes, _)| panes).sum::<usize>() != tab.panes.len() {
+fn assemble_tab(WireTab { mut tab, panes }: WireTab, layout: Layout) -> Result<Tab> {
+    if layout.iter().map(|(panes, _)| panes).sum::<usize>() != panes.len() {
         return Err(Error::InvalidSnapshot { field: "columns" });
     }
-    let mut panes = tab.panes.into_iter();
+    let mut panes = panes.into_iter();
     let mut columns = Vec::with_capacity(layout.len());
     for (count, expanded) in layout {
         let panes: Vec<_> = panes.by_ref().take(count).collect();
@@ -2691,26 +2586,23 @@ fn assemble_tab(tab: WireTab, layout: Layout) -> Result<Tab> {
             panes,
         });
     }
-    let tab = Tab {
-        id: tab.id,
-        directory: tab.directory,
-        pending: tab.pending,
-        selected_pane: tab.selected_pane,
-        selected_popup: tab.selected_popup,
-        columns,
-        popups: tab.popups,
-        attention_rollup: tab.attention_rollup,
-    };
+    tab.columns = columns;
     validate_columns(&tab)?;
     Ok(tab)
 }
 
-/// Returns the snapshot without tabs or quotas, and its tabs as carried.
-fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>)> {
+struct WorkspaceBody {
+    active_tab: String,
+    geometry: PopupGeometry,
+    entries: Vec<PopupEntry>,
+    tabs: Vec<WireTab>,
+}
+
+fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<WorkspaceBody> {
     let active_tab = decoder.string("active tab", MAX_ID_BYTES)?;
     let geometry = PopupGeometry {
-        side_margin: f32::from_bits(decode_u32(decoder)?),
-        vertical_margin: f32::from_bits(decode_u32(decoder)?),
+        side_margin: f32::from_bits(decoder.u32()?),
+        vertical_margin: f32::from_bits(decoder.u32()?),
     };
     let count = decoder.count("entries", MAX_ENTRIES)?;
     let mut entries = Vec::with_capacity(count);
@@ -2727,36 +2619,12 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
     for _ in 0..count {
         tabs.push(decode_wire_tab(decoder, &mut sessions)?);
     }
-    let snapshot = Snapshot {
-        focus: None,
-        released_shortcuts: ReleasedShortcuts::default(),
-        input_locked: false,
-        input_lock: Shortcut {
-            modifiers: 0,
-            key: String::new(),
-        },
-        generation: String::new(),
-        created_build: String::new(),
-        active_build: String::new(),
-        workspace: String::new(),
-        active_workspace: String::new(),
-        workspaces: Vec::new(),
+    Ok(WorkspaceBody {
         active_tab,
         geometry,
         entries,
-        tabs: Vec::with_capacity(tabs.len()),
-        codex_quota: None,
-        claude_quota: None,
-        google_quota: None,
-        google_quota_failure: None,
-        codex_quota_failure: None,
-        claude_quota_failure: None,
-        sidebar: Sidebar::Off,
-        attention_queue: Vec::new(),
-        running: None,
-        busy: None,
-    };
-    Ok((snapshot, tabs))
+        tabs,
+    })
 }
 
 /// Decodes one carried tab; `sessions` counts the terminals already decoded
@@ -2764,9 +2632,9 @@ fn decode_workspace(decoder: &mut Decoder<'_>) -> Result<(Snapshot, Vec<WireTab>
 fn decode_wire_tab(decoder: &mut Decoder<'_>, sessions: &mut usize) -> Result<WireTab> {
     let id = decoder.string("tab id", MAX_ID_BYTES)?;
     let directory = decoder.raw("directory", MAX_DIRECTORY_BYTES)?.to_vec();
-    let pending = decode_bool(decoder, "pending tab")?;
-    let selected_pane = decode_optional(decoder, "selected pane")?;
-    let selected_popup = decode_optional(decoder, "selected popup")?;
+    let pending = decoder.boolean("pending tab")?;
+    let selected_pane = decoder.optional_id("selected pane")?;
+    let selected_popup = decoder.optional_id("selected popup")?;
     let count = decoder.count("sessions", MAX_SESSIONS - *sessions)?;
     *sessions += count;
     let mut panes = Vec::with_capacity(count);
@@ -2780,14 +2648,17 @@ fn decode_wire_tab(decoder: &mut Decoder<'_>, sessions: &mut usize) -> Result<Wi
         popups.push(decode_popup(decoder)?);
     }
     Ok(WireTab {
-        id,
-        directory,
-        pending,
-        selected_pane,
-        selected_popup,
+        tab: Tab {
+            id,
+            directory,
+            pending,
+            selected_pane,
+            selected_popup,
+            columns: Vec::new(),
+            popups,
+            attention_rollup: decode_state(decoder, "attention rollup")?,
+        },
         panes,
-        popups,
-        attention_rollup: decode_state(decoder, "attention rollup")?,
     })
 }
 
@@ -2796,10 +2667,10 @@ fn decode_pane(decoder: &mut Decoder<'_>) -> Result<Pane> {
         id: decoder.string("pane id", MAX_ID_BYTES)?,
         session: decoder.string("session id", MAX_ID_BYTES)?,
         endpoint: decoder.raw("endpoint", MAX_ENDPOINT_BYTES)?.to_vec(),
-        live: decode_bool(decoder, "liveness")?,
+        live: decoder.boolean("liveness")?,
         label: decoder.string("pane label", MAX_PANE_LABEL_BYTES)?,
-        pinned_name: decode_pane_name(decoder)?,
-        tag: decode_pane_tag(decoder)?,
+        pinned_name: decoder.optional_string("pane name", MAX_PANE_NAME_BYTES)?,
+        tag: decoder.optional_string("pane tag", MAX_PANE_NAME_BYTES)?,
         attention: decode_attention(decoder)?,
     })
 }
@@ -2816,7 +2687,7 @@ fn decode_popup(decoder: &mut Decoder<'_>) -> Result<Popup> {
 
 fn encode_window_keys(encoder: &mut Encoder, snapshot: &Snapshot) {
     encoder.byte(snapshot.released_shortcuts.0);
-    encoder.byte(u8::from(snapshot.input_locked));
+    encoder.boolean(snapshot.input_locked);
     encode_shortcut(encoder, &snapshot.input_lock);
 }
 
@@ -2873,8 +2744,11 @@ fn entry_id(id: &str) -> Result<()> {
 
 /// Checks everything but the column layout, over the tabs as carried; the
 /// snapshot's own tabs are not read.
-fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
-    if tabs.is_empty() || tabs.len() > MAX_TABS {
+fn validate_workspace<'a>(
+    snapshot: &Snapshot,
+    tabs: impl ExactSizeIterator<Item = TabRef<'a>> + Clone,
+) -> Result<()> {
+    if tabs.len() == 0 || tabs.len() > MAX_TABS {
         return Err(Error::InvalidSnapshot { field: "tabs" });
     }
     if snapshot.entries.len() > MAX_ENTRIES {
@@ -2936,8 +2810,8 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
             return Err(Error::InvalidSnapshot { field: "entries" });
         }
     }
-    validate_tabs(tabs, Some(&entries))?;
-    if !tabs.iter().any(|tab| tab.id == snapshot.active_tab) {
+    validate_tabs(tabs.clone(), Some(&entries))?;
+    if !tabs.clone().any(|view| view.tab.id == snapshot.active_tab) {
         return Err(Error::InvalidSnapshot {
             field: "active tab",
         });
@@ -2990,7 +2864,11 @@ fn validate_workspace(snapshot: &Snapshot, tabs: &[WireTab]) -> Result<()> {
         .find(|workspace| workspace.id == snapshot.workspace)
         .is_none_or(|workspace| {
             workspace.tab_count != tabs.len()
-                || workspace.attention != tabs.iter().filter_map(|tab| tab.attention_rollup).min()
+                || workspace.attention
+                    != tabs
+                        .clone()
+                        .filter_map(|view| view.tab.attention_rollup)
+                        .min()
         })
     {
         return Err(Error::InvalidSnapshot {
@@ -3069,17 +2947,22 @@ fn validate_workspace_info(workspace: &WorkspaceInfo) -> Result<()> {
 /// Checks a run of one workspace's tabs as carried: identities, selections,
 /// surfaces, rollups and pane labels. `entries` is the popup catalog when the
 /// message carries one.
-fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()> {
+fn validate_tabs<'a>(
+    tabs: impl Iterator<Item = TabRef<'a>> + Clone,
+    entries: Option<&HashSet<&str>>,
+) -> Result<()> {
     let mut identities = HashSet::new();
     let mut sessions = HashSet::new();
     let mut endpoints = HashSet::new();
-    for tab in tabs {
+    for view in tabs.clone() {
+        let tab = view.tab;
+        let has_panes = view.panes().next().is_some();
         identity("tab id", &tab.id)?;
         validate_directory(&tab.directory)?;
         if !identities.insert(tab.id.as_str()) {
             return Err(Error::InvalidSnapshot { field: "tab id" });
         }
-        if tab.panes.is_empty() && tab.popups.is_empty() {
+        if !has_panes && tab.popups.is_empty() {
             return Err(Error::InvalidSnapshot { field: "empty tab" });
         }
         if tab.popups.len() > MAX_ENTRIES {
@@ -3088,8 +2971,8 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
         if tab
             .selected_pane
             .as_ref()
-            .is_some_and(|id| !tab.panes.iter().any(|pane| pane.id == *id))
-            || (tab.selected_pane.is_none() && !tab.panes.is_empty())
+            .is_some_and(|id| !view.panes().any(|pane| pane.id == *id))
+            || (tab.selected_pane.is_none() && has_panes)
         {
             return Err(Error::InvalidSnapshot {
                 field: "selected pane",
@@ -3105,7 +2988,7 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
             });
         }
         if tab.pending
-            && (!tab.panes.is_empty()
+            && (has_panes
                 || tab.popups.len() != 1
                 || tab.popups[0].entry != FILES_ENTRY
                 || tab.selected_popup.as_ref() != Some(&tab.popups[0].id))
@@ -3129,9 +3012,8 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
                 });
             }
         }
-        let surfaces = tab
-            .panes
-            .iter()
+        let surfaces = view
+            .panes()
             .map(|p| (&p.id, &p.session, &p.endpoint, &p.attention))
             .chain(
                 tab.popups
@@ -3141,10 +3023,8 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
         let mut rollup = None;
         for (id, session, endpoint, attention) in surfaces {
             identity("surface id", id)?;
-            identity("session id", session)?;
-            validate_endpoint(endpoint)?;
+            validate_surface_payload(session, endpoint, attention.as_ref())?;
             if let Some(attention) = attention {
-                validate_attention(attention)?;
                 rollup = Some(rollup.map_or(attention.state, |state: AttentionState| {
                     state.min(attention.state)
                 }));
@@ -3167,8 +3047,21 @@ fn validate_tabs(tabs: &[WireTab], entries: Option<&HashSet<&str>>) -> Result<()
             });
         }
     }
-    for pane in tabs.iter().flat_map(|tab| &tab.panes) {
+    for pane in tabs.flat_map(TabRef::panes) {
         validate_pane_label(pane)?;
+    }
+    Ok(())
+}
+
+fn validate_surface_payload(
+    session: &str,
+    endpoint: &[u8],
+    attention: Option<&Attention>,
+) -> Result<()> {
+    identity("session id", session)?;
+    validate_endpoint(endpoint)?;
+    if let Some(attention) = attention {
+        validate_attention(attention)?;
     }
     Ok(())
 }
@@ -3197,42 +3090,76 @@ fn validate_columns(tab: &Tab) -> Result<()> {
     Ok(())
 }
 
-/// Claude quotas share the Codex quota wire form.
-fn claude_as_codex(quota: &ClaudeQuota) -> CodexQuota {
-    CodexQuota {
-        state: match quota.state {
-            ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
-            ClaudeQuotaState::Stale => CodexQuotaState::Stale,
-        },
-        observed_at: quota.observed_at,
-        windows: quota.windows.clone(),
+#[derive(Clone, Copy)]
+struct QuotaRef<'a> {
+    state: CodexQuotaState,
+    observed_at: u64,
+    windows: &'a [QuotaWindow],
+}
+
+impl<'a> From<&'a CodexQuota> for QuotaRef<'a> {
+    fn from(quota: &'a CodexQuota) -> Self {
+        Self {
+            state: quota.state,
+            observed_at: quota.observed_at,
+            windows: &quota.windows,
+        }
     }
 }
 
-fn google_as_codex(quota: &GoogleQuota) -> CodexQuota {
-    CodexQuota {
-        state: match quota.state {
-            GoogleQuotaState::Fresh => CodexQuotaState::Fresh,
-            GoogleQuotaState::Stale => CodexQuotaState::Stale,
-        },
-        observed_at: quota.observed_at,
-        windows: quota.windows.clone(),
+impl<'a> From<&'a ClaudeQuota> for QuotaRef<'a> {
+    fn from(quota: &'a ClaudeQuota) -> Self {
+        Self::scoped(
+            match quota.state {
+                ClaudeQuotaState::Fresh => CodexQuotaState::Fresh,
+                ClaudeQuotaState::Stale => CodexQuotaState::Stale,
+            },
+            quota.observed_at,
+            &quota.windows,
+        )
     }
 }
 
-fn validate_google(quota: Option<&CodexQuota>) -> Result<()> {
+impl<'a> From<&'a GoogleQuota> for QuotaRef<'a> {
+    fn from(quota: &'a GoogleQuota) -> Self {
+        Self::scoped(
+            match quota.state {
+                GoogleQuotaState::Fresh => CodexQuotaState::Fresh,
+                GoogleQuotaState::Stale => CodexQuotaState::Stale,
+            },
+            quota.observed_at,
+            &quota.windows,
+        )
+    }
+}
+
+impl<'a> QuotaRef<'a> {
+    fn scoped(state: CodexQuotaState, observed_at: u64, windows: &'a [QuotaWindow]) -> Self {
+        Self {
+            state,
+            observed_at,
+            windows,
+        }
+    }
+}
+
+fn valid_scoped_windows(windows: &[QuotaWindow], require_scope: bool) -> bool {
+    windows.iter().enumerate().all(|(index, window)| {
+        (!require_scope || window.scope.is_some())
+            && matches!(window.duration_minutes, 300 | 10080)
+            && !windows[..index].iter().any(|previous| {
+                previous.duration_minutes == window.duration_minutes
+                    && previous.scope == window.scope
+            })
+    })
+}
+
+fn validate_google(quota: Option<QuotaRef<'_>>) -> Result<()> {
     validate_quota(quota)?;
     let Some(quota) = quota else { return Ok(()) };
     if !matches!(quota.state, CodexQuotaState::Fresh | CodexQuotaState::Stale)
         || quota.windows.len() > MAX_GOOGLE_QUOTA_WINDOWS
-        || quota.windows.iter().enumerate().any(|(index, window)| {
-            window.scope.is_none()
-                || !matches!(window.duration_minutes, 300 | 10080)
-                || quota.windows[..index].iter().any(|previous| {
-                    previous.duration_minutes == window.duration_minutes
-                        && previous.scope == window.scope
-                })
-        })
+        || !valid_scoped_windows(quota.windows, true)
     {
         return Err(Error::InvalidSnapshot {
             field: "Google quota",
@@ -3241,7 +3168,7 @@ fn validate_google(quota: Option<&CodexQuota>) -> Result<()> {
     Ok(())
 }
 
-fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
+fn validate_quota(quota: Option<QuotaRef<'_>>) -> Result<()> {
     let Some(quota) = quota else {
         return Ok(());
     };
@@ -3257,7 +3184,7 @@ fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
         });
     }
     // A window need not carry a reset time: not every provider reports one.
-    for window in &quota.windows {
+    for window in quota.windows {
         if window.duration_minutes == 0
             || window.remaining_percent > 100
             || window
@@ -3277,7 +3204,7 @@ fn validate_quota(quota: Option<&CodexQuota>) -> Result<()> {
     Ok(())
 }
 
-fn validate_codex(quota: Option<&CodexQuota>) -> Result<()> {
+fn validate_codex(quota: Option<QuotaRef<'_>>) -> Result<()> {
     validate_quota(quota)?;
     if quota.is_some_and(|quota| {
         quota.windows.len() > MAX_CODEX_QUOTA_WINDOWS
@@ -3290,20 +3217,14 @@ fn validate_codex(quota: Option<&CodexQuota>) -> Result<()> {
     Ok(())
 }
 
-fn validate_claude(quota: Option<&CodexQuota>) -> Result<()> {
+fn validate_claude(quota: Option<QuotaRef<'_>>) -> Result<()> {
     validate_quota(quota)?;
     let Some(quota) = quota else { return Ok(()) };
     let scoped = quota.windows.iter().filter(|w| w.scope.is_some()).count();
     if !matches!(quota.state, CodexQuotaState::Fresh | CodexQuotaState::Stale)
         || quota.windows.len() - scoped > 2
         || scoped > MAX_SCOPED_QUOTA_WINDOWS
-        || quota.windows.iter().enumerate().any(|(index, window)| {
-            !matches!(window.duration_minutes, 300 | 10080)
-                || quota.windows[..index].iter().any(|previous| {
-                    previous.duration_minutes == window.duration_minutes
-                        && previous.scope == window.scope
-                })
-        })
+        || !valid_scoped_windows(quota.windows, false)
     {
         return Err(Error::InvalidSnapshot {
             field: "Claude quota",
@@ -3312,33 +3233,17 @@ fn validate_claude(quota: Option<&CodexQuota>) -> Result<()> {
     Ok(())
 }
 
-fn encode_quota(encoder: &mut Encoder, quota: Option<&CodexQuota>) {
-    encoder.byte(u8::from(quota.is_some()));
-    let Some(quota) = quota else { return };
-    encoder.byte(match quota.state {
-        CodexQuotaState::Fresh => 0,
-        CodexQuotaState::Stale => 1,
-        CodexQuotaState::Blocked => 2,
-        CodexQuotaState::Unknown => 3,
+fn encode_quota(encoder: &mut Encoder, quota: Option<QuotaRef<'_>>) {
+    encoder.optional(quota, |encoder, quota| {
+        encoder.byte(quota.state.wire_tag());
+        encoder.u64(quota.observed_at);
+        encoder.items(quota.windows, |encoder, window| {
+            encoder.u32(window.duration_minutes);
+            encoder.byte(window.remaining_percent);
+            encoder.optional(window.resets_at, Encoder::u64);
+            encoder.optional_string(window.scope.as_deref());
+        });
     });
-    encoder
-        .bytes
-        .extend_from_slice(&quota.observed_at.to_le_bytes());
-    encoder.count(quota.windows.len());
-    for window in &quota.windows {
-        encoder
-            .bytes
-            .extend_from_slice(&window.duration_minutes.to_le_bytes());
-        encoder.byte(window.remaining_percent);
-        encoder.byte(u8::from(window.resets_at.is_some()));
-        if let Some(reset) = window.resets_at {
-            encoder.bytes.extend_from_slice(&reset.to_le_bytes());
-        }
-        encoder.byte(u8::from(window.scope.is_some()));
-        if let Some(scope) = &window.scope {
-            encoder.string(scope);
-        }
-    }
 }
 
 fn validate_failure(failure: Option<QuotaFailure>) -> Result<()> {
@@ -3351,83 +3256,41 @@ fn validate_failure(failure: Option<QuotaFailure>) -> Result<()> {
 }
 
 fn encode_failure_record(encoder: &mut Encoder, failure: Option<QuotaFailure>) {
-    encoder.byte(u8::from(failure.is_some()));
-    let Some(failure) = failure else { return };
-    encoder.bytes.extend_from_slice(&failure.at.to_le_bytes());
-    encoder.byte(match failure.reason {
-        QuotaFailureReason::Start => 0,
-        QuotaFailureReason::Deadline => 1,
-        QuotaFailureReason::OutputLimit => 2,
-        QuotaFailureReason::ExitStatus => 3,
-        QuotaFailureReason::Malformed => 4,
-        QuotaFailureReason::ProviderError => 5,
-        QuotaFailureReason::Estimated => 6,
-        QuotaFailureReason::ObservationTime => 7,
-        QuotaFailureReason::InvalidWindow => 8,
+    encoder.optional(failure, |encoder, failure| {
+        encoder.u64(failure.at);
+        encoder.byte(failure.reason.wire_tag());
     });
 }
 
 fn decode_failure_record(decoder: &mut Decoder<'_>) -> Result<Option<QuotaFailure>> {
-    if !decode_bool(decoder, "quota failure presence")? {
-        return Ok(None);
-    }
-    let at = decode_u64(decoder)?;
-    let reason = match decoder.byte()? {
-        0 => QuotaFailureReason::Start,
-        1 => QuotaFailureReason::Deadline,
-        2 => QuotaFailureReason::OutputLimit,
-        3 => QuotaFailureReason::ExitStatus,
-        4 => QuotaFailureReason::Malformed,
-        5 => QuotaFailureReason::ProviderError,
-        6 => QuotaFailureReason::Estimated,
-        7 => QuotaFailureReason::ObservationTime,
-        8 => QuotaFailureReason::InvalidWindow,
-        value => {
-            return Err(Error::InvalidTag {
-                field: "quota failure reason",
-                value,
-            });
-        }
-    };
-    Ok(Some(QuotaFailure { at, reason }))
+    decoder.optional("quota failure presence", |decoder| {
+        Ok(QuotaFailure {
+            at: decoder.u64()?,
+            reason: QuotaFailureReason::from_wire_tag(decoder.byte()?, "quota failure reason")?,
+        })
+    })
 }
 
 fn decode_quota(decoder: &mut Decoder<'_>) -> Result<Option<CodexQuota>> {
-    if !decode_bool(decoder, "Codex quota presence")? {
-        return Ok(None);
-    }
-    let state = match decoder.byte()? {
-        0 => CodexQuotaState::Fresh,
-        1 => CodexQuotaState::Stale,
-        2 => CodexQuotaState::Blocked,
-        3 => CodexQuotaState::Unknown,
-        value => {
-            return Err(Error::InvalidTag {
-                field: "Codex quota state",
-                value,
+    decoder.optional("Codex quota presence", |decoder| {
+        let state = CodexQuotaState::from_wire_tag(decoder.byte()?, "Codex quota state")?;
+        let observed_at = decoder.u64()?;
+        let count = decoder.count("quota windows", MAX_QUOTA_WINDOWS)?;
+        let mut windows = Vec::with_capacity(count);
+        for _ in 0..count {
+            windows.push(CodexQuotaWindow {
+                duration_minutes: decoder.u32()?,
+                remaining_percent: decoder.byte()?,
+                resets_at: decoder.optional("Codex quota reset", Decoder::u64)?,
+                scope: decoder.optional_string("quota scope", MAX_QUOTA_SCOPE_BYTES)?,
             });
         }
-    };
-    let observed_at = decode_u64(decoder)?;
-    let count = decoder.count("quota windows", MAX_QUOTA_WINDOWS)?;
-    let mut windows = Vec::with_capacity(count);
-    for _ in 0..count {
-        windows.push(CodexQuotaWindow {
-            duration_minutes: decode_u32(decoder)?,
-            remaining_percent: decoder.byte()?,
-            resets_at: decode_bool(decoder, "Codex quota reset")?
-                .then(|| decode_u64(decoder))
-                .transpose()?,
-            scope: decode_bool(decoder, "quota scope")?
-                .then(|| decoder.string("quota scope", MAX_QUOTA_SCOPE_BYTES))
-                .transpose()?,
-        });
-    }
-    Ok(Some(CodexQuota {
-        state,
-        observed_at,
-        windows,
-    }))
+        Ok(CodexQuota {
+            state,
+            observed_at,
+            windows,
+        })
+    })
 }
 
 fn validate_attention(attention: &Attention) -> Result<()> {
@@ -3470,30 +3333,14 @@ fn validate_attention(attention: &Attention) -> Result<()> {
 }
 
 fn encode_state(encoder: &mut Encoder, state: Option<AttentionState>) {
-    encoder.byte(match state {
-        None => 0,
-        Some(AttentionState::NeedsInput) => 1,
-        Some(AttentionState::Error) => 2,
-        Some(AttentionState::Finished) => 3,
-        Some(AttentionState::Working) => 4,
-        Some(AttentionState::Idle) => 5,
-        Some(AttentionState::Unavailable) => 6,
-        Some(AttentionState::Background) => 7,
-    });
+    encoder.byte(state.map_or(0, AttentionState::wire_tag));
 }
 
 fn decode_state(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Option<AttentionState>> {
-    Ok(Some(match decoder.byte()? {
-        0 => return Ok(None),
-        1 => AttentionState::NeedsInput,
-        2 => AttentionState::Error,
-        3 => AttentionState::Finished,
-        4 => AttentionState::Working,
-        5 => AttentionState::Idle,
-        6 => AttentionState::Unavailable,
-        7 => AttentionState::Background,
-        value => return Err(Error::InvalidTag { field, value }),
-    }))
+    let value = decoder.byte()?;
+    (value != 0)
+        .then(|| AttentionState::from_wire_tag(value, field))
+        .transpose()
 }
 
 /// The state, then, for every state but unavailable, the record.
@@ -3502,21 +3349,14 @@ fn encode_attention(encoder: &mut Encoder, attention: Option<&Attention>) {
     let Some(record) = attention.and_then(|attention| attention.record.as_ref()) else {
         return;
     };
-    encoder.byte(match record.kind {
-        None => 0,
-        Some(AttentionKind::Permission) => 1,
-        Some(AttentionKind::Question) => 2,
-        Some(AttentionKind::Auth) => 3,
-    });
+    encoder.byte(record.kind.map_or(0, AttentionKind::wire_tag));
     encoder.byte(record.progress.unwrap_or(NO_PROGRESS));
     encoder.string(&record.app);
     encoder.string(&record.name);
     encoder.string(&record.title);
     encoder.string(&record.message);
-    encoder
-        .bytes
-        .extend_from_slice(&record.changed_at.to_le_bytes());
-    encoder.byte(u8::from(record.stale));
+    encoder.u64(record.changed_at);
+    encoder.boolean(record.stale);
     encoder.number(record.others);
 }
 
@@ -3530,18 +3370,10 @@ fn decode_attention(decoder: &mut Decoder<'_>) -> Result<Option<Attention>> {
             record: None,
         }));
     }
-    let kind = match decoder.byte()? {
-        0 => None,
-        1 => Some(AttentionKind::Permission),
-        2 => Some(AttentionKind::Question),
-        3 => Some(AttentionKind::Auth),
-        value => {
-            return Err(Error::InvalidTag {
-                field: "attention kind",
-                value,
-            });
-        }
-    };
+    let value = decoder.byte()?;
+    let kind = (value != 0)
+        .then(|| AttentionKind::from_wire_tag(value, "attention kind"))
+        .transpose()?;
     let progress = Some(decoder.byte()?).filter(|progress| *progress != NO_PROGRESS);
     let record = AttentionRecord {
         kind,
@@ -3550,22 +3382,14 @@ fn decode_attention(decoder: &mut Decoder<'_>) -> Result<Option<Attention>> {
         name: decoder.string("attention name", MAX_NAME_BYTES)?,
         title: decoder.string("attention title", MAX_TITLE_BYTES)?,
         message: decoder.string("attention message", MAX_STATUS_MESSAGE_BYTES)?,
-        changed_at: decode_u64(decoder)?,
-        stale: decode_bool(decoder, "attention stale")?,
+        changed_at: decoder.u64()?,
+        stale: decoder.boolean("attention stale")?,
         others: decoder.number()?,
     };
     Ok(Some(Attention {
         state,
         record: Some(record),
     }))
-}
-
-fn encode_sidebar(encoder: &mut Encoder, sidebar: Sidebar) {
-    encoder.byte(match sidebar {
-        Sidebar::Open => 0,
-        Sidebar::Closed => 1,
-        Sidebar::Off => 2,
-    });
 }
 
 fn validate_window_name(name: Option<&str>) -> Result<()> {
@@ -3659,59 +3483,27 @@ fn validate_running(running: Option<&RunningWindows>) -> Result<()> {
 }
 
 fn encode_window(encoder: &mut Encoder, entry: &WindowEntry) {
-    encode_optional(encoder, &entry.window);
+    encoder.optional_string(entry.window.as_deref());
     encoder.string(&entry.generation);
-    encode_optional(encoder, &entry.name);
-    encoder.byte(u8::from(entry.started_at.is_some()));
-    if let Some(started_at) = entry.started_at {
-        encoder.bytes.extend_from_slice(&started_at.to_le_bytes());
-    }
-    encoder.byte(u8::from(entry.live_terminals.is_some()));
-    if let Some(count) = entry.live_terminals {
-        encoder.number(count);
-    }
-    encoder.byte(match entry.state {
-        WindowState::Live => 0,
-        WindowState::Incompatible => 1,
-        WindowState::Unreachable => 2,
-    });
-    encoder.byte(u8::from(entry.created_build.is_some()));
+    encoder.optional_string(entry.name.as_deref());
+    encoder.optional(entry.started_at, Encoder::u64);
+    encoder.optional(entry.live_terminals, Encoder::number);
+    encoder.byte(entry.state.wire_tag());
+    encoder.boolean(entry.created_build.is_some());
     if let (Some(created), Some(active)) = (&entry.created_build, &entry.active_build) {
         encoder.string(created);
         encoder.string(active);
     }
 }
 
-fn decode_window_name(decoder: &mut Decoder<'_>) -> Result<Option<String>> {
-    decode_bool(decoder, "window name")?
-        .then(|| decoder.string("window name", MAX_WINDOW_NAME_BYTES))
-        .transpose()
-}
-
 fn decode_window(decoder: &mut Decoder<'_>) -> Result<WindowEntry> {
-    let window = decode_bool(decoder, "window id")?
-        .then(|| decoder.string("window id", 8))
-        .transpose()?;
+    let window = decoder.optional_string("window id", 8)?;
     let generation = decoder.string("generation", MAX_ID_BYTES)?;
-    let name = decode_window_name(decoder)?;
-    let started_at = decode_bool(decoder, "started at")?
-        .then(|| decode_u64(decoder))
-        .transpose()?;
-    let live_terminals = decode_bool(decoder, "live terminals")?
-        .then(|| decoder.number())
-        .transpose()?;
-    let state = match decoder.byte()? {
-        0 => WindowState::Live,
-        1 => WindowState::Incompatible,
-        2 => WindowState::Unreachable,
-        value => {
-            return Err(Error::InvalidTag {
-                field: "window state",
-                value,
-            });
-        }
-    };
-    let builds = decode_bool(decoder, "window builds")?;
+    let name = decoder.optional_string("window name", MAX_WINDOW_NAME_BYTES)?;
+    let started_at = decoder.optional("started at", Decoder::u64)?;
+    let live_terminals = decoder.optional("live terminals", Decoder::number)?;
+    let state = WindowState::from_wire_tag(decoder.byte()?, "window state")?;
+    let builds = decoder.boolean("window builds")?;
     let created_build = builds
         .then(|| decoder.string("created build", 35))
         .transpose()?;
@@ -3731,40 +3523,25 @@ fn decode_window(decoder: &mut Decoder<'_>) -> Result<WindowEntry> {
 }
 
 fn encode_running(encoder: &mut Encoder, running: Option<&RunningWindows>) {
-    encoder.byte(u8::from(running.is_some()));
-    if let Some(running) = running {
+    encoder.optional(running, |encoder, running| {
         encode_window(encoder, &running.this);
-        encoder.byte(u8::from(running.others.is_some()));
-        if let Some(others) = &running.others {
-            encoder.count(others.len());
-            for entry in others {
-                encode_window(encoder, entry);
-            }
-        }
+        encoder.optional(running.others.as_deref(), |encoder, others| {
+            encoder.items(others, encode_window);
+        });
         encoder.number(running.omitted);
-    }
+    });
 }
 
 fn decode_running(decoder: &mut Decoder<'_>) -> Result<Option<RunningWindows>> {
-    if !decode_bool(decoder, "running windows")? {
-        return Ok(None);
-    }
-    let this = decode_window(decoder)?;
-    let others = if decode_bool(decoder, "other windows")? {
-        let count = decoder.count("running windows", MAX_RUNNING_WINDOWS)?;
-        Some(
-            (0..count)
-                .map(|_| decode_window(decoder))
-                .collect::<Result<Vec<_>>>()?,
-        )
-    } else {
-        None
-    };
-    Ok(Some(RunningWindows {
-        this,
-        others,
-        omitted: decoder.number()?,
-    }))
+    decoder.optional("running windows", |decoder| {
+        Ok(RunningWindows {
+            this: decode_window(decoder)?,
+            others: decoder.optional("other windows", |decoder| {
+                decoder.items("running windows", MAX_RUNNING_WINDOWS, decode_window)
+            })?,
+            omitted: decoder.number()?,
+        })
+    })
 }
 
 fn validate_busy(busy: Option<&BusyTerminals>) -> Result<()> {
@@ -3803,34 +3580,31 @@ fn validate_busy_terminal(target: &TerminalTarget, name: &str) -> Result<()> {
 }
 
 fn encode_busy(encoder: &mut Encoder, busy: Option<&BusyTerminals>) {
-    encoder.byte(u8::from(busy.is_some()));
-    if let Some(busy) = busy {
-        encoder.count(busy.terminals.len());
-        for busy_terminal in &busy.terminals {
-            encode_target(encoder, &busy_terminal.target);
-            encoder.string(&busy_terminal.name);
-        }
+    encoder.optional(busy, |encoder, busy| {
+        encoder.items(&busy.terminals, encode_busy_terminal);
         encoder.number(busy.omitted);
-    }
+    });
 }
 
 fn decode_busy(decoder: &mut Decoder<'_>) -> Result<Option<BusyTerminals>> {
-    if !decode_bool(decoder, "busy terminals")? {
-        return Ok(None);
-    }
-    let count = decoder.count("busy terminals", MAX_BUSY_TERMINALS)?;
-    let terminals = (0..count)
-        .map(|_| {
-            Ok(BusyTerminal {
-                target: decode_target(decoder)?,
-                name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
-            })
+    decoder.optional("busy terminals", |decoder| {
+        Ok(BusyTerminals {
+            terminals: decoder.items("busy terminals", MAX_BUSY_TERMINALS, decode_busy_terminal)?,
+            omitted: decoder.number()?,
         })
-        .collect::<Result<Vec<_>>>()?;
-    Ok(Some(BusyTerminals {
-        terminals,
-        omitted: decoder.number()?,
-    }))
+    })
+}
+
+fn encode_busy_terminal(encoder: &mut Encoder, busy: &BusyTerminal) {
+    encode_target(encoder, &busy.target);
+    encoder.string(&busy.name);
+}
+
+fn decode_busy_terminal(decoder: &mut Decoder<'_>) -> Result<BusyTerminal> {
+    Ok(BusyTerminal {
+        target: decode_target(decoder)?,
+        name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
+    })
 }
 
 pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>> {
@@ -3842,15 +3616,13 @@ pub fn encode_lifecycle_response(response: &LifecycleResponse) -> Result<Vec<u8>
             payload.string(&runtime.eon_version);
             payload.number(runtime.workspace_protocol);
             payload.string(&runtime.component_report);
-            encode_sessions(&mut payload, &runtime.sessions);
+            payload.strings(&runtime.sessions);
             encode_availability(&mut payload, &runtime.attach);
             encode_availability(&mut payload, &runtime.stop);
-            encode_optional(&mut payload, &runtime.name);
-            payload
-                .bytes
-                .extend_from_slice(&runtime.started_at.to_le_bytes());
+            payload.optional_string(runtime.name.as_deref());
+            payload.u64(runtime.started_at);
             encode_busy(&mut payload, runtime.busy.as_ref());
-            encode_optional(&mut payload, &runtime.venus);
+            payload.optional_string(runtime.venus.as_deref());
             payload.string(&runtime.created_build);
             payload.string(&runtime.active_build);
             encode_inventory(&mut payload, &runtime.terminal_inventory);
@@ -3874,17 +3646,15 @@ pub fn decode_lifecycle_response(bytes: &[u8]) -> Result<LifecycleResponse> {
                 eon_version: decoder.string("Eon version", MAX_VERSION_BYTES)?,
                 workspace_protocol: decoder.number()?,
                 component_report: decoder.string("component report", MAX_COMPONENT_REPORT_BYTES)?,
-                sessions: decode_sessions(&mut decoder)?,
+                sessions: decoder.items("sessions", MAX_SESSIONS, |decoder| {
+                    decoder.string("session id", MAX_ID_BYTES)
+                })?,
                 attach: decode_availability(&mut decoder, "attach reason")?,
                 stop: decode_availability(&mut decoder, "stop reason")?,
-                name: decode_window_name(&mut decoder)?,
-                started_at: decode_u64(&mut decoder)?,
+                name: decoder.optional_string("window name", MAX_WINDOW_NAME_BYTES)?,
+                started_at: decoder.u64()?,
                 busy: decode_busy(&mut decoder)?,
-                venus: if decode_bool(&mut decoder, "Venus path")? {
-                    Some(decoder.string("Venus path", MAX_DIRECTORY_BYTES)?)
-                } else {
-                    None
-                },
+                venus: decoder.optional_string("Venus path", MAX_DIRECTORY_BYTES)?,
                 created_build: decoder.string("created build", 35)?,
                 active_build: decoder.string("active build", 35)?,
                 terminal_inventory: decode_inventory(&mut decoder)?,
@@ -3962,28 +3732,14 @@ fn validate_sessions(sessions: &[String]) -> Result<()> {
     Ok(())
 }
 
-fn encode_sessions(encoder: &mut Encoder, sessions: &[String]) {
-    encoder.count(sessions.len());
-    for session in sessions {
-        encoder.string(session);
-    }
-}
-
-fn decode_sessions(decoder: &mut Decoder<'_>) -> Result<Vec<String>> {
-    let count = decoder.count("sessions", MAX_SESSIONS)?;
-    (0..count)
-        .map(|_| decoder.string("session id", MAX_ID_BYTES))
-        .collect()
-}
-
 fn encode_availability(encoder: &mut Encoder, availability: &Availability) {
-    encoder.byte(u8::from(availability.available));
+    encoder.boolean(availability.available);
     encoder.string(&availability.reason);
 }
 
 fn decode_availability(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Availability> {
     Ok(Availability {
-        available: decode_bool(decoder, "availability")?,
+        available: decoder.boolean("availability")?,
         reason: decoder.string(field, MAX_DETAIL_BYTES)?,
     })
 }
@@ -4002,41 +3758,6 @@ fn decode_failure(decoder: &mut Decoder<'_>) -> Result<Failure> {
     let detail = decoder.string("failure detail", MAX_DETAIL_BYTES)?;
     nonempty("failure detail", &detail, MAX_DETAIL_BYTES)?;
     Ok(Failure { code, detail })
-}
-
-fn encode_optional(encoder: &mut Encoder, value: &Option<String>) {
-    encoder.byte(u8::from(value.is_some()));
-    if let Some(value) = value {
-        encoder.string(value);
-    }
-}
-
-fn decode_optional(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Option<String>> {
-    if decode_bool(decoder, field)? {
-        Ok(Some(decoder.string(field, MAX_ID_BYTES)?))
-    } else {
-        Ok(None)
-    }
-}
-
-fn decode_bool(decoder: &mut Decoder<'_>, field: &'static str) -> Result<bool> {
-    match decoder.byte()? {
-        0 => Ok(false),
-        1 => Ok(true),
-        _ => Err(Error::InvalidValue { field }),
-    }
-}
-
-fn decode_u32(decoder: &mut Decoder<'_>) -> Result<u32> {
-    Ok(u32::from(decoder.number()?) | (u32::from(decoder.number()?) << 16))
-}
-
-fn decode_u64(decoder: &mut Decoder<'_>) -> Result<u64> {
-    let mut value = 0;
-    for shift in [0, 16, 32, 48] {
-        value |= u64::from(decoder.number()?) << shift;
-    }
-    Ok(value)
 }
 
 /// A file to edit is an absolute path within the directory bounds.
@@ -4152,49 +3873,30 @@ fn validate_snapshot_identity(snapshot: &Snapshot) -> Result<()> {
     Ok(())
 }
 
-fn encode_optional_version(encoder: &mut Encoder, version: Option<u16>) {
-    encoder.byte(u8::from(version.is_some()));
-    if let Some(version) = version {
-        encoder.number(version);
-    }
-}
-
-fn decode_optional_version(decoder: &mut Decoder<'_>, field: &'static str) -> Result<Option<u16>> {
-    decode_bool(decoder, field)?
-        .then(|| decoder.number())
-        .transpose()
-}
-
 fn encode_inventory(encoder: &mut Encoder, hosts: &[TerminalInventory]) {
-    encoder.count(hosts.len());
-    for host in hosts {
+    encoder.items(hosts, |encoder, host| {
         encoder.string(&host.terminal);
         encoder.string(&host.run);
-        encode_optional(encoder, &host.origin_build);
+        encoder.optional_string(host.origin_build.as_deref());
         encoder.number(host.management_version);
         encoder.number(host.record_generation);
-        encode_optional_version(encoder, host.orbs);
-        encode_optional_version(encoder, host.orbf);
-    }
+        encoder.optional(host.orbs, Encoder::number);
+        encoder.optional(host.orbf, Encoder::number);
+    });
 }
 
 fn decode_inventory(decoder: &mut Decoder<'_>) -> Result<Vec<TerminalInventory>> {
-    let count = decoder.count("terminal inventory", MAX_SESSIONS)?;
-    (0..count)
-        .map(|_| {
-            Ok(TerminalInventory {
-                terminal: decoder.string("terminal", MAX_ID_BYTES)?,
-                run: decoder.string("run", MAX_ID_BYTES)?,
-                origin_build: decode_bool(decoder, "origin build")?
-                    .then(|| decoder.string("origin build", 35))
-                    .transpose()?,
-                management_version: decoder.number()?,
-                record_generation: decoder.number()?,
-                orbs: decode_optional_version(decoder, "ORBS")?,
-                orbf: decode_optional_version(decoder, "ORBF")?,
-            })
+    decoder.items("terminal inventory", MAX_SESSIONS, |decoder| {
+        Ok(TerminalInventory {
+            terminal: decoder.string("terminal", MAX_ID_BYTES)?,
+            run: decoder.string("run", MAX_ID_BYTES)?,
+            origin_build: decoder.optional_string("origin build", 35)?,
+            management_version: decoder.number()?,
+            record_generation: decoder.number()?,
+            orbs: decoder.optional("ORBS", Decoder::number)?,
+            orbf: decoder.optional("ORBF", Decoder::number)?,
         })
-        .collect()
+    })
 }
 
 /// A pane creation names an optional tab identity and an empty or valid argv.
@@ -4286,8 +3988,7 @@ pub fn declared_focus_report_len(header: &[u8]) -> Result<usize> {
     Ok(size)
 }
 
-/// Encode Venus's native focus without a second private schema.
-pub fn encode_focus_report(report: &FocusReport) -> Result<Vec<u8>> {
+fn validate_focus_report(report: &FocusReport) -> Result<()> {
     if let Some(terminal) = &report.terminal {
         identity("focused terminal", terminal)?;
         if !report.window_focused {
@@ -4296,9 +3997,15 @@ pub fn encode_focus_report(report: &FocusReport) -> Result<Vec<u8>> {
             });
         }
     }
+    Ok(())
+}
+
+/// Encode Venus's native focus without a second private schema.
+pub fn encode_focus_report(report: &FocusReport) -> Result<Vec<u8>> {
+    validate_focus_report(report)?;
     let mut payload = Encoder::default();
-    payload.byte(u8::from(report.window_focused));
-    encode_optional(&mut payload, &report.terminal);
+    payload.boolean(report.window_focused);
+    payload.optional_string(report.terminal.as_deref());
     frame(FOCUS_REPORT, payload.bytes)
 }
 
@@ -4308,18 +4015,11 @@ pub fn decode_focus_report(bytes: &[u8]) -> Result<FocusReport> {
     let (_, payload) = unframe(bytes)?;
     let mut decoder = Decoder::new(payload);
     let report = FocusReport {
-        window_focused: decode_bool(&mut decoder, "native focus")?,
-        terminal: decode_optional(&mut decoder, "focused terminal")?,
+        window_focused: decoder.boolean("native focus")?,
+        terminal: decoder.optional_id("focused terminal")?,
     };
     decoder.finish()?;
-    if let Some(terminal) = &report.terminal {
-        identity("focused terminal", terminal)?;
-        if !report.window_focused {
-            return Err(Error::InvalidValue {
-                field: "focused terminal",
-            });
-        }
-    }
+    validate_focus_report(&report)?;
     Ok(report)
 }
 
@@ -4420,6 +4120,40 @@ impl Encoder {
         self.bytes.push(value);
     }
 
+    fn boolean(&mut self, value: bool) {
+        self.byte(u8::from(value));
+    }
+
+    fn u32(&mut self, value: u32) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn u64(&mut self, value: u64) {
+        self.bytes.extend_from_slice(&value.to_le_bytes());
+    }
+
+    fn optional<T>(&mut self, value: Option<T>, write: impl FnOnce(&mut Self, T)) {
+        self.boolean(value.is_some());
+        if let Some(value) = value {
+            write(self, value);
+        }
+    }
+
+    fn optional_string(&mut self, value: Option<&str>) {
+        self.optional(value, Self::string);
+    }
+
+    fn items<T>(&mut self, items: &[T], mut write: impl FnMut(&mut Self, &T)) {
+        self.count(items.len());
+        for item in items {
+            write(self, item);
+        }
+    }
+
+    fn strings(&mut self, items: &[String]) {
+        self.items(items, |encoder, item| encoder.string(item));
+    }
+
     fn count(&mut self, value: usize) {
         let value = u16::try_from(value).expect("validated EONW count");
         self.number(value);
@@ -4459,6 +4193,52 @@ impl<'a> Decoder<'a> {
 
     fn byte(&mut self) -> Result<u8> {
         Ok(self.take(1)?[0])
+    }
+
+    fn boolean(&mut self, field: &'static str) -> Result<bool> {
+        match self.byte()? {
+            0 => Ok(false),
+            1 => Ok(true),
+            _ => Err(Error::InvalidValue { field }),
+        }
+    }
+
+    fn u32(&mut self) -> Result<u32> {
+        Ok(u32::from(self.number()?) | (u32::from(self.number()?) << 16))
+    }
+
+    fn u64(&mut self) -> Result<u64> {
+        let mut value = 0;
+        for shift in [0, 16, 32, 48] {
+            value |= u64::from(self.number()?) << shift;
+        }
+        Ok(value)
+    }
+
+    fn optional<T>(
+        &mut self,
+        field: &'static str,
+        read: impl FnOnce(&mut Self) -> Result<T>,
+    ) -> Result<Option<T>> {
+        self.boolean(field)?.then(|| read(self)).transpose()
+    }
+
+    fn optional_id(&mut self, field: &'static str) -> Result<Option<String>> {
+        self.optional_string(field, MAX_ID_BYTES)
+    }
+
+    fn optional_string(&mut self, field: &'static str, maximum: usize) -> Result<Option<String>> {
+        self.optional(field, |decoder| decoder.string(field, maximum))
+    }
+
+    fn items<T>(
+        &mut self,
+        field: &'static str,
+        maximum: usize,
+        mut read: impl FnMut(&mut Self) -> Result<T>,
+    ) -> Result<Vec<T>> {
+        let count = self.count(field, maximum)?;
+        (0..count).map(|_| read(self)).collect()
     }
 
     fn count(&mut self, field: &'static str, maximum: usize) -> Result<usize> {
@@ -4522,19 +4302,114 @@ impl<'a> Decoder<'a> {
 mod tests {
     use super::*;
 
+    // Keep these expected tags independent of the production mapping.
+    macro_rules! assert_wire_tags {
+        ($ty:ident: $first:literal; $($variant:ident),+ $(,)?) => {{
+            let variants = [$($ty::$variant),+];
+            let field = "wire tag";
+            for value in 0..=u8::MAX {
+                let expected = value.checked_sub($first)
+                    .and_then(|index| variants.get(usize::from(index))).copied();
+                assert_eq!(
+                    $ty::from_wire_tag(value, field),
+                    expected.ok_or(Error::InvalidTag { field, value }),
+                );
+                if let Some(variant) = expected {
+                    assert_eq!(variant.wire_tag(), value);
+                }
+            }
+        }};
+    }
+    pub(super) use assert_wire_tags;
+
+    #[test]
+    fn unit_enums_keep_their_wire_tags() {
+        assert_wire_tags!(InvokeIntent: 0; Toggle, Focus, Show);
+        assert_wire_tags!(InputLock: 0; Unlock, Lock, Toggle);
+        assert_wire_tags!(CloseEnd: 0; Column, Session, Window);
+        assert_wire_tags!(Screen: 0; Primary, Alternate);
+        assert_wire_tags!(Sidebar: 0; Open, Closed, Off);
+        assert_wire_tags!(CodexQuotaState: 0; Fresh, Stale, Blocked, Unknown);
+        assert_wire_tags!(QuotaFailureReason: 0; Start, Deadline, OutputLimit, ExitStatus,
+            Malformed, ProviderError, Estimated, ObservationTime, InvalidWindow);
+        assert_wire_tags!(WindowState: 0; Live, Incompatible, Unreachable);
+        assert_wire_tags!(AttentionKind: 1; Permission, Question, Auth);
+        assert_wire_tags!(AttentionState: 1; NeedsInput, Error, Finished, Working, Idle, Unavailable, Background);
+    }
+
+    pub(super) fn round_trip<T: std::fmt::Debug + PartialEq>(
+        value: &T,
+        encode: impl FnOnce(&T) -> Result<Vec<u8>>,
+        decode: impl FnOnce(&[u8]) -> Result<T>,
+    ) -> Vec<u8> {
+        let bytes = encode(value).unwrap();
+        let decoded = decode(&bytes).unwrap_or_else(|error| panic!("{value:?}: {error}"));
+        assert_eq!(&decoded, value);
+        bytes
+    }
+
+    fn fix_payload_length(bytes: &mut [u8]) {
+        let length = (bytes.len() - HEADER_BYTES) as u32;
+        bytes[8..12].copy_from_slice(&length.to_le_bytes());
+    }
+
+    fn assert_snapshot_rejected(snapshot: &Snapshot) {
+        assert!(encode_response(&Response::Snapshot(snapshot.clone())).is_err());
+        assert!(decode_response(&forge(snapshot)).is_err());
+    }
+
+    fn request_fixture(id: &str, action: Action) -> Request {
+        Request {
+            id: id.into(),
+            caller: None,
+            action,
+        }
+    }
+
+    #[test]
+    fn codec_keeps_first_error() {
+        let invoke = Action::InvokePopup {
+            tab: String::new(),
+            entry: FILES_ENTRY.into(),
+            expected_instance: None,
+            intent: InvokeIntent::Toggle,
+        };
+        let close = Action::ClosePane {
+            pane: String::new(),
+        };
+        for (action, field) in [(invoke, "tab id"), (close, "request id")] {
+            let request = request_fixture("", action);
+            assert_eq!(encode_request(&request), Err(Error::InvalidValue { field }));
+        }
+        let trailing = Error::TrailingBytes { count: 1 };
+        let bad_id = Error::InvalidValue {
+            field: "request id",
+        };
+        for (payload, error) in [
+            (vec![0, 0, 0, CREATE_COLUMN, 0], trailing),
+            (vec![0, 0, 0, 255], bad_id),
+        ] {
+            let bytes = frame(REQUEST, payload).unwrap();
+            assert_eq!(decode_request(&bytes), Err(error));
+        }
+        let ended = frame(ENDED, vec![0, 0, 0]).unwrap();
+        let field = "generation";
+        assert_eq!(decode_response(&ended), Err(Error::InvalidValue { field }));
+    }
+
     #[test]
     fn reveal_files_round_trips_and_rejects_invalid_wire_paths() {
-        let request = |tab: Option<&str>, path: &str| Request {
-            id: "reveal".into(),
-            caller: None,
-            action: Action::RevealFiles {
-                tab: tab.map(str::to_owned),
-                path: path.into(),
-            },
+        let request = |tab: Option<&str>, path: &str| {
+            request_fixture(
+                "reveal",
+                Action::RevealFiles {
+                    tab: tab.map(str::to_owned),
+                    path: path.into(),
+                },
+            )
         };
         let original = request(Some("t2"), "/tmp/-hé ' \"\n");
-        let bytes = encode_request(&original).unwrap();
-        assert_eq!(decode_request(&bytes).unwrap(), original);
+        round_trip(&original, encode_request, decode_request);
         let plain = request(None, "/foo");
         let mut bytes = encode_request(&plain).unwrap();
         assert_eq!(decode_request(&bytes).unwrap(), plain);
@@ -4585,19 +4460,19 @@ mod tests {
 
     #[test]
     fn reload_presentation_roundtrips_and_rejects_invalid_bounds() {
-        let request = |venus: String, eonw| Request {
-            id: "reload-1".into(),
-            caller: None,
-            action: Action::Workspace(WorkspaceAction::ReloadPresentation {
-                venus,
-                eonw,
-                orbs: 14,
-                orbf: 3,
-            }),
+        let request = |venus: String, eonw| {
+            request_fixture(
+                "reload-1",
+                Action::Workspace(WorkspaceAction::ReloadPresentation {
+                    venus,
+                    eonw,
+                    orbs: 14,
+                    orbf: 3,
+                }),
+            )
         };
         let valid = request("/nix/store/build/bin/venus".into(), VERSION);
-        let bytes = encode_request(&valid).unwrap();
-        assert_eq!(decode_request(&bytes).unwrap(), valid);
+        let bytes = round_trip(&valid, encode_request, decode_request);
         for invalid in [
             request(String::new(), VERSION),
             request("x".repeat(MAX_DIRECTORY_BYTES + 1), VERSION),
@@ -4652,13 +4527,14 @@ mod tests {
             runs: vec!["run-a".into(), "run-b".into()],
             end: scope.end,
         };
-        let request = |consent| Request {
-            id: "r1".into(),
-            caller: None,
-            action: Action::CloseColumn {
-                pane: "p2".into(),
-                consent: Some(consent),
-            },
+        let request = |consent| {
+            request_fixture(
+                "r1",
+                Action::CloseColumn {
+                    pane: "p2".into(),
+                    consent: Some(consent),
+                },
+            )
         };
         let valid = request(consent.clone());
         let bytes = encode_request(&valid).unwrap();
@@ -4693,8 +4569,7 @@ mod tests {
             .position(|part| part == b"\x05\x00run-a")
             .unwrap();
         empty_run.splice(offset..offset + 7, [0, 0]);
-        let length = (empty_run.len() - HEADER_BYTES) as u32;
-        empty_run[8..12].copy_from_slice(&length.to_le_bytes());
+        fix_payload_length(&mut empty_run);
         assert!(decode_response(&empty_run).is_err());
         let mut oversized = encode_request(&valid).unwrap();
         oversized[27..29].copy_from_slice(&((MAX_SESSIONS + 2) as u16).to_le_bytes());
@@ -4718,10 +4593,7 @@ mod tests {
             runs: (0..MAX_SESSIONS + 1).map(|n| format!("run-{n}")).collect(),
             ..consent
         });
-        assert_eq!(
-            decode_request(&encode_request(&boundary).unwrap()).unwrap(),
-            boundary
-        );
+        round_trip(&boundary, encode_request, decode_request);
         for broken in [
             CloseScope {
                 terminals: Vec::new(),
@@ -4772,10 +4644,7 @@ mod tests {
                 untracked: Vec::new(),
                 ..scope.clone()
             });
-            assert_eq!(
-                decode_response(&encode_response(&response).unwrap()).unwrap(),
-                response
-            );
+            round_trip(&response, encode_response, decode_response);
         }
         let mut payload = Encoder::default();
         payload.string("r1");
@@ -4794,18 +4663,14 @@ mod tests {
             detail: "registration unavailable; recovered terminals remain usable".into(),
         });
         let response = Response::Snapshot(state.clone());
-        assert_eq!(
-            decode_response(&encode_response(&response).unwrap()).unwrap(),
-            response
-        );
+        round_trip(&response, encode_response, decode_response);
         assert!(decode_response(&forge(&state)).is_ok());
         state.workspaces[0]
             .registration_error
             .as_mut()
             .unwrap()
             .detail = "x".repeat(MAX_DETAIL_BYTES + 1);
-        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
-        assert!(decode_response(&forge(&state)).is_err());
+        assert_snapshot_rejected(&state);
     }
 
     #[test]
@@ -4816,7 +4681,7 @@ mod tests {
             for target in [0, 1] {
                 let mut payload = Encoder::default();
                 payload.string("r1");
-                encode_optional(&mut payload, &None);
+                payload.optional_string(None);
                 payload.byte(action);
                 if action == 34 {
                     payload.byte(1);
@@ -4858,14 +4723,13 @@ mod tests {
         ] {
             let mut payload = Encoder::default();
             payload.string("r1");
-            encode_optional(&mut payload, &None);
+            payload.optional_string(None);
             payload.byte(33);
             encode_workspace_target(&mut payload, &target);
-            let request = Request {
-                id: "r1".into(),
-                caller: None,
-                action: Action::Workspace(WorkspaceAction::SwitchWorkspace { workspace: target }),
-            };
+            let request = request_fixture(
+                "r1",
+                Action::Workspace(WorkspaceAction::SwitchWorkspace { workspace: target }),
+            );
             assert!(encode_request(&request).is_err());
             assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
         }
@@ -4898,10 +4762,7 @@ mod tests {
             ..state.workspaces[0].clone()
         });
         let response = Response::Snapshot(state.clone());
-        assert_eq!(
-            decode_response(&encode_response(&response).unwrap()).unwrap(),
-            response
-        );
+        round_trip(&response, encode_response, decode_response);
 
         for invalid in [
             String::new(),
@@ -4911,16 +4772,74 @@ mod tests {
         ] {
             let mut bad = state.clone();
             bad.workspaces[0].persistent_id = Some(invalid);
-            assert!(encode_response(&Response::Snapshot(bad.clone())).is_err());
-            assert!(decode_response(&forge(&bad)).is_err());
+            assert_snapshot_rejected(&bad);
         }
     }
 
-    fn hex(bytes: &[u8]) -> String {
+    pub(super) fn maximal_attention() -> Option<Attention> {
+        Some(Attention {
+            state: AttentionState::NeedsInput,
+            record: Some(AttentionRecord {
+                kind: Some(AttentionKind::Permission),
+                progress: Some(100),
+                app: "a".repeat(MAX_APP_BYTES),
+                name: "n".repeat(MAX_NAME_BYTES),
+                title: "t".repeat(MAX_TITLE_BYTES),
+                message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
+                changed_at: u64::MAX,
+                stale: true,
+                others: MAX_OTHER_RECORDS,
+            }),
+        })
+    }
+
+    pub(super) fn maximal_pane(n: usize, attention: Option<Attention>) -> Pane {
+        let id = padded_name("p", n, MAX_ID_BYTES);
+        Pane {
+            label: format!("{id}  {}", "🦀".repeat(MAX_PANE_NAME_CHARS)),
+            pinned_name: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
+            tag: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
+            id,
+            session: padded_name("s", n, MAX_ID_BYTES),
+            endpoint: padded_name("/", n, MAX_ENDPOINT_BYTES).into_bytes(),
+            live: true,
+            attention,
+        }
+    }
+
+    pub(super) fn maximal_workspace_info(index: usize) -> WorkspaceInfo {
+        WorkspaceInfo {
+            // The largest valid workspace ID is shorter than MAX_ID_BYTES.
+            id: format!(
+                "s{}",
+                if index == MAX_WORKSPACES {
+                    u64::MAX
+                } else {
+                    index as u64
+                }
+            ),
+            persistent_id: Some(format!("{index:0128x}")),
+            registration_error: Some(Failure {
+                code: "e".repeat(MAX_ID_BYTES),
+                detail: "e".repeat(MAX_DETAIL_BYTES),
+            }),
+            name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
+            tab_count: MAX_TABS,
+            attention: Some(AttentionState::NeedsInput),
+            recency: (index - 1) as u8,
+        }
+    }
+
+    pub(super) fn padded_name(prefix: &str, n: usize, length: usize) -> String {
+        let name = format!("{prefix}{n}");
+        format!("{name}{}", "x".repeat(length - name.len()))
+    }
+
+    pub(super) fn hex(bytes: &[u8]) -> String {
         bytes.iter().map(|byte| format!("{byte:02x}")).collect()
     }
 
-    fn pane(id: &str) -> Pane {
+    pub(super) fn pane(id: &str) -> Pane {
         Pane {
             label: id.into(),
             pinned_name: None,
@@ -4933,7 +4852,7 @@ mod tests {
         }
     }
 
-    fn popup(id: &str, entry: &str) -> Popup {
+    pub(super) fn popup(id: &str, entry: &str) -> Popup {
         Popup {
             id: id.into(),
             entry: entry.into(),
@@ -4975,9 +4894,9 @@ mod tests {
     fn workspace_set_requests_are_supported() {
         let mut payload = Encoder::default();
         payload.string("new-workspace");
-        encode_optional(&mut payload, &None);
+        payload.optional_string(None);
         payload.byte(32);
-        encode_optional(&mut payload, &None);
+        payload.optional_string(None);
         payload.byte(0);
         let bytes = frame(REQUEST, payload.bytes).unwrap();
         assert!(
@@ -5018,27 +4937,25 @@ mod tests {
                 caller: Some("terminal-1".into()),
                 action: Action::Workspace(action),
             };
-            let bytes = encode_request(&request).unwrap();
-            assert_eq!(decode_request(&bytes).unwrap(), request);
+            let bytes = round_trip(&request, encode_request, decode_request);
             let mut old = bytes;
             old[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
             assert!(decode_request(&old).is_err());
         }
         for name in [String::new(), "a".repeat(65), "🦀".repeat(65), "a\n".into()] {
-            let request = Request {
-                id: "bad".into(),
-                caller: None,
-                action: Action::Workspace(WorkspaceAction::NewWorkspace {
+            let request = request_fixture(
+                "bad",
+                Action::Workspace(WorkspaceAction::NewWorkspace {
                     name: Some(name.clone()),
                     focus: false,
                 }),
-            };
+            );
             assert!(encode_request(&request).is_err());
             let mut payload = Encoder::default();
             payload.string("bad");
-            encode_optional(&mut payload, &None);
+            payload.optional_string(None);
             payload.byte(32);
-            encode_optional(&mut payload, &Some(name));
+            payload.optional_string(Some(&name));
             payload.byte(0);
             assert!(decode_request(&frame(REQUEST, payload.bytes).unwrap()).is_err());
         }
@@ -5058,8 +4975,7 @@ mod tests {
         state.active_workspace = "s1".into();
         state.workspaces[1].attention = Some(AttentionState::NeedsInput);
         let response = Response::Snapshot(state.clone());
-        let bytes = encode_response(&response).unwrap();
-        assert_eq!(decode_response(&bytes).unwrap(), response);
+        let bytes = round_trip(&response, encode_response, decode_response);
         for mutate in [
             (|s: &mut Snapshot| s.workspaces.clear()) as fn(&mut Snapshot),
             |s| {
@@ -5085,8 +5001,7 @@ mod tests {
         ] {
             let mut bad = state.clone();
             mutate(&mut bad);
-            assert!(encode_response(&Response::Snapshot(bad.clone())).is_err());
-            assert!(decode_response(&forge(&bad)).is_err());
+            assert_snapshot_rejected(&bad);
         }
         let mut old = bytes;
         old[4..6].copy_from_slice(&(VERSION - 1).to_le_bytes());
@@ -5240,17 +5155,19 @@ mod tests {
                 payload.count(expanded.unwrap_or(column.panes.len()));
             }
         }
-        let tabs: Vec<_> = snapshot.tabs.iter().map(WireTab::from).collect();
-        encode_workspace(&mut payload, snapshot, &tabs);
-        encode_quota(&mut payload, snapshot.codex_quota.as_ref());
-        let claude = snapshot.claude_quota.as_ref().map(claude_as_codex);
-        encode_quota(&mut payload, claude.as_ref());
+        encode_workspace(&mut payload, snapshot);
+        encode_quota(
+            &mut payload,
+            snapshot.codex_quota.as_ref().map(QuotaRef::from),
+        );
+        let claude = snapshot.claude_quota.as_ref().map(QuotaRef::from);
+        encode_quota(&mut payload, claude);
         encode_failure_record(&mut payload, snapshot.codex_quota_failure);
         encode_failure_record(&mut payload, snapshot.claude_quota_failure);
-        let google = snapshot.google_quota.as_ref().map(google_as_codex);
-        encode_quota(&mut payload, google.as_ref());
+        let google = snapshot.google_quota.as_ref().map(QuotaRef::from);
+        encode_quota(&mut payload, google);
         encode_failure_record(&mut payload, snapshot.google_quota_failure);
-        encode_sidebar(&mut payload, snapshot.sidebar);
+        payload.byte(snapshot.sidebar.wire_tag());
         encode_workspace_set(&mut payload, snapshot);
         encode_attention_queue(&mut payload, &snapshot.attention_queue);
         encode_running(&mut payload, snapshot.running.as_ref());
@@ -5319,11 +5236,7 @@ mod tests {
             (InputLock::Lock, 1),
             (InputLock::Toggle, 2),
         ] {
-            let request = Request {
-                id: "r1".into(),
-                caller: None,
-                action: Action::InputLock(operation),
-            };
+            let request = request_fixture("r1", Action::InputLock(operation));
             let encoded = encode_request(&request).unwrap();
             assert_eq!(&encoded[encoded.len() - 2..], &[47, byte]);
             assert_eq!(decode_request(&encoded).unwrap(), request);
@@ -5377,6 +5290,32 @@ mod tests {
         }
     }
 
+    fn availability(available: bool, reason: &str) -> Availability {
+        Availability {
+            available,
+            reason: reason.into(),
+        }
+    }
+
+    fn runtime_fixture() -> Runtime {
+        Runtime {
+            created_build: "g1-00000000000000000000000000000001".into(),
+            active_build: "g1-00000000000000000000000000000001".into(),
+            terminal_inventory: Vec::new(),
+            venus: None,
+            generation: "g1-00000000000000000000000000000001".into(),
+            name: None,
+            started_at: 0,
+            eon_version: "0.9.0".into(),
+            workspace_protocol: VERSION,
+            component_report: "ok".into(),
+            sessions: vec![],
+            attach: availability(true, "ready"),
+            stop: availability(true, "ready"),
+            busy: None,
+        }
+    }
+
     fn busy_terminal(n: usize) -> BusyTerminal {
         BusyTerminal {
             target: terminal_target(TargetId::Pane(format!("p{n}")), &format!("s{n}")),
@@ -5388,26 +5327,9 @@ mod tests {
     fn busy_terminals_round_trip_and_reject_forged_bounds() {
         let mut state = snapshot();
         let runtime = Runtime {
-            created_build: "g1-00000000000000000000000000000001".into(),
-            active_build: "g1-00000000000000000000000000000001".into(),
-            terminal_inventory: Vec::new(),
-            venus: None,
-            generation: "g1-00000000000000000000000000000001".into(),
-            name: None,
             started_at: 1,
             eon_version: "0.1.13".into(),
-            workspace_protocol: VERSION,
-            component_report: "ok".into(),
-            sessions: vec![],
-            attach: Availability {
-                available: true,
-                reason: "ready".into(),
-            },
-            stop: Availability {
-                available: true,
-                reason: "ready".into(),
-            },
-            busy: None,
+            ..runtime_fixture()
         };
         let full: Vec<_> = (0..MAX_BUSY_TERMINALS).map(busy_terminal).collect();
         for busy in [
@@ -5430,17 +5352,15 @@ mod tests {
         ] {
             state.busy = busy.clone();
             let response = Response::Snapshot(state.clone());
-            assert_eq!(
-                decode_response(&encode_response(&response).unwrap()).unwrap(),
-                response
-            );
+            round_trip(&response, encode_response, decode_response);
             let response = LifecycleResponse::Runtime(Runtime {
                 busy,
                 ..runtime.clone()
             });
-            assert_eq!(
-                decode_lifecycle_response(&encode_lifecycle_response(&response).unwrap()).unwrap(),
-                response
+            round_trip(
+                &response,
+                encode_lifecycle_response,
+                decode_lifecycle_response,
             );
         }
         for index in 0..8 {
@@ -5488,8 +5408,7 @@ mod tests {
             let mut list = Encoder::default();
             encode_busy(&mut list, state.busy.as_ref());
             bytes.extend_from_slice(&list.bytes);
-            let length = (bytes.len() - HEADER_BYTES) as u32;
-            bytes[8..12].copy_from_slice(&length.to_le_bytes());
+            fix_payload_length(&mut bytes);
             assert!(decode_lifecycle_response(&bytes).is_err(), "case {index}");
         }
         // An unknown focus option tag fails before consumers see it.
@@ -5533,17 +5452,11 @@ mod tests {
                 omitted: 0,
             });
             let response = Response::Snapshot(state.clone());
-            assert_eq!(
-                decode_response(&encode_response(&response).unwrap()).unwrap(),
-                response
-            );
+            round_trip(&response, encode_response, decode_response);
         }
         state.running.as_mut().unwrap().this.window = None;
         let response = Response::Snapshot(state.clone());
-        assert_eq!(
-            decode_response(&encode_response(&response).unwrap()).unwrap(),
-            response
-        );
+        round_trip(&response, encode_response, decode_response);
         for index in 0..17 {
             let mut running = RunningWindows {
                 this: this.clone(),
@@ -5598,31 +5511,16 @@ mod tests {
             assert!(decode_response(&forged).is_err());
         }
         let runtime = Runtime {
-            created_build: "g1-00000000000000000000000000000001".into(),
-            active_build: "g1-00000000000000000000000000000001".into(),
-            terminal_inventory: Vec::new(),
-            venus: None,
-            generation: "g1-00000000000000000000000000000001".into(),
             name: Some("🦀".repeat(64)),
             started_at: u64::MAX,
             eon_version: "0.1.11".into(),
-            workspace_protocol: VERSION,
-            component_report: "ok".into(),
-            sessions: vec![],
-            attach: Availability {
-                available: true,
-                reason: "ready".into(),
-            },
-            stop: Availability {
-                available: true,
-                reason: "ready".into(),
-            },
-            busy: None,
+            ..runtime_fixture()
         };
         let response = LifecycleResponse::Runtime(runtime.clone());
-        assert_eq!(
-            decode_lifecycle_response(&encode_lifecycle_response(&response).unwrap()).unwrap(),
-            response
+        round_trip(
+            &response,
+            encode_lifecycle_response,
+            decode_lifecycle_response,
         );
         // An ASCII name can exceed the character bound without exceeding the byte bound.
         let mut forged = encode_lifecycle_response(&response).unwrap();
@@ -5632,8 +5530,7 @@ mod tests {
             name_offset + 2..forged.len() - 2 - 8,
             "a".repeat(65).bytes(),
         );
-        let length = (forged.len() - HEADER_BYTES) as u32;
-        forged[8..12].copy_from_slice(&length.to_le_bytes());
+        fix_payload_length(&mut forged);
         assert!(decode_lifecycle_response(&forged).is_err());
         let bad = LifecycleResponse::Runtime(Runtime {
             venus: None,
@@ -5666,26 +5563,19 @@ mod tests {
             Some("work".into()),
             Some("🦀".repeat(80)),
         ] {
-            let request = Request {
-                id: "tag".into(),
-                caller: None,
-                action: Action::RenamePane {
+            let request = request_fixture(
+                "tag",
+                Action::RenamePane {
                     pane: "p1".into(),
                     name: Some("".into()),
                     tag: tag.clone(),
                 },
-            };
-            assert_eq!(
-                decode_request(&encode_request(&request).unwrap()).unwrap(),
-                request
             );
+            round_trip(&request, encode_request, decode_request);
             let mut state = snapshot();
             state.tabs[0].columns[0].panes[0].tag = tag.filter(|value| !value.is_empty());
             let response = Response::Snapshot(state);
-            assert_eq!(
-                decode_response(&encode_response(&response).unwrap()).unwrap(),
-                response
-            );
+            round_trip(&response, encode_response, decode_response);
         }
         for tag in [
             "x".repeat(81),
@@ -5694,15 +5584,14 @@ mod tests {
             "bad\u{202e}text".into(),
             "bad\u{17b4}text".into(),
         ] {
-            let request = Request {
-                id: "tag".into(),
-                caller: None,
-                action: Action::RenamePane {
+            let request = request_fixture(
+                "tag",
+                Action::RenamePane {
                     pane: "p1".into(),
                     name: Some("ok".into()),
                     tag: Some(tag.clone()),
                 },
-            };
+            );
             assert!(encode_request(&request).is_err());
             let mut payload = Encoder::default();
             payload.string("tag");
@@ -5718,18 +5607,16 @@ mod tests {
         for tag in ["", " work", "work ", "bad\u{200b}tag"] {
             let mut state = snapshot();
             state.tabs[0].columns[0].panes[0].tag = Some(tag.into());
-            assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
-            assert!(decode_response(&forge(&state)).is_err());
+            assert_snapshot_rejected(&state);
         }
-        let request = Request {
-            id: "tag".into(),
-            caller: None,
-            action: Action::RenamePane {
+        let request = request_fixture(
+            "tag",
+            Action::RenamePane {
                 pane: "p1".into(),
                 name: None,
                 tag: Some("work".into()),
             },
-        };
+        );
         assert!(encode_request(&request).is_err());
         let mut payload = Encoder::default();
         payload.string("tag");
@@ -5745,19 +5632,15 @@ mod tests {
     #[test]
     fn pane_labels_and_pins_round_trip_and_reject_forged_bounds() {
         for name in [None, Some(String::new()), Some("🦀".repeat(80))] {
-            let request = Request {
-                id: "rename".into(),
-                caller: None,
-                action: Action::RenamePane {
+            let request = request_fixture(
+                "rename",
+                Action::RenamePane {
                     pane: "p1".into(),
                     name,
                     tag: None,
                 },
-            };
-            assert_eq!(
-                decode_request(&encode_request(&request).unwrap()).unwrap(),
-                request
             );
+            round_trip(&request, encode_request, decode_request);
         }
         for name in [
             "x".repeat(81),
@@ -5766,15 +5649,14 @@ mod tests {
             "bad\u{202e}name".into(),
             "bad\u{17b4}name".into(),
         ] {
-            let request = Request {
-                id: "rename".into(),
-                caller: None,
-                action: Action::RenamePane {
+            let request = request_fixture(
+                "rename",
+                Action::RenamePane {
                     pane: "p1".into(),
                     name: Some(name.clone()),
                     tag: None,
                 },
-            };
+            );
             assert!(encode_request(&request).is_err());
             let mut payload = Encoder::default();
             payload.string("rename");
@@ -5792,10 +5674,7 @@ mod tests {
         pane.pinned_name = Some("🦀".repeat(80));
         assert_eq!(pane.label.len(), 450);
         let response = Response::Snapshot(state.clone());
-        assert_eq!(
-            decode_response(&encode_response(&response).unwrap()).unwrap(),
-            response
-        );
+        round_trip(&response, encode_response, decode_response);
         for label in [
             "wrong identity".into(),
             format!("{}  {}", "p".repeat(128), "🦀".repeat(81)),
@@ -5803,12 +5682,10 @@ mod tests {
         ] {
             let mut invalid = state.clone();
             invalid.tabs[0].columns[0].panes[0].label = label;
-            assert!(encode_response(&Response::Snapshot(invalid.clone())).is_err());
-            assert!(decode_response(&forge(&invalid)).is_err());
+            assert_snapshot_rejected(&invalid);
         }
         state.tabs[0].columns[0].panes[0].pinned_name = Some("bad\u{200b}name".into());
-        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
-        assert!(decode_response(&forge(&state)).is_err());
+        assert_snapshot_rejected(&state);
     }
 
     fn terminal_target(id: TargetId, terminal: &str) -> TerminalTarget {
@@ -5862,8 +5739,7 @@ mod tests {
         assert_eq!(decode_response(&bytes), Ok(largest));
         let mut over = bytes.clone();
         over.push(0);
-        let payload = (over.len() - HEADER_BYTES) as u32;
-        over[8..12].copy_from_slice(&payload.to_le_bytes());
+        fix_payload_length(&mut over);
         let too_large = Error::MessageTooLarge {
             size: MAX_HISTORY_MESSAGE_BYTES + 1,
             maximum: MAX_HISTORY_MESSAGE_BYTES,
@@ -5977,19 +5853,15 @@ mod tests {
         invalid[HEADER_BYTES] = 0;
         assert!(decode_focus_report(&invalid).is_err());
         for expected_terminal in [None, Some("terminal-7".into())] {
-            let request = Request {
-                id: "focused-send".into(),
-                caller: None,
-                action: Action::SendTerminal {
+            let request = request_fixture(
+                "focused-send",
+                Action::SendTerminal {
                     target: SendTarget::Focused { expected_terminal },
                     force: false,
                     input: TerminalInput::Enter,
                 },
-            };
-            assert_eq!(
-                decode_request(&encode_request(&request).unwrap()),
-                Ok(request)
             );
+            round_trip(&request, encode_request, decode_request);
         }
         for window_focused in [None, Some(false), Some(true)] {
             let mut state = snapshot();
@@ -6018,17 +5890,18 @@ mod tests {
     /// only Shift, Ctrl, Alt and Super (EON-C36), on both sides of the wire.
     #[test]
     fn terminal_key_codec_validates_and_round_trips() {
-        let request = |modifiers, key: &str| Request {
-            id: "r1".into(),
-            caller: None,
-            action: Action::SendTerminal {
-                target: "p1".into(),
-                force: false,
-                input: TerminalInput::Key(TerminalKey {
-                    modifiers,
-                    key: key.into(),
-                }),
-            },
+        let request = |modifiers, key: &str| {
+            request_fixture(
+                "r1",
+                Action::SendTerminal {
+                    target: "p1".into(),
+                    force: false,
+                    input: TerminalInput::Key(TerminalKey {
+                        modifiers,
+                        key: key.into(),
+                    }),
+                },
+            )
         };
         let named = "Escape Tab Enter Backspace Space Insert Delete Home End PageUp PageDown \
                      ArrowLeft ArrowRight ArrowUp ArrowDown Backquote Backslash BracketLeft \
@@ -6043,7 +5916,7 @@ mod tests {
         for key in &keys {
             for modifiers in 0..16 {
                 let valid = request(modifiers, key);
-                assert_eq!(decode_request(&encode_request(&valid).unwrap()), Ok(valid));
+                round_trip(&valid, encode_request, decode_request);
             }
         }
         let bytes = encode_request(&request(SHIFT | CTRL, "ArrowLeft")).unwrap();
@@ -6096,14 +5969,15 @@ mod tests {
 
     #[test]
     fn terminal_requests_bound_their_paste_on_both_sides() {
-        let request = |input| Request {
-            id: "r1".into(),
-            caller: None,
-            action: Action::SendTerminal {
-                target: "p1".into(),
-                force: false,
-                input,
-            },
+        let request = |input| {
+            request_fixture(
+                "r1",
+                Action::SendTerminal {
+                    target: "p1".into(),
+                    force: false,
+                    input,
+                },
+            )
         };
         let forge = |text: &[u8]| {
             let mut payload = Encoder::default();
@@ -6119,12 +5993,9 @@ mod tests {
         };
         let longest = "a".repeat(MAX_PASTE_BYTES);
         let paste = request(TerminalInput::Paste(longest.clone()));
-        assert_eq!(decode_request(&encode_request(&paste).unwrap()), Ok(paste));
+        round_trip(&paste, encode_request, decode_request);
         let multiline = request(TerminalInput::Paste("a\tb\r\nc".into()));
-        assert_eq!(
-            decode_request(&encode_request(&multiline).unwrap()),
-            Ok(multiline)
-        );
+        round_trip(&multiline, encode_request, decode_request);
         let overlong = longest + "a";
         for (text, error) in [
             (
@@ -6349,26 +6220,26 @@ mod tests {
     #[test]
     fn command_requests_bound_their_argv() {
         for tab in [false, true] {
-            let request = |argv| Request {
-                id: "r1".into(),
-                caller: None,
-                action: if tab {
-                    Action::LaunchTab {
-                        directory: b"/".to_vec(),
-                        argv,
-                        focus: true,
-                    }
-                } else {
-                    Action::CreatePane {
-                        tab: None,
-                        argv,
-                        focus: true,
-                    }
-                },
+            let request = |argv| {
+                request_fixture(
+                    "r1",
+                    if tab {
+                        Action::LaunchTab {
+                            directory: b"/".to_vec(),
+                            argv,
+                            focus: true,
+                        }
+                    } else {
+                        Action::CreatePane {
+                            tab: None,
+                            argv,
+                            focus: true,
+                        }
+                    },
+                )
             };
             let largest = request(vec![vec![b'a'; MAX_COMMAND_ARGUMENT_BYTES]]);
-            let bytes = encode_request(&largest).unwrap();
-            assert_eq!(decode_request(&bytes).unwrap(), largest);
+            round_trip(&largest, encode_request, decode_request);
             assert_eq!(
                 encode_request(&request(vec![vec![b'a'; MAX_COMMAND_ARGUMENT_BYTES + 1]])),
                 Err(Error::FieldTooLong {
@@ -6772,8 +6643,6 @@ mod tests {
 
         let (response, expected) = (
             LifecycleResponse::Runtime(Runtime {
-                created_build: "g1-00000000000000000000000000000001".into(),
-                active_build: "g1-00000000000000000000000000000001".into(),
                 terminal_inventory: vec![TerminalInventory {
                     terminal: "s1".into(),
                     run: "fixture-run".into(),
@@ -6783,23 +6652,9 @@ mod tests {
                     orbs: None,
                     orbf: None,
                 }],
-                venus: None,
-                generation: "g1-00000000000000000000000000000001".into(),
-                name: None,
-                started_at: 0,
-                eon_version: "0.9.0".into(),
-                workspace_protocol: VERSION,
-                component_report: "ok".into(),
                 sessions: vec!["s1".into()],
-                attach: Availability {
-                    available: true,
-                    reason: "ready".into(),
-                },
-                stop: Availability {
-                    available: false,
-                    reason: "busy".into(),
-                },
-                busy: None,
+                stop: availability(false, "busy"),
+                ..runtime_fixture()
             }),
             concat!(
                 "454f4e5733008300b6000000230067312d3030303030303030303030303030303030303030303030",
@@ -6817,9 +6672,10 @@ mod tests {
         };
         runtime.venus = Some(format!("/nix/store/{}", "v".repeat(200)));
         let response = LifecycleResponse::Runtime(runtime.clone());
-        assert_eq!(
-            decode_lifecycle_response(&encode_lifecycle_response(&response).unwrap()).unwrap(),
-            response
+        round_trip(
+            &response,
+            encode_lifecycle_response,
+            decode_lifecycle_response,
         );
         runtime.venus = Some("v".repeat(MAX_DIRECTORY_BYTES + 1));
         assert!(encode_lifecycle_response(&LifecycleResponse::Runtime(runtime)).is_err());
@@ -7010,26 +6866,8 @@ mod tests {
         assert_eq!(decode_response(&bytes).unwrap(), response);
 
         let runtime = LifecycleResponse::Runtime(Runtime {
-            created_build: "g1-00000000000000000000000000000001".into(),
-            active_build: "g1-00000000000000000000000000000001".into(),
-            terminal_inventory: Vec::new(),
-            venus: None,
-            generation: "g1-00000000000000000000000000000001".into(),
-            name: None,
-            started_at: 0,
-            eon_version: "0.9.0".into(),
-            workspace_protocol: VERSION,
-            component_report: "ok".into(),
-            sessions: vec![],
-            attach: Availability {
-                available: true,
-                reason: "ready".into(),
-            },
-            stop: Availability {
-                available: true,
-                reason: "ready".into(),
-            },
             busy: Some(busy),
+            ..runtime_fixture()
         });
         let bytes = encode_lifecycle_response(&runtime).unwrap();
         assert_eq!(
@@ -7049,11 +6887,10 @@ mod tests {
 
     #[test]
     fn frames_reject_other_versions_and_malformed_headers() {
-        let request = encode_request(&Request {
-            id: "r1".into(),
-            caller: None,
-            action: Action::Workspace(WorkspaceAction::Inspect),
-        })
+        let request = encode_request(&request_fixture(
+            "r1",
+            Action::Workspace(WorkspaceAction::Inspect),
+        ))
         .unwrap();
         let edit = |offset: usize, bytes: &[u8]| {
             let mut message = request.clone();
@@ -7586,8 +7423,7 @@ mod tests {
         })
         .collect();
         let response = Response::Snapshot(state.clone());
-        let bytes = encode_response(&response).unwrap();
-        assert_eq!(decode_response(&bytes).unwrap(), response);
+        let bytes = round_trip(&response, encode_response, decode_response);
         assert_eq!(forge(&state), bytes);
         let invalid: &[fn(&mut QueueEntry)] = &[
             |entry| entry.attention.state = AttentionState::Working,
@@ -7619,8 +7455,7 @@ mod tests {
             assert!(decode_response(&forge(&bad)).is_err(), "{bad:?}");
         }
         state.attention_queue = vec![state.attention_queue[0].clone(); MAX_SESSIONS + 1];
-        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
-        assert!(decode_response(&forge(&state)).is_err());
+        assert_snapshot_rejected(&state);
 
         // A queue entry is mandatory attention, so its absent wire tag is invalid.
         let mut empty = snapshot();
@@ -7696,8 +7531,7 @@ mod tests {
             let mut candidate = snapshot();
             change(&mut candidate);
             let response = Response::Snapshot(candidate);
-            let bytes = encode_response(&response).unwrap();
-            assert_eq!(decode_response(&bytes).unwrap(), response);
+            round_trip(&response, encode_response, decode_response);
         }
         for reason in [
             QuotaFailureReason::Start,
@@ -7713,8 +7547,7 @@ mod tests {
             let mut candidate = snapshot();
             candidate.codex_quota_failure = Some(QuotaFailure { at: 1, reason });
             let response = Response::Snapshot(candidate);
-            let bytes = encode_response(&response).unwrap();
-            assert_eq!(decode_response(&bytes).unwrap(), response);
+            round_trip(&response, encode_response, decode_response);
         }
 
         fn codex(s: &mut Snapshot) -> &mut CodexQuota {
@@ -8049,6 +7882,73 @@ mod tests {
     }
 
     #[test]
+    fn snapshot_keeps_first_error() {
+        let mut state = snapshot();
+        let mut quota = google();
+        quota.windows[0].duration_minutes = 60;
+        state.google_quota = Some(quota);
+        state.claude_quota.as_mut().unwrap().windows.clear();
+        assert_eq!(
+            encode_response(&Response::Snapshot(state.clone())),
+            Err(Error::InvalidSnapshot {
+                field: "Codex quota state"
+            })
+        );
+        let truncate = |mut bytes: Vec<u8>, end| {
+            bytes.truncate(end);
+            fix_payload_length(&mut bytes);
+            bytes
+        };
+        let bytes = forge(&state);
+        for bytes in [&bytes, &truncate(bytes.clone(), bytes.len() - 1)] {
+            assert_eq!(
+                decode_response(bytes),
+                Err(Error::InvalidSnapshot {
+                    field: "Google quota"
+                })
+            );
+        }
+
+        let mut state = snapshot();
+        state.running = Some(RunningWindows {
+            this: WindowEntry {
+                live_terminals: Some(MAX_SESSIONS as u16 + 1),
+                ..window_entry()
+            },
+            others: None,
+            omitted: 0,
+        });
+        let bytes = forge(&state);
+        let mut running = Encoder::default();
+        encode_running(&mut running, state.running.as_ref());
+        let busy = bytes
+            .windows(running.bytes.len())
+            .position(|part| part == running.bytes)
+            .unwrap()
+            + running.bytes.len();
+        assert_eq!(
+            decode_response(&truncate(bytes, busy)),
+            Err(Error::InvalidValue {
+                field: "live terminals"
+            })
+        );
+
+        let mut busy = busy_terminal(1);
+        busy.name.clear();
+        state.running = None;
+        state.busy = Some(BusyTerminals {
+            terminals: vec![busy_terminal(1), busy],
+            omitted: 0,
+        });
+        let error = Error::InvalidValue { field: "busy name" };
+        assert_eq!(
+            encode_response(&Response::Snapshot(state.clone())),
+            Err(error.clone())
+        );
+        assert_eq!(decode_response(&forge(&state)), Err(error));
+    }
+
+    #[test]
     fn google_windows_round_trip_without_weakening_other_providers() {
         let mut state = snapshot();
         state.google_quota = Some(google());
@@ -8079,10 +7979,7 @@ mod tests {
         state.google_quota = None;
         state.google_quota_failure = None;
         let response = Response::Snapshot(state);
-        assert_eq!(
-            decode_response(&encode_response(&response).unwrap()),
-            Ok(response)
-        );
+        round_trip(&response, encode_response, decode_response);
     }
 
     #[test]
@@ -8104,8 +8001,7 @@ mod tests {
             let mut state = snapshot();
             state.google_quota = Some(google());
             mutate(state.google_quota.as_mut().unwrap());
-            assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
-            assert!(decode_response(&forge(&state)).is_err());
+            assert_snapshot_rejected(&state);
         }
         let mut state = snapshot();
         let mut quota = google();
@@ -8128,8 +8024,7 @@ mod tests {
             at: 0,
             reason: QuotaFailureReason::Start,
         });
-        assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
-        assert!(decode_response(&forge(&state)).is_err());
+        assert_snapshot_rejected(&state);
     }
 
     #[test]
@@ -8138,10 +8033,7 @@ mod tests {
         state.google_quota = Some(google());
         let bytes = encode_response(&Response::Snapshot(state.clone())).unwrap();
         let mut record = Encoder::default();
-        encode_quota(
-            &mut record,
-            Some(&google_as_codex(state.google_quota.as_ref().unwrap())),
-        );
+        encode_quota(&mut record, state.google_quota.as_ref().map(QuotaRef::from));
         let offset = bytes
             .windows(record.bytes.len())
             .position(|part| part == record.bytes)
@@ -8153,8 +8045,7 @@ mod tests {
         }
         for end in offset..offset + record.bytes.len() {
             let mut truncated = bytes[..end].to_vec();
-            let len = (end - HEADER_BYTES) as u32;
-            truncated[8..12].copy_from_slice(&len.to_le_bytes());
+            fix_payload_length(&mut truncated);
             assert!(decode_response(&truncated).is_err());
         }
     }
@@ -8240,10 +8131,6 @@ mod tests {
         let upper_bound = upper_bound + 111 + 3 + MAX_TARGET_BYTES;
         assert!(upper_bound <= MAX_MESSAGE_BYTES, "{upper_bound}");
 
-        let name = |prefix: &str, n: usize, length: usize| {
-            let name = format!("{prefix}{n}");
-            format!("{name}{}", "x".repeat(length - name.len()))
-        };
         for all_panes in [false, true] {
             let mut state = snapshot();
             // The longest entry form is one overridden by the longest id.
@@ -8251,10 +8138,10 @@ mod tests {
                 modifiers: SHIFT | CTRL | ALT | SUPER,
                 key: "BracketRight".into(),
             };
-            let first = name("entry", 0, MAX_ENTRY_ID_BYTES);
+            let first = padded_name("entry", 0, MAX_ENTRY_ID_BYTES);
             state.entries = (0..MAX_ENTRIES)
                 .map(|n| PopupEntry {
-                    id: name("entry", n, MAX_ENTRY_ID_BYTES),
+                    id: padded_name("entry", n, MAX_ENTRY_ID_BYTES),
                     label: "x".repeat(MAX_LABEL_BYTES),
                     shortcut: if n == 0 {
                         PopupKey::Bound(default.clone())
@@ -8268,62 +8155,33 @@ mod tests {
                 .collect();
             // Exercise both mixed surfaces and the larger all-pane form, with
             // maximum pins/tags and attention on every terminal.
-            let attention = Some(Attention {
-                state: AttentionState::NeedsInput,
-                record: Some(AttentionRecord {
-                    kind: Some(AttentionKind::Permission),
-                    progress: Some(100),
-                    app: "a".repeat(MAX_APP_BYTES),
-                    name: "n".repeat(MAX_NAME_BYTES),
-                    title: "t".repeat(MAX_TITLE_BYTES),
-                    message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
-                    changed_at: u64::MAX,
-                    stale: true,
-                    others: MAX_OTHER_RECORDS,
-                }),
-            });
+            let attention = maximal_attention();
             let per_tab = MAX_SESSIONS / MAX_TABS;
             state.tabs = (0..MAX_TABS)
                 .map(|t| {
-                    let surface = |i: usize| {
-                        let n = t * per_tab + i;
-                        let session = name("s", n, MAX_ID_BYTES);
-                        let endpoint = name("/", n, MAX_ENDPOINT_BYTES).into_bytes();
-                        (n, session, endpoint)
-                    };
                     let columns: Vec<_> = (0..if all_panes { per_tab } else { per_tab / 2 })
                         .map(|i| {
-                            let (n, session, endpoint) = surface(i);
-                            let id = name("p", n, MAX_ID_BYTES);
+                            let pane = maximal_pane(t * per_tab + i, attention.clone());
                             Column {
-                                expanded: id.clone(),
-                                panes: vec![Pane {
-                                    label: format!("{id}  {}", "🦀".repeat(MAX_PANE_NAME_CHARS)),
-                                    pinned_name: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
-                                    tag: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
-                                    id,
-                                    session,
-                                    endpoint,
-                                    live: true,
-                                    attention: attention.clone(),
-                                }],
+                                expanded: pane.id.clone(),
+                                panes: vec![pane],
                             }
                         })
                         .collect();
                     let popups: Vec<_> = (if all_panes { per_tab } else { per_tab / 2 }..per_tab)
                         .map(|i| {
-                            let (n, session, endpoint) = surface(i);
+                            let n = t * per_tab + i;
                             Popup {
-                                id: name("u", n, MAX_ID_BYTES),
+                                id: padded_name("u", n, MAX_ID_BYTES),
                                 entry: state.entries[i].id.clone(),
-                                session,
-                                endpoint,
+                                session: padded_name("s", n, MAX_ID_BYTES),
+                                endpoint: padded_name("/", n, MAX_ENDPOINT_BYTES).into_bytes(),
                                 attention: attention.clone(),
                             }
                         })
                         .collect();
                     Tab {
-                        id: name("t", t, MAX_ID_BYTES),
+                        id: padded_name("t", t, MAX_ID_BYTES),
                         directory: vec![b'/'; MAX_DIRECTORY_BYTES],
                         pending: false,
                         selected_pane: Some(columns[0].expanded.clone()),
@@ -8335,27 +8193,12 @@ mod tests {
                 })
                 .collect();
             state.active_tab = state.tabs[0].id.clone();
-            state.workspaces = (1..=MAX_WORKSPACES)
-                .map(|index| WorkspaceInfo {
-                    id: format!("s{index}"),
-                    persistent_id: Some(format!("{index:0128x}")),
-                    registration_error: Some(Failure {
-                        code: "e".repeat(MAX_ID_BYTES),
-                        detail: "e".repeat(MAX_DETAIL_BYTES),
-                    }),
-                    name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
-                    tab_count: MAX_TABS,
-                    attention: Some(AttentionState::NeedsInput),
-                    recency: (index - 1) as u8,
-                })
-                .collect();
-            // The largest valid workspace id is shorter than MAX_ID_BYTES.
-            state.workspaces[MAX_WORKSPACES - 1].id = format!("s{}", u64::MAX);
+            state.workspaces = (1..=MAX_WORKSPACES).map(maximal_workspace_info).collect();
             state.attention_queue = (0..MAX_SESSIONS)
                 .map(|index| QueueEntry {
                     workspace: state.workspaces[MAX_WORKSPACES - 1].id.clone(),
-                    tab: name("t", index / per_tab, MAX_ID_BYTES),
-                    target: name("p", index, MAX_ID_BYTES),
+                    tab: padded_name("t", index / per_tab, MAX_ID_BYTES),
+                    target: padded_name("p", index, MAX_ID_BYTES),
                     attention: attention.clone().unwrap(),
                 })
                 .collect();
@@ -8382,7 +8225,7 @@ mod tests {
                             workspace: "w".repeat(MAX_ID_BYTES),
                             tab: "t".repeat(MAX_ID_BYTES),
                             id: TargetId::Popup("u".repeat(MAX_ID_BYTES)),
-                            terminal: name("s", n, MAX_ID_BYTES),
+                            terminal: padded_name("s", n, MAX_ID_BYTES),
                         },
                         name: "🦀".repeat(MAX_PANE_LABEL_BYTES / 4),
                     })
@@ -8434,28 +8277,17 @@ mod tests {
             created_build: created.into(),
             active_build: active.into(),
             terminal_inventory: vec![host],
-            venus: None,
-            name: None,
             started_at: 1,
             eon_version: "fixture".into(),
-            workspace_protocol: VERSION,
             component_report: "fixture".into(),
             sessions: vec!["terminal-1".into()],
-            attach: Availability {
-                available: true,
-                reason: "fixture".into(),
-            },
-            stop: Availability {
-                available: true,
-                reason: "fixture".into(),
-            },
-            busy: None,
+            attach: availability(true, "fixture"),
+            stop: availability(true, "fixture"),
+            ..runtime_fixture()
         };
         let roundtrip = |runtime: Runtime| {
             let reply = LifecycleResponse::Runtime(runtime);
-            let bytes = encode_lifecycle_response(&reply).unwrap();
-            assert_eq!(decode_lifecycle_response(&bytes).unwrap(), reply);
-            bytes
+            round_trip(&reply, encode_lifecycle_response, decode_lifecycle_response)
         };
         let bytes = roundtrip(runtime.clone());
         for bad in ["", "g1", "g1-0000000000000000000000000000000A"] {
@@ -8530,10 +8362,7 @@ mod tests {
             omitted: 0,
         });
         let valid = Response::Snapshot(state.clone());
-        assert_eq!(
-            decode_response(&encode_response(&valid).unwrap()).unwrap(),
-            valid
-        );
+        round_trip(&valid, encode_response, decode_response);
         state.active_build = "g1-11111111111111111111111111111111".into();
         assert!(encode_response(&Response::Snapshot(state.clone())).is_err());
         state.running.as_mut().unwrap().this.active_build = None;

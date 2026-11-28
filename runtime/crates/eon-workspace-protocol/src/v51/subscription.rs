@@ -13,16 +13,23 @@ use std::collections::HashSet;
 use super::{
     Attention, AttentionState, BusyTerminal, Decoder, Encoder, Error, FAILURE, Failure,
     MAX_COLUMNS, MAX_ID_BYTES, MAX_PANE_LABEL_BYTES, MAX_SESSIONS, MAX_TABS,
-    MAX_WORKSPACE_NAME_BYTES, MAX_WORKSPACES, Pane, Popup, Result, Tab, TerminalTarget, WireTab,
-    WorkspaceInfo, assemble_tab, decode_attention, decode_bool, decode_caller, decode_failure,
-    decode_layout, decode_optional, decode_pane, decode_popup, decode_state, decode_target,
-    decode_u64, decode_wire_tab, encode_attention, encode_caller, encode_failure, encode_layout,
-    encode_optional, encode_pane, encode_popup, encode_state, encode_target, encode_wire_tab,
+    MAX_WORKSPACE_NAME_BYTES, MAX_WORKSPACES, Pane, Popup, Result, Tab, TabRef, TerminalTarget,
+    WorkspaceInfo, assemble_tab, decode_attention, decode_busy_terminal, decode_caller,
+    decode_failure, decode_layout, decode_pane, decode_popup, decode_state, decode_target,
+    decode_wire_tab, encode_attention, encode_busy_terminal, encode_caller, encode_failure,
+    encode_layout, encode_pane, encode_popup, encode_state, encode_target, encode_wire_tab,
     entry_id, frame, generation_identity, identity, queued, unframe, validate_attention,
-    validate_busy_terminal, validate_columns, validate_endpoint, validate_pane_label,
+    validate_busy_terminal, validate_columns, validate_pane_label, validate_surface_payload,
     validate_tabs, validate_target, validate_window_id, validate_workspace_id,
     validate_workspace_info, validate_workspace_name,
 };
+
+wire_tags!(WorkspaceChange: Created = 0, Renamed = 1, Closed = 2, Shown = 3,
+    Registered = 4, RegistrationFailed = 5);
+wire_tags!(TabChange: Created = 0, Moved = 1, Directory = 2, Closed = 3, Activated = 4);
+wire_tags!(PaneChange: Created = 0, Moved = 1, Renamed = 2, Ended = 3, Closed = 4, Selected = 5);
+wire_tags!(PopupChange: Created = 0, Shown = 1, Hidden = 2, Closed = 3);
+wire_tags!(GapReason: Overflow = 0);
 
 pub(super) const SUBSCRIBE: u8 = 40;
 const SUBSCRIBED: u8 = 136;
@@ -337,32 +344,23 @@ pub(super) fn validate_subscribe(filter: &Filter, after: Option<&Resume>) -> Res
 pub(super) fn encode_subscribe(encoder: &mut Encoder, filter: &Filter, after: Option<&Resume>) {
     encoder.byte(SUBSCRIBE);
     for values in [&filter.workspaces, &filter.tabs, &filter.targets] {
-        encoder.count(values.len());
-        for value in values {
-            encoder.string(value);
-        }
+        encoder.strings(values);
     }
-    encoder.count(filter.kinds.len());
-    for kind in &filter.kinds {
+    encoder.items(&filter.kinds, |encoder, kind| {
         encoder.byte(kind_tag(*kind));
-    }
-    encoder.count(filter.states.len());
-    for state in &filter.states {
+    });
+    encoder.items(&filter.states, |encoder, state| {
         encode_state(encoder, Some(*state));
-    }
-    encoder.byte(u8::from(after.is_some()));
-    if let Some(after) = after {
+    });
+    encoder.optional(after, |encoder, after| {
         encoder.string(&after.stream);
-        encoder.bytes.extend_from_slice(&after.seq.to_le_bytes());
-    }
+        encoder.u64(after.seq);
+    });
 }
 
 pub(super) fn decode_subscribe(decoder: &mut Decoder<'_>) -> Result<(Filter, Option<Resume>)> {
     let strings = |decoder: &mut Decoder<'_>, field, count, length| {
-        let count = decoder.count(field, count)?;
-        (0..count)
-            .map(|_| decoder.string(field, length))
-            .collect::<Result<Vec<_>>>()
+        decoder.items(field, count, |decoder| decoder.string(field, length))
     };
     let workspaces = strings(
         decoder,
@@ -372,35 +370,18 @@ pub(super) fn decode_subscribe(decoder: &mut Decoder<'_>) -> Result<(Filter, Opt
     )?;
     let tabs = strings(decoder, "tab filter", MAX_FILTER_TABS, MAX_ID_BYTES)?;
     let targets = strings(decoder, "target filter", MAX_FILTER_TARGETS, MAX_ID_BYTES)?;
-    let count = decoder.count("kind filter", EVENT_KINDS.len())?;
-    let kinds = (0..count)
-        .map(|_| {
-            let value = decoder.byte()?;
-            EVENT_KINDS
-                .get(usize::from(value))
-                .copied()
-                .ok_or(Error::InvalidTag {
-                    field: "event kind",
-                    value,
-                })
+    let kinds = decoder.items("kind filter", EVENT_KINDS.len(), decode_event_kind)?;
+    let states = decoder.items("state filter", ATTENTION_STATES, |decoder| {
+        decode_state(decoder, "state filter")?.ok_or(Error::InvalidValue {
+            field: "state filter",
         })
-        .collect::<Result<_>>()?;
-    let count = decoder.count("state filter", ATTENTION_STATES)?;
-    let states = (0..count)
-        .map(|_| {
-            decode_state(decoder, "state filter")?.ok_or(Error::InvalidValue {
-                field: "state filter",
-            })
+    })?;
+    let after = decoder.optional("resume", |decoder| {
+        Ok(Resume {
+            stream: decoder.string("stream", MAX_ID_BYTES)?,
+            seq: decoder.u64()?,
         })
-        .collect::<Result<_>>()?;
-    let after = decode_bool(decoder, "resume")?
-        .then(|| {
-            Ok(Resume {
-                stream: decoder.string("stream", MAX_ID_BYTES)?,
-                seq: decode_u64(decoder)?,
-            })
-        })
-        .transpose()?;
+    })?;
     Ok((
         Filter {
             workspaces,
@@ -420,12 +401,15 @@ fn kind_tag(kind: EventKind) -> u8 {
         .expect("listed event kind") as u8
 }
 
-fn change_tag(tag: u8, field: &'static str, count: u8) -> Result<u8> {
-    if tag < count {
-        Ok(tag)
-    } else {
-        Err(Error::InvalidTag { field, value: tag })
-    }
+fn decode_event_kind(decoder: &mut Decoder<'_>) -> Result<EventKind> {
+    let value = decoder.byte()?;
+    EVENT_KINDS
+        .get(usize::from(value))
+        .copied()
+        .ok_or(Error::InvalidTag {
+            field: "event kind",
+            value,
+        })
 }
 
 fn validate_workspace_entry(entry: &WorkspaceEntry) -> Result<()> {
@@ -514,29 +498,25 @@ fn decode_workspace_entry(decoder: &mut Decoder<'_>) -> Result<WorkspaceEntry> {
 }
 
 fn encode_queue(encoder: &mut Encoder, queue: &[QueueItem]) {
-    encoder.count(queue.len());
-    for item in queue {
+    encoder.items(queue, |encoder, item| {
         encoder.string(&item.workspace);
         encoder.string(&item.tab);
         encoder.string(&item.target);
         encode_state(encoder, Some(item.state));
-    }
+    });
 }
 
 fn decode_queue(decoder: &mut Decoder<'_>) -> Result<Vec<QueueItem>> {
-    let count = decoder.count("attention queue", MAX_SESSIONS)?;
-    (0..count)
-        .map(|_| {
-            Ok(QueueItem {
-                workspace: decoder.string("queue workspace", MAX_ID_BYTES)?,
-                tab: decoder.string("queue tab", MAX_ID_BYTES)?,
-                target: decoder.string("queue target", MAX_ID_BYTES)?,
-                state: decode_state(decoder, "queue state")?.ok_or(Error::InvalidSnapshot {
-                    field: "attention queue",
-                })?,
-            })
+    decoder.items("attention queue", MAX_SESSIONS, |decoder| {
+        Ok(QueueItem {
+            workspace: decoder.string("queue workspace", MAX_ID_BYTES)?,
+            tab: decoder.string("queue tab", MAX_ID_BYTES)?,
+            target: decoder.string("queue target", MAX_ID_BYTES)?,
+            state: decode_state(decoder, "queue state")?.ok_or(Error::InvalidSnapshot {
+                field: "attention queue",
+            })?,
         })
-        .collect()
+    })
 }
 
 /// At most one entry per terminal of the window.
@@ -560,52 +540,31 @@ fn validate_busy_list(busy: &[BusyTerminal]) -> Result<()> {
 }
 
 /// A presence flag, then the count and each terminal's target and name.
-fn encode_busy_list(encoder: &mut Encoder, busy: Option<&Vec<BusyTerminal>>) {
-    encoder.byte(u8::from(busy.is_some()));
-    if let Some(busy) = busy {
-        encoder.count(busy.len());
-        for busy in busy {
-            encode_target(encoder, &busy.target);
-            encoder.string(&busy.name);
-        }
-    }
+fn encode_busy_list(encoder: &mut Encoder, busy: Option<&[BusyTerminal]>) {
+    encoder.optional(busy, |encoder, busy| {
+        encoder.items(busy, encode_busy_terminal)
+    });
 }
 
 fn decode_busy_list(decoder: &mut Decoder<'_>) -> Result<Option<Vec<BusyTerminal>>> {
-    if !decode_bool(decoder, "busy terminals")? {
-        return Ok(None);
-    }
-    let count = decoder.count("busy terminals", MAX_SESSIONS)?;
-    (0..count)
-        .map(|_| {
-            Ok(BusyTerminal {
-                target: decode_target(decoder)?,
-                name: decoder.string("busy name", MAX_PANE_LABEL_BYTES)?,
-            })
-        })
-        .collect::<Result<_>>()
-        .map(Some)
+    decoder.optional("busy terminals", |decoder| {
+        decoder.items("busy terminals", MAX_SESSIONS, decode_busy_terminal)
+    })
 }
 
 /// The workspaces, the queue, the busy terminals, then the `TABS` count.
 fn encode_snapshot(encoder: &mut Encoder, snapshot: &WindowSnapshot) {
-    encoder.count(snapshot.workspaces.len());
-    for entry in &snapshot.workspaces {
-        encode_workspace_entry(encoder, entry);
-    }
+    encoder.items(&snapshot.workspaces, encode_workspace_entry);
     encode_queue(encoder, &snapshot.attention_queue);
-    encode_busy_list(encoder, snapshot.busy.as_ref());
+    encode_busy_list(encoder, snapshot.busy.as_deref());
     encoder.count(snapshot.tab_messages);
     encoder.string(&snapshot.created_build);
     encoder.string(&snapshot.active_build);
 }
 
 fn decode_snapshot(decoder: &mut Decoder<'_>) -> Result<WindowSnapshot> {
-    let count = decoder.count("workspaces", MAX_WORKSPACES)?;
     Ok(WindowSnapshot {
-        workspaces: (0..count)
-            .map(|_| decode_workspace_entry(decoder))
-            .collect::<Result<_>>()?,
+        workspaces: decoder.items("workspaces", MAX_WORKSPACES, decode_workspace_entry)?,
         attention_queue: decode_queue(decoder)?,
         busy: decode_busy_list(decoder)?,
         tab_messages: decoder.count("tab messages", MAX_WORKSPACES)?,
@@ -616,8 +575,7 @@ fn decode_snapshot(decoder: &mut Decoder<'_>) -> Result<WindowSnapshot> {
 
 /// Checks tabs carried together: one workspace's run, or one event's tab.
 fn validate_carried_tabs(tabs: &[Tab]) -> Result<()> {
-    let wire: Vec<_> = tabs.iter().map(WireTab::from).collect();
-    validate_tabs(&wire, None)?;
+    validate_tabs(tabs.iter().map(TabRef::from), None)?;
     for tab in tabs {
         validate_columns(tab)?;
     }
@@ -627,7 +585,7 @@ fn validate_carried_tabs(tabs: &[Tab]) -> Result<()> {
 /// Each tab as its column layout followed by the snapshot's tab form.
 fn encode_tab(encoder: &mut Encoder, tab: &Tab) -> Result<()> {
     encode_layout(encoder, tab)?;
-    encode_wire_tab(encoder, &WireTab::from(tab));
+    encode_wire_tab(encoder, tab);
     Ok(())
 }
 
@@ -660,23 +618,14 @@ fn validate_order(change: TabChange, tab: &str, tabs: Option<&Vec<String>>) -> R
 
 fn validate_pane(pane: &Pane) -> Result<()> {
     identity("surface id", &pane.id)?;
-    identity("session id", &pane.session)?;
-    validate_endpoint(&pane.endpoint)?;
-    if let Some(attention) = &pane.attention {
-        validate_attention(attention)?;
-    }
+    validate_surface_payload(&pane.session, &pane.endpoint, pane.attention.as_ref())?;
     validate_pane_label(pane)
 }
 
 fn validate_popup(popup: &Popup) -> Result<()> {
     identity("surface id", &popup.id)?;
     entry_id(&popup.entry)?;
-    identity("session id", &popup.session)?;
-    validate_endpoint(&popup.endpoint)?;
-    if let Some(attention) = &popup.attention {
-        validate_attention(attention)?;
-    }
-    Ok(())
+    validate_surface_payload(&popup.session, &popup.endpoint, popup.attention.as_ref())
 }
 
 /// Checks a pane event's `columns`, and its pane's `column` and `expanded`
@@ -807,7 +756,7 @@ fn encode_change(encoder: &mut Encoder, change: &Change) -> Result<()> {
     encoder.byte(kind_tag(change.kind()));
     match change {
         Change::Workspace { change, workspace } => {
-            encoder.byte(*change as u8);
+            encoder.byte(change.wire_tag());
             encode_workspace_entry(encoder, workspace);
         }
         Change::Tab {
@@ -816,14 +765,11 @@ fn encode_change(encoder: &mut Encoder, change: &Change) -> Result<()> {
             tab,
             tabs,
         } => {
-            encoder.byte(*change as u8);
+            encoder.byte(change.wire_tag());
             encoder.string(workspace);
             encode_tab(encoder, tab)?;
             if let Some(tabs) = tabs {
-                encoder.count(tabs.len());
-                for id in tabs {
-                    encoder.string(id);
-                }
+                encoder.strings(tabs);
             }
         }
         Change::Pane {
@@ -835,18 +781,15 @@ fn encode_change(encoder: &mut Encoder, change: &Change) -> Result<()> {
             expanded,
             columns,
         } => {
-            encoder.byte(*change as u8);
+            encoder.byte(change.wire_tag());
             encoder.string(workspace);
             encoder.string(tab);
             encode_pane(encoder, pane);
             encoder.byte(*column as u8);
-            encoder.byte(u8::from(*expanded));
+            encoder.boolean(*expanded);
             encoder.count(columns.len());
             for column in columns {
-                encoder.count(column.panes.len());
-                for id in &column.panes {
-                    encoder.string(id);
-                }
+                encoder.strings(&column.panes);
                 let expanded = column
                     .panes
                     .iter()
@@ -862,11 +805,11 @@ fn encode_change(encoder: &mut Encoder, change: &Change) -> Result<()> {
             popup,
             chosen,
         } => {
-            encoder.byte(*change as u8);
+            encoder.byte(change.wire_tag());
             encoder.string(workspace);
             encoder.string(tab);
             encode_popup(encoder, popup);
-            encoder.byte(u8::from(*chosen));
+            encoder.boolean(*chosen);
         }
         Change::Attention {
             target,
@@ -880,54 +823,30 @@ fn encode_change(encoder: &mut Encoder, change: &Change) -> Result<()> {
         Change::Queue(queue) => encode_queue(encoder, queue),
         Change::Busy { target, busy, name } => {
             encode_target(encoder, target);
-            encoder.byte(u8::from(*busy));
-            encoder.byte(u8::from(name.is_some()));
-            if let Some(name) = name {
-                encoder.string(name);
-            }
+            encoder.boolean(*busy);
+            encoder.optional_string(name.as_deref());
         }
     }
     Ok(())
 }
 
 fn decode_change(decoder: &mut Decoder<'_>) -> Result<Change> {
-    let value = decoder.byte()?;
-    let kind = EVENT_KINDS
-        .get(usize::from(value))
-        .copied()
-        .ok_or(Error::InvalidTag {
-            field: "event kind",
-            value,
-        })?;
+    let kind = decode_event_kind(decoder)?;
     Ok(match kind {
         EventKind::Workspace => Change::Workspace {
-            change: match change_tag(decoder.byte()?, "workspace change", 6)? {
-                0 => WorkspaceChange::Created,
-                1 => WorkspaceChange::Renamed,
-                2 => WorkspaceChange::Closed,
-                3 => WorkspaceChange::Shown,
-                4 => WorkspaceChange::Registered,
-                _ => WorkspaceChange::RegistrationFailed,
-            },
+            change: WorkspaceChange::from_wire_tag(decoder.byte()?, "workspace change")?,
             workspace: decode_workspace_entry(decoder)?,
         },
         EventKind::Tab => {
-            let change = match change_tag(decoder.byte()?, "tab change", 5)? {
-                0 => TabChange::Created,
-                1 => TabChange::Moved,
-                2 => TabChange::Directory,
-                3 => TabChange::Closed,
-                _ => TabChange::Activated,
-            };
+            let change = TabChange::from_wire_tag(decoder.byte()?, "tab change")?;
             let workspace = decoder.string("workspace id", MAX_ID_BYTES)?;
             let tab = decode_tab(decoder, &mut 0)?;
             let tabs = change
                 .carries_order()
                 .then(|| {
-                    let count = decoder.count("tab order", MAX_TABS)?;
-                    (0..count)
-                        .map(|_| decoder.string("tab order", MAX_ID_BYTES))
-                        .collect::<Result<Vec<_>>>()
+                    decoder.items("tab order", MAX_TABS, |decoder| {
+                        decoder.string("tab order", MAX_ID_BYTES)
+                    })
                 })
                 .transpose()?;
             Change::Tab {
@@ -938,19 +857,12 @@ fn decode_change(decoder: &mut Decoder<'_>) -> Result<Change> {
             }
         }
         EventKind::Pane => {
-            let change = match change_tag(decoder.byte()?, "pane change", 6)? {
-                0 => PaneChange::Created,
-                1 => PaneChange::Moved,
-                2 => PaneChange::Renamed,
-                3 => PaneChange::Ended,
-                4 => PaneChange::Closed,
-                _ => PaneChange::Selected,
-            };
+            let change = PaneChange::from_wire_tag(decoder.byte()?, "pane change")?;
             let workspace = decoder.string("workspace id", MAX_ID_BYTES)?;
             let tab = decoder.string("tab id", MAX_ID_BYTES)?;
             let pane = decode_pane(decoder)?;
             let column = usize::from(decoder.byte()?);
-            let expanded = decode_bool(decoder, "expanded")?;
+            let expanded = decoder.boolean("expanded")?;
             let count = decoder.count("columns", MAX_COLUMNS)?;
             let mut panes = 0;
             let mut columns = Vec::with_capacity(count);
@@ -980,16 +892,11 @@ fn decode_change(decoder: &mut Decoder<'_>) -> Result<Change> {
             }
         }
         EventKind::Popup => Change::Popup {
-            change: match change_tag(decoder.byte()?, "popup change", 4)? {
-                0 => PopupChange::Created,
-                1 => PopupChange::Shown,
-                2 => PopupChange::Hidden,
-                _ => PopupChange::Closed,
-            },
+            change: PopupChange::from_wire_tag(decoder.byte()?, "popup change")?,
             workspace: decoder.string("workspace id", MAX_ID_BYTES)?,
             tab: decoder.string("tab id", MAX_ID_BYTES)?,
             popup: decode_popup(decoder)?,
-            chosen: decode_bool(decoder, "chosen")?,
+            chosen: decoder.boolean("chosen")?,
         },
         EventKind::Attention => Change::Attention {
             target: decode_target(decoder)?,
@@ -999,10 +906,8 @@ fn decode_change(decoder: &mut Decoder<'_>) -> Result<Change> {
         EventKind::Queue => Change::Queue(decode_queue(decoder)?),
         EventKind::Busy => Change::Busy {
             target: decode_target(decoder)?,
-            busy: decode_bool(decoder, "busy")?,
-            name: decode_bool(decoder, "busy name")?
-                .then(|| decoder.string("busy name", MAX_PANE_LABEL_BYTES))
-                .transpose()?,
+            busy: decoder.boolean("busy")?,
+            name: decoder.optional_string("busy name", MAX_PANE_LABEL_BYTES)?,
         },
     })
 }
@@ -1024,16 +929,11 @@ pub fn encode_subscription_message(message: &SubscriptionMessage) -> Result<Vec<
                 validate_snapshot(snapshot)?;
             }
             payload.string(&subscribed.stream);
-            payload
-                .bytes
-                .extend_from_slice(&subscribed.seq.to_le_bytes());
+            payload.u64(subscribed.seq);
             payload.string(&subscribed.generation);
-            encode_optional(&mut payload, &subscribed.window);
+            payload.optional_string(subscribed.window.as_deref());
             encode_caller(&mut payload, subscribed.caller.as_ref());
-            payload.byte(u8::from(subscribed.snapshot.is_some()));
-            if let Some(snapshot) = &subscribed.snapshot {
-                encode_snapshot(&mut payload, snapshot);
-            }
+            payload.optional(subscribed.snapshot.as_ref(), encode_snapshot);
             SUBSCRIBED
         }
         SubscriptionMessage::Tabs(tabs) => {
@@ -1051,16 +951,14 @@ pub fn encode_subscription_message(message: &SubscriptionMessage) -> Result<Vec<
         }
         SubscriptionMessage::Event(event) => {
             validate_change(&event.change)?;
-            payload.bytes.extend_from_slice(&event.seq.to_le_bytes());
+            payload.u64(event.seq);
             encode_change(&mut payload, &event.change)?;
             EVENT
         }
         SubscriptionMessage::Gap(gap) => {
             validate_snapshot(&gap.snapshot)?;
-            payload.bytes.extend_from_slice(&gap.seq.to_le_bytes());
-            payload.byte(match gap.reason {
-                GapReason::Overflow => 0,
-            });
+            payload.u64(gap.seq);
+            payload.byte(gap.reason.wire_tag());
             encode_snapshot(&mut payload, &gap.snapshot);
             GAP
         }
@@ -1093,13 +991,11 @@ pub fn decode_subscription_message(bytes: &[u8]) -> Result<SubscriptionMessage> 
         SUBSCRIBED => {
             let subscribed = Subscribed {
                 stream: decoder.string("stream", MAX_ID_BYTES)?,
-                seq: decode_u64(&mut decoder)?,
+                seq: decoder.u64()?,
                 generation: decoder.string("generation", 35)?,
-                window: decode_optional(&mut decoder, "window id")?,
+                window: decoder.optional_id("window id")?,
                 caller: decode_caller(&mut decoder)?,
-                snapshot: decode_bool(&mut decoder, "snapshot")?
-                    .then(|| decode_snapshot(&mut decoder))
-                    .transpose()?,
+                snapshot: decoder.optional("snapshot", decode_snapshot)?,
             };
             identity("stream", &subscribed.stream)?;
             generation_identity("generation", &subscribed.generation)?;
@@ -1125,23 +1021,15 @@ pub fn decode_subscription_message(bytes: &[u8]) -> Result<SubscriptionMessage> 
         }
         EVENT => {
             let event = Event {
-                seq: decode_u64(&mut decoder)?,
+                seq: decoder.u64()?,
                 change: decode_change(&mut decoder)?,
             };
             validate_change(&event.change)?;
             SubscriptionMessage::Event(event)
         }
         GAP => {
-            let seq = decode_u64(&mut decoder)?;
-            let reason = match decoder.byte()? {
-                0 => GapReason::Overflow,
-                value => {
-                    return Err(Error::InvalidTag {
-                        field: "gap reason",
-                        value,
-                    });
-                }
-            };
+            let seq = decoder.u64()?;
+            let reason = GapReason::from_wire_tag(decoder.byte()?, "gap reason")?;
             let snapshot = decode_snapshot(&mut decoder)?;
             validate_snapshot(&snapshot)?;
             SubscriptionMessage::Gap(Gap {
@@ -1175,40 +1063,27 @@ pub fn decode_subscription_message(bytes: &[u8]) -> Result<SubscriptionMessage> 
 
 #[cfg(test)]
 mod tests {
+    use super::super::tests::assert_wire_tags;
+    use super::super::tests::{
+        hex, maximal_attention, maximal_pane, maximal_workspace_info, padded_name, pane, popup,
+        round_trip,
+    };
     use super::super::{
         Action, AttentionKind, AttentionRecord, BusyTerminal, Column, HEADER_BYTES, MAX_APP_BYTES,
         MAX_DIRECTORY_BYTES, MAX_ENDPOINT_BYTES, MAX_ENTRIES, MAX_ENTRY_ID_BYTES,
-        MAX_MESSAGE_BYTES, MAX_NAME_BYTES, MAX_OTHER_RECORDS, MAX_PANE_LABEL_BYTES,
-        MAX_PANE_NAME_BYTES, MAX_PANE_NAME_CHARS, MAX_STATUS_MESSAGE_BYTES, MAX_TITLE_BYTES,
-        MAX_WORKSPACE_NAME_CHARS, Request, TargetId, decode_request, encode_request,
+        MAX_MESSAGE_BYTES, MAX_NAME_BYTES, MAX_PANE_LABEL_BYTES, MAX_PANE_NAME_BYTES,
+        MAX_STATUS_MESSAGE_BYTES, MAX_TITLE_BYTES, Request, TargetId, decode_request,
+        encode_request,
     };
     use super::*;
 
-    fn hex(bytes: &[u8]) -> String {
-        bytes.iter().map(|byte| format!("{byte:02x}")).collect()
-    }
-
-    fn pane(id: &str) -> Pane {
-        Pane {
-            label: id.into(),
-            pinned_name: None,
-            tag: None,
-            id: id.into(),
-            session: format!("s{id}"),
-            endpoint: format!("/{id}").into_bytes(),
-            live: true,
-            attention: None,
-        }
-    }
-
-    fn popup(id: &str, entry: &str) -> Popup {
-        Popup {
-            id: id.into(),
-            entry: entry.into(),
-            session: format!("s{id}"),
-            endpoint: format!("/{id}").into_bytes(),
-            attention: None,
-        }
+    #[test]
+    fn unit_enums_keep_their_wire_tags() {
+        assert_wire_tags!(WorkspaceChange: 0; Created, Renamed, Closed, Shown, Registered, RegistrationFailed);
+        assert_wire_tags!(TabChange: 0; Created, Moved, Directory, Closed, Activated);
+        assert_wire_tags!(PaneChange: 0; Created, Moved, Renamed, Ended, Closed, Selected);
+        assert_wire_tags!(PopupChange: 0; Created, Shown, Hidden, Closed);
+        assert_wire_tags!(GapReason: 0; Overflow);
     }
 
     fn tab(id: &str, panes: &[&str]) -> Tab {
@@ -1299,8 +1174,49 @@ mod tests {
         })
     }
 
+    fn column_order(panes: &[&str], expanded: &str) -> ColumnOrder {
+        ColumnOrder {
+            panes: panes.iter().map(|id| id.to_string()).collect(),
+            expanded: expanded.into(),
+        }
+    }
+
+    fn carried_tabs(workspace: &str, tabs: Vec<Tab>) -> SubscriptionMessage {
+        SubscriptionMessage::Tabs(Tabs {
+            workspace: workspace.into(),
+            tabs,
+        })
+    }
+
+    fn gap_message(seq: u64, snapshot: WindowSnapshot) -> SubscriptionMessage {
+        SubscriptionMessage::Gap(Gap {
+            seq,
+            reason: GapReason::Overflow,
+            snapshot,
+        })
+    }
+
     fn event(change: Change) -> SubscriptionMessage {
         SubscriptionMessage::Event(Event { seq: 42, change })
+    }
+
+    fn t2_event(change: TabChange, tabs: Option<Vec<String>>) -> SubscriptionMessage {
+        event(Change::Tab {
+            change,
+            workspace: "s1".into(),
+            tab: tab("t2", &["p3"]),
+            tabs,
+        })
+    }
+
+    fn agent_popup_event(change: PopupChange, chosen: bool) -> SubscriptionMessage {
+        event(Change::Popup {
+            change,
+            workspace: "s1".into(),
+            tab: "t1".into(),
+            popup: popup("u1", "agent"),
+            chosen,
+        })
     }
 
     fn subscribe(filter: Filter, after: Option<Resume>) -> Request {
@@ -1324,15 +1240,8 @@ mod tests {
                     _ => unreachable!(),
                 }
             }),
-            SubscriptionMessage::Tabs(Tabs {
-                workspace: "s1".into(),
-                tabs: vec![tab("t1", &["p1", "p2"]), tab("t2", &["p3"])],
-            }),
-            SubscriptionMessage::Gap(Gap {
-                seq: 90,
-                reason: GapReason::Overflow,
-                snapshot: window_snapshot(),
-            }),
+            carried_tabs("s1", vec![tab("t1", &["p1", "p2"]), tab("t2", &["p3"])]),
+            gap_message(90, window_snapshot()),
             SubscriptionMessage::End(End::Ended {
                 generation: "g1".into(),
             }),
@@ -1372,15 +1281,13 @@ mod tests {
             TabChange::Closed,
             TabChange::Activated,
         ] {
-            samples.push(event(Change::Tab {
+            samples.push(t2_event(
                 change,
-                workspace: "s1".into(),
-                tab: tab("t2", &["p3"]),
-                tabs: change.carries_order().then(|| match change {
+                change.carries_order().then(|| match change {
                     TabChange::Closed => vec!["t1".into()],
                     _ => vec!["t2".into(), "t1".into()],
                 }),
-            }));
+            ));
         }
         for change in [
             PaneChange::Created,
@@ -1399,18 +1306,8 @@ mod tests {
                 column: 2,
                 expanded: false,
                 columns: vec![
-                    ColumnOrder {
-                        panes: vec!["p1".into()],
-                        expanded: "p1".into(),
-                    },
-                    ColumnOrder {
-                        panes: if closed {
-                            vec!["p3".into()]
-                        } else {
-                            vec!["p3".into(), "p2".into()]
-                        },
-                        expanded: "p3".into(),
-                    },
+                    column_order(&["p1"], "p1"),
+                    column_order(if closed { &["p3"] } else { &["p3", "p2"] }, "p3"),
                 ],
             }));
         }
@@ -1420,13 +1317,7 @@ mod tests {
             PopupChange::Hidden,
             PopupChange::Closed,
         ] {
-            samples.push(event(Change::Popup {
-                change,
-                workspace: "s1".into(),
-                tab: "t1".into(),
-                popup: popup("u1", "agent"),
-                chosen: change != PopupChange::Hidden,
-            }));
+            samples.push(agent_popup_event(change, change != PopupChange::Hidden));
         }
         samples.extend([
             event(Change::Attention {
@@ -1524,7 +1415,7 @@ mod tests {
             assert!(encode_request(&request).is_err(), "{request:?}");
             let mut payload = Encoder::default();
             payload.string(&request.id);
-            encode_optional(&mut payload, &request.caller);
+            payload.optional_string(request.caller.as_deref());
             let Action::Subscribe { filter, after } = &request.action else {
                 unreachable!()
             };
@@ -1571,11 +1462,7 @@ mod tests {
         let messages = |snapshot: WindowSnapshot| {
             [
                 subscribed(Some(snapshot.clone())),
-                SubscriptionMessage::Gap(Gap {
-                    seq: 90,
-                    reason: GapReason::Overflow,
-                    snapshot,
-                }),
+                gap_message(90, snapshot),
             ]
         };
         for message in messages(snapshot.clone()) {
@@ -1585,8 +1472,7 @@ mod tests {
         snapshot.workspaces[1].workspace.persistent_id =
             snapshot.workspaces[0].workspace.persistent_id.clone();
         for message in messages(snapshot) {
-            assert!(encode_subscription_message(&message).is_err());
-            assert!(decode_subscription_message(&forge(&message)).is_err());
+            assert_rejected(&message);
         }
         let mut bad = second;
         bad.workspace.persistent_id = Some(String::new());
@@ -1594,18 +1480,16 @@ mod tests {
             change: WorkspaceChange::Renamed,
             workspace: bad,
         });
-        assert!(encode_subscription_message(&message).is_err());
-        assert!(decode_subscription_message(&forge(&message)).is_err());
+        assert_rejected(&message);
     }
 
     #[test]
     fn subscription_messages_round_trip() {
         for message in samples() {
-            let bytes = encode_subscription_message(&message).unwrap();
-            assert_eq!(
-                decode_subscription_message(&bytes).unwrap(),
-                message,
-                "{message:?}"
+            round_trip(
+                &message,
+                encode_subscription_message,
+                decode_subscription_message,
             );
         }
         // A subscription message is not a one-shot response, nor the reverse.
@@ -1633,8 +1517,7 @@ mod tests {
                 workspace: entry("s1", "confirmed", 0),
             }),
         ] {
-            assert!(encode_subscription_message(&message).is_err());
-            assert!(decode_subscription_message(&forge(&message)).is_err());
+            assert_rejected(&message);
         }
     }
 
@@ -1648,11 +1531,7 @@ mod tests {
         });
         for message in [
             subscribed(Some(snapshot.clone())),
-            SubscriptionMessage::Gap(Gap {
-                seq: 90,
-                reason: GapReason::Overflow,
-                snapshot: snapshot.clone(),
-            }),
+            gap_message(90, snapshot.clone()),
             event(Change::Workspace {
                 change: WorkspaceChange::RegistrationFailed,
                 workspace: snapshot.workspaces[0].clone(),
@@ -1687,8 +1566,12 @@ mod tests {
             .unwrap()
             .detail = "a".repeat(super::super::MAX_DETAIL_BYTES + 1);
         let message = subscribed(Some(snapshot));
-        assert!(encode_subscription_message(&message).is_err());
-        assert!(decode_subscription_message(&forge(&message)).is_err());
+        assert_rejected(&message);
+    }
+
+    fn assert_rejected(message: &SubscriptionMessage) {
+        assert!(encode_subscription_message(message).is_err());
+        assert!(decode_subscription_message(&forge(message)).is_err());
     }
 
     /// Encodes `message` without its validation, as a forging peer would.
@@ -1711,7 +1594,7 @@ mod tests {
                 payload.count(tabs.tabs.len());
                 for tab in &tabs.tabs {
                     encode_layout(&mut payload, tab).unwrap();
-                    encode_wire_tab(&mut payload, &WireTab::from(tab));
+                    encode_wire_tab(&mut payload, tab);
                 }
                 TABS
             }
@@ -1721,7 +1604,7 @@ mod tests {
                     .bytes
                     .extend_from_slice(&subscribed.seq.to_le_bytes());
                 payload.string(&subscribed.generation);
-                encode_optional(&mut payload, &subscribed.window);
+                payload.optional_string(subscribed.window.as_deref());
                 encode_caller(&mut payload, subscribed.caller.as_ref());
                 payload.byte(1);
                 encode_snapshot(&mut payload, subscribed.snapshot.as_ref().unwrap());
@@ -1733,23 +1616,47 @@ mod tests {
     }
 
     #[test]
+    fn subscription_keeps_first_error() {
+        for (id, field) in [("u1", "entry id"), ("", "surface id")] {
+            let message = event(Change::Popup {
+                change: PopupChange::Created,
+                workspace: "s1".into(),
+                tab: "t1".into(),
+                popup: Popup {
+                    session: String::new(),
+                    ..popup(id, "")
+                },
+                chosen: false,
+            });
+            let error = Error::InvalidValue { field };
+            assert_eq!(encode_subscription_message(&message), Err(error.clone()));
+            assert_eq!(decode_subscription_message(&forge(&message)), Err(error));
+        }
+        let busy = BusyTerminal {
+            target: target("s1", "t1", TargetId::Pane("p1".into())),
+            name: "p1".into(),
+        };
+        let invalid = BusyTerminal {
+            name: String::new(),
+            ..busy.clone()
+        };
+        let message = subscribed(Some(WindowSnapshot {
+            busy: Some(vec![busy, invalid]),
+            ..window_snapshot()
+        }));
+        let error = Error::InvalidValue {
+            field: "busy terminals",
+        };
+        assert_eq!(encode_subscription_message(&message), Err(error.clone()));
+        assert_eq!(decode_subscription_message(&forge(&message)), Err(error));
+    }
+
+    #[test]
     fn subscription_messages_reject_invalid_values_on_both_sides() {
         let gap = |change: &dyn Fn(&mut WindowSnapshot)| {
             let mut snapshot = window_snapshot();
             change(&mut snapshot);
-            SubscriptionMessage::Gap(Gap {
-                seq: 1,
-                reason: GapReason::Overflow,
-                snapshot,
-            })
-        };
-        let tab_event = |change: TabChange, tabs: Option<Vec<String>>| {
-            event(Change::Tab {
-                change,
-                workspace: "s1".into(),
-                tab: tab("t2", &["p3"]),
-                tabs,
-            })
+            gap_message(1, snapshot)
         };
         let placed = |change: PaneChange, column: usize, expanded: bool, columns| {
             event(Change::Pane {
@@ -1770,10 +1677,7 @@ mod tests {
                 name: name.map(str::to_owned),
             })
         };
-        let column = |panes: &[&str], expanded: &str| ColumnOrder {
-            panes: panes.iter().map(|id| id.to_string()).collect(),
-            expanded: expanded.into(),
-        };
+
         let mut duplicate_surface = tab("t2", &["p1"]);
         duplicate_surface.columns[0].panes[0].session = "sp1".into();
         let mut rollup = tab("t1", &["p1"]);
@@ -1804,36 +1708,27 @@ mod tests {
                     .map(|n| entry(&format!("s{n}"), &format!("{n:0128x}"), (n - 1) as u8))
                     .collect()
             }),
-            SubscriptionMessage::Tabs(Tabs {
-                workspace: "s1".into(),
-                tabs: vec![tab("t1", &["p1"]), duplicate_surface],
-            }),
-            SubscriptionMessage::Tabs(Tabs {
-                workspace: "s1".into(),
-                tabs: vec![rollup],
-            }),
-            SubscriptionMessage::Tabs(Tabs {
-                workspace: "t1".into(),
-                tabs: vec![tab("t1", &["p1"])],
-            }),
-            tab_event(TabChange::Moved, None),
-            tab_event(TabChange::Activated, Some(vec!["t2".into()])),
-            tab_event(TabChange::Created, Some(vec!["t1".into()])),
-            tab_event(TabChange::Closed, Some(vec!["t2".into()])),
-            tab_event(TabChange::Moved, Some(vec!["t2".into(), "t2".into()])),
-            pane_event(PaneChange::Moved, vec![column(&["p1"], "p1")]),
-            pane_event(PaneChange::Closed, vec![column(&["p1", "p2"], "p1")]),
+            carried_tabs("s1", vec![tab("t1", &["p1"]), duplicate_surface]),
+            carried_tabs("s1", vec![rollup]),
+            carried_tabs("t1", vec![tab("t1", &["p1"])]),
+            t2_event(TabChange::Moved, None),
+            t2_event(TabChange::Activated, Some(vec!["t2".into()])),
+            t2_event(TabChange::Created, Some(vec!["t1".into()])),
+            t2_event(TabChange::Closed, Some(vec!["t2".into()])),
+            t2_event(TabChange::Moved, Some(vec!["t2".into(), "t2".into()])),
+            pane_event(PaneChange::Moved, vec![column_order(&["p1"], "p1")]),
+            pane_event(PaneChange::Closed, vec![column_order(&["p1", "p2"], "p1")]),
             pane_event(
                 PaneChange::Selected,
-                vec![column(&["p2"], "p2"), column(&["p2"], "p2")],
+                vec![column_order(&["p2"], "p2"), column_order(&["p2"], "p2")],
             ),
             pane_event(
                 PaneChange::Selected,
-                vec![column(&["p2"], "p2"); MAX_COLUMNS + 1],
+                vec![column_order(&["p2"], "p2"); MAX_COLUMNS + 1],
             ),
             pane_event(
                 PaneChange::Selected,
-                vec![column(&["p2"], "p2"), column(&[], "p3")],
+                vec![column_order(&["p2"], "p2"), column_order(&[], "p3")],
             ),
             event(Change::Attention {
                 target: target("s1", "t1", TargetId::Pane("p 1".into())),
@@ -1869,23 +1764,33 @@ mod tests {
                 },
                 column: 1,
                 expanded: true,
-                columns: vec![column(&["p2"], "p2")],
+                columns: vec![column_order(&["p2"], "p2")],
             }),
             // The pane's place must match `columns` unless it closed.
-            placed(PaneChange::Moved, 0, false, vec![column(&["p2"], "p2")]),
+            placed(
+                PaneChange::Moved,
+                0,
+                false,
+                vec![column_order(&["p2"], "p2")],
+            ),
             placed(PaneChange::Closed, 5, false, vec![]),
             placed(
                 PaneChange::Moved,
                 2,
                 true,
-                vec![column(&["p2"], "p2"), column(&["p1"], "p1")],
+                vec![column_order(&["p2"], "p2"), column_order(&["p1"], "p1")],
             ),
-            placed(PaneChange::Selected, 1, false, vec![column(&["p2"], "p2")]),
+            placed(
+                PaneChange::Selected,
+                1,
+                false,
+                vec![column_order(&["p2"], "p2")],
+            ),
             placed(
                 PaneChange::Selected,
                 1,
                 true,
-                vec![column(&["p1", "p2"], "p1")],
+                vec![column_order(&["p1", "p2"], "p1")],
             ),
             // A busy name exactly while busy, as a busy list names it.
             busy_event(true, None),
@@ -1928,8 +1833,7 @@ mod tests {
         let mut bad = window_snapshot();
         bad.attention_queue[0].state = AttentionState::Background;
         let message = subscribed(Some(bad));
-        assert!(encode_subscription_message(&message).is_err());
-        assert!(decode_subscription_message(&forge(&message)).is_err());
+        assert_rejected(&message);
         for message in [
             SubscriptionMessage::Subscribed(Subscribed {
                 window: Some("default".into()),
@@ -1945,10 +1849,7 @@ mod tests {
                     _ => unreachable!(),
                 }
             }),
-            SubscriptionMessage::Tabs(Tabs {
-                workspace: "s1".into(),
-                tabs: vec![],
-            }),
+            carried_tabs("s1", vec![]),
             SubscriptionMessage::End(End::Ended {
                 generation: String::new(),
             }),
@@ -2035,12 +1936,7 @@ mod tests {
             previous: Some(AttentionState::Working),
             attention: Some(attention(AttentionState::NeedsInput)),
         });
-        let tab_event = event(Change::Tab {
-            change: TabChange::Moved,
-            workspace: "s1".into(),
-            tab: tab("t2", &["p3"]),
-            tabs: Some(vec!["t2".into(), "t1".into()]),
-        });
+        let tab_event = t2_event(TabChange::Moved, Some(vec!["t2".into(), "t1".into()]));
         let pane_event = event(Change::Pane {
             change: PaneChange::Moved,
             workspace: "s1".into(),
@@ -2048,18 +1944,9 @@ mod tests {
             pane: pane("p2"),
             column: 1,
             expanded: true,
-            columns: vec![ColumnOrder {
-                panes: vec!["p1".into(), "p2".into()],
-                expanded: "p2".into(),
-            }],
+            columns: vec![column_order(&["p1", "p2"], "p2")],
         });
-        let popup_event = event(Change::Popup {
-            change: PopupChange::Shown,
-            workspace: "s1".into(),
-            tab: "t1".into(),
-            popup: popup("u1", "agent"),
-            chosen: true,
-        });
+        let popup_event = agent_popup_event(PopupChange::Shown, true);
         let busy_event = event(Change::Busy {
             target: target("s1", "t1", TargetId::Pane("p1".into())),
             busy: true,
@@ -2075,10 +1962,7 @@ mod tests {
                 "454f4e5733008800e1000000100067312e313730303030303030303030302900000000000000230067312d303030303030303030303030303030303030303030303030303030303030303100000101000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100230067312d3030303030303030303030303030303030303030303030303030303030303031230067312d3030303030303030303030303030303030303030303030303030303030303031",
             ),
             (
-                SubscriptionMessage::Tabs(Tabs {
-                    workspace: "s1".into(),
-                    tabs: vec![tab("t1", &["p1"])],
-                }),
+                carried_tabs("s1", vec![tab("t1", &["p1"])]),
                 "454f4e5733008900350000000200733101000100010000000200743101002f00010200703100010002007031030073703103002f70310102007031000000000000",
             ),
             (
@@ -2102,11 +1986,7 @@ mod tests {
                 "454f4e5733008a00250000002a00000000000000060200733102007431000200703102007331010107007031202076696d",
             ),
             (
-                SubscriptionMessage::Gap(Gap {
-                    seq: 90,
-                    reason: GapReason::Overflow,
-                    snapshot: window_snapshot(),
-                }),
+                gap_message(90, window_snapshot()),
                 "454f4e5733008b00a80000005a000000000000000001000200733101300030313233343536373839616263646566303132333435363738396162636465663030303030303030303030303030303100000100000002007431010002007331020074310200703101000100230067312d3030303030303030303030303030303030303030303030303030303030303031230067312d3030303030303030303030303030303030303030303030303030303030303031",
             ),
             (
@@ -2217,37 +2097,8 @@ mod tests {
         }
         assert_eq!(largest_event, tab_event_bound);
 
-        let name = |prefix: &str, n: usize, length: usize| {
-            let name = format!("{prefix}{n}");
-            format!("{name}{}", "x".repeat(length - name.len()))
-        };
-        let attention = Some(Attention {
-            state: AttentionState::NeedsInput,
-            record: Some(AttentionRecord {
-                kind: Some(AttentionKind::Permission),
-                progress: Some(100),
-                app: "a".repeat(MAX_APP_BYTES),
-                name: "n".repeat(MAX_NAME_BYTES),
-                title: "t".repeat(MAX_TITLE_BYTES),
-                message: "m".repeat(MAX_STATUS_MESSAGE_BYTES),
-                changed_at: u64::MAX,
-                stale: true,
-                others: MAX_OTHER_RECORDS,
-            }),
-        });
-        let long_pane = |n: usize| {
-            let id = name("p", n, MAX_ID_BYTES);
-            Pane {
-                label: format!("{id}  {}", "🦀".repeat(MAX_PANE_NAME_CHARS)),
-                pinned_name: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
-                tag: Some("🦀".repeat(MAX_PANE_NAME_CHARS)),
-                id,
-                session: name("s", n, MAX_ID_BYTES),
-                endpoint: name("/", n, MAX_ENDPOINT_BYTES).into_bytes(),
-                live: true,
-                attention: attention.clone(),
-            }
-        };
+        let attention = maximal_attention();
+        let long_pane = |n| maximal_pane(n, attention.clone());
         // `columns` columns of `per_column` panes, numbered from `first`.
         let long_tab = |t: usize, first: usize, columns: usize, per_column: usize| {
             let columns: Vec<_> = (0..columns)
@@ -2262,7 +2113,7 @@ mod tests {
                 })
                 .collect();
             Tab {
-                id: name("t", t, MAX_ID_BYTES),
+                id: padded_name("t", t, MAX_ID_BYTES),
                 directory: vec![b'/'; MAX_DIRECTORY_BYTES],
                 pending: false,
                 selected_pane: Some(columns[0].expanded.clone()),
@@ -2292,45 +2143,29 @@ mod tests {
         // Neither side lets a TABS message past the session bound.
         tabs.tabs[0].columns[0].panes.push(long_pane(MAX_SESSIONS));
         let message = SubscriptionMessage::Tabs(tabs);
-        assert!(encode_subscription_message(&message).is_err());
-        assert!(decode_subscription_message(&forge(&message)).is_err());
+        assert_rejected(&message);
 
         // The longest snapshot head, with the longest caller.
         let long_target = |n: usize| TerminalTarget {
             workspace: long_workspace.clone(),
             tab: "t".repeat(MAX_ID_BYTES),
             id: TargetId::Popup("u".repeat(MAX_ID_BYTES)),
-            terminal: name("s", n, MAX_ID_BYTES),
+            terminal: padded_name("s", n, MAX_ID_BYTES),
         };
         let snapshot = WindowSnapshot {
             created_build: "g1-00000000000000000000000000000001".into(),
             active_build: "g1-00000000000000000000000000000001".into(),
             workspaces: (1..=MAX_WORKSPACES)
                 .map(|n| WorkspaceEntry {
-                    workspace: WorkspaceInfo {
-                        id: if n == MAX_WORKSPACES {
-                            long_workspace.clone()
-                        } else {
-                            format!("s{n}")
-                        },
-                        persistent_id: Some(format!("{n:0128x}")),
-                        registration_error: Some(Failure {
-                            code: "e".repeat(MAX_ID_BYTES),
-                            detail: "e".repeat(super::super::MAX_DETAIL_BYTES),
-                        }),
-                        name: Some("🦀".repeat(MAX_WORKSPACE_NAME_CHARS)),
-                        tab_count: MAX_TABS,
-                        attention: Some(AttentionState::NeedsInput),
-                        recency: (n - 1) as u8,
-                    },
-                    active_tab: name("t", n, MAX_ID_BYTES),
+                    workspace: maximal_workspace_info(n),
+                    active_tab: padded_name("t", n, MAX_ID_BYTES),
                 })
                 .collect(),
             attention_queue: (0..MAX_SESSIONS)
                 .map(|n| QueueItem {
                     workspace: long_workspace.clone(),
-                    tab: name("t", n / per_tab, MAX_ID_BYTES),
-                    target: name("p", n, MAX_ID_BYTES),
+                    tab: padded_name("t", n / per_tab, MAX_ID_BYTES),
+                    target: padded_name("p", n, MAX_ID_BYTES),
                     state: AttentionState::NeedsInput,
                 })
                 .collect(),
@@ -2355,19 +2190,14 @@ mod tests {
             }),
             subscribed_bound,
         );
-        check(
-            &SubscriptionMessage::Gap(Gap {
-                seq: u64::MAX,
-                reason: GapReason::Overflow,
-                snapshot: snapshot.clone(),
-            }),
-            gap_bound,
-        );
+        check(&gap_message(u64::MAX, snapshot.clone()), gap_bound);
 
         // The largest event: one tab holding every terminal, with the
         // longest tab order.
         let tab = long_tab(0, 0, MAX_COLUMNS, MAX_SESSIONS / MAX_COLUMNS);
-        let mut order: Vec<_> = (1..MAX_TABS).map(|t| name("t", t, MAX_ID_BYTES)).collect();
+        let mut order: Vec<_> = (1..MAX_TABS)
+            .map(|t| padded_name("t", t, MAX_ID_BYTES))
+            .collect();
         order.push(tab.id.clone());
         check(
             &event(Change::Tab {
@@ -2412,17 +2242,14 @@ mod tests {
                 .collect();
             tab
         };
-        let fits = SubscriptionMessage::Tabs(Tabs {
-            workspace: "s1".into(),
-            tabs: vec![with_popups(MAX_ENTRIES)],
-        });
-        let bytes = encode_subscription_message(&fits).unwrap();
-        assert_eq!(decode_subscription_message(&bytes).unwrap(), fits);
+        let fits = carried_tabs("s1", vec![with_popups(MAX_ENTRIES)]);
+        round_trip(
+            &fits,
+            encode_subscription_message,
+            decode_subscription_message,
+        );
         for over in [
-            SubscriptionMessage::Tabs(Tabs {
-                workspace: "s1".into(),
-                tabs: vec![with_popups(MAX_ENTRIES + 1)],
-            }),
+            carried_tabs("s1", vec![with_popups(MAX_ENTRIES + 1)]),
             event(Change::Tab {
                 change: TabChange::Directory,
                 workspace: "s1".into(),
@@ -2430,8 +2257,7 @@ mod tests {
                 tabs: None,
             }),
         ] {
-            assert!(encode_subscription_message(&over).is_err());
-            assert!(decode_subscription_message(&forge(&over)).is_err());
+            assert_rejected(&over);
         }
     }
     #[test]
