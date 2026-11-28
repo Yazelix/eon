@@ -472,20 +472,19 @@ fn zombies_neither_count_nor_hide() {
 /// dropped and the shell's report after it, in the same stream of output,
 /// survives. The job leaves a writer in its group that keeps the PTY full
 /// across the return, so the return lands inside a turn. The writer's output,
-/// screen fills and colored wide graphemes, costs the terminal far more than
-/// the writer, and it writes 512 bytes at a time, so the shell's report
-/// queues behind little output and lands in the turn that the return ended
-/// early. Without that early end, the first round failed in each of three
-/// runs; three rounds keep a miss unlikely on a busier machine.
+/// zero-scroll colored wide graphemes, costs the terminal far more than the
+/// writer, and `dd` writes 540 bytes at a time, so the shell's report queues
+/// behind little output and lands in the turn that the return ended early.
+/// A readiness marker ensures the stream is active before the job exits, and
+/// the writer loops until `reported` appears rather than running to a fixed
+/// EOF. Without that early end, the first round failed in each of three runs;
+/// three rounds keep a miss unlikely on a busier machine.
 fn detached_turns_end_at_a_return() {
     let directory = TempDir::new();
     let gate = Gate::new(&directory, "gate");
     let filler = directory.join("filler");
-    fs::write(
-        &filler,
-        "\x1b#8\x1b[38;5;196;48;5;21m\u{1F600}\x1b[0m".repeat(160 * 1024),
-    )
-    .expect("filler");
+    let unit = format!("\r\x1b[38;5;196;48;5;21m{}\x1b[0m", "\u{1F600}".repeat(39));
+    fs::write(&filler, unit.repeat(2048)).expect("filler");
     let (server, mut lease) = managed(
         &directory,
         "set -m\n\
@@ -493,8 +492,18 @@ fn detached_turns_end_at_a_return() {
          for round in 1 2 3; do\n\
            \"$BASH\" -c 'printf \"\\033]7501;state=blocked:kind=question:id=job%s\\007\" \"$0\"\n\
              read -r _ < \"$ORBIT_GATE\"\n\
-             { dd if=\"$ORBIT_FILLER\" bs=512 status=none; : > \"$ORBIT_DIR/streamed$0\"; \
+             { ( cat \"$ORBIT_FILLER\"\n\
+                 : > \"$ORBIT_DIR/writing$0\"\n\
+                 while [ ! -e \"$ORBIT_DIR/reported$0\" ] && [ -d \"$ORBIT_DIR\" ]; do\n\
+                   cat \"$ORBIT_FILLER\"\n\
+                 done ) 2>/dev/null | dd bs=540 status=none &\n\
+               writer=$!\n\
+               while [ ! -e \"$ORBIT_DIR/reported$0\" ] && [ -d \"$ORBIT_DIR\" ]; do sleep 0.01; done\n\
+               kill \"$writer\" 2>/dev/null || true\n\
+               wait 2>/dev/null || true\n\
+               : > \"$ORBIT_DIR/streamed$0\"\n\
                printf \"\\033]7501;state=done:id=end%s\\007\" \"$0\"; } &\n\
+             while [ ! -e \"$ORBIT_DIR/writing$0\" ] && [ -d \"$ORBIT_DIR\" ]; do sleep 0.01; done\n\
              sleep 0.05' \"$round\"\n\
            printf '\\033]7501;state=working:id=shell%s\\007' \"$round\"\n\
            : > \"$ORBIT_DIR/reported$round\"\n\
