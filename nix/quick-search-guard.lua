@@ -6,13 +6,10 @@
 -- frame, and a pick or Esc is reported while Yazi is still hidden, so Yazi does
 -- not redraw Files before the pane. Whether Venus shows a frame is for the
 -- installed proof; real fzf, Yazi and Orbit are in the runtime's real-PTY tests.
--- It also checks that no keymap given binds the runtime's leave key,
--- Ctrl+Alt+Shift+PageDown: a copy that reaches Yazi after fzf has ended must do
--- nothing there.
--- Usage: lua quick-search-guard.lua PLUGIN MARKER [KEYMAP...]
 local plugin, marker = arg[1], arg[2]
--- Stand-ins for the runtime's arguments, which its own tests check.
-local fzf_args = { "--with-shell=/bin/sh -c", "--bind=start:execute-silent(mark)", "--bind=key:become(exit 11)" }
+-- Stand-ins for the runtime's arguments and leave status, which its own tests check.
+local leave_status = "42"
+local fzf_args = { "--with-shell=/bin/sh -c", "--bind=start:execute-silent(mark)", "--bind=key:become(exit " .. leave_status .. ")" }
 local marker_set = true
 local startup_notice
 
@@ -118,6 +115,7 @@ local getenv = os.getenv
 os.getenv = function(name)
   if name == "EON_QUICK_MARKER" then return marker_set and marker or "" end
   if name == "EON_QUICK_FZF_ARGS" then return table.concat(fzf_args, "\n") end
+  if name == "EON_QUICK_LEAVE_STATUS" then return leave_status end
   if name == "EON_FILES_NOTICE" then return startup_notice end
   return getenv(name)
 end
@@ -133,10 +131,10 @@ local function check(condition, message)
   end
 end
 
--- The runtime's switch to Files ends fzf with status 11. A marker an earlier
--- fzf left behind is gone before this one starts.
+-- The runtime's switch to Files ends fzf with EON_QUICK_LEAVE_STATUS. A marker
+-- an earlier fzf left behind is gone before this one starts.
 io.open(marker, "w"):close()
-fzf_wait = function() return { status = { code = 11, success = false }, stdout = "", stderr = "" } end
+fzf_wait = function() return { status = { code = tonumber(leave_status), success = false }, stdout = "", stderr = "" } end
 local first = invocation()
 check(select(2, coroutine.resume(first)) == "fzf up", "the first quick search starts fzf")
 check(marker_at_spawn == false, "a stale marker is removed before fzf starts")
@@ -196,23 +194,23 @@ check(spawned == 3, "a later quick search starts its own fzf")
 coroutine.resume(again)
 
 -- How each fzf exit is reported, and whether Yazi was still hidden then.
-local function ends(code, stdout)
+local function ends(code, stdout, stderr)
   fzf_wait = function()
-    return { status = { code = code, success = code == 0 }, stdout = stdout, stderr = "" }
+    return { status = { code = code, success = code == 0 }, stdout = stdout, stderr = stderr or "" }
   end
   reports = {}
-  local token = "12-345-987"
-  local pending = request(token)
+  local token = marker_set and "12-345-987" or nil
+  local pending = token and request(token)
   before_report = function()
-    check(not exists(pending) and not exists(marker),
+    check((not pending or not exists(pending)) and not exists(marker),
       "a callback into Runtime cannot hold its own startup or ready marker")
   end
   local run = invocation(token)
   coroutine.resume(run)
   coroutine.resume(run)
   before_report = nil
-  check(coroutine.status(run) == "dead", "quick search ends after status " .. code)
-  check(not hidden, "Yazi shows again after status " .. code)
+  check(coroutine.status(run) == "dead", "quick search ends after status " .. tostring(code))
+  check(not hidden, "Yazi shows again after status " .. tostring(code))
   return reports[1], #reports
 end
 local report, count = ends(0, "\n/picked\n")
@@ -224,10 +222,6 @@ check(report[3], "Esc is reported while Yazi is hidden")
 report, count = ends(0, "tab\n/browsed\n")
 check(count == 1 and report[1] == "cd" and report[2] == "/browsed", "Tab moves Files")
 check(not report[3], "Tab moves Files after Yazi shows again")
-for _, code in ipairs({ 1, 11 }) do
-  report, count = ends(code, "")
-  check(count == 0, "status " .. code .. " leaves Files where it is")
-end
 -- A report that raises still shows Yazi again, and says why.
 report_fails = true
 local before = #notes
@@ -251,7 +245,7 @@ for _, argument in ipairs(fzf_arguments) do
   check(argument:sub(1, 9) == "--header=", "no runtime argument without a marker: " .. argument)
 end
 marker_set = true
-fzf_wait = function() return { status = { code = 11, success = false }, stdout = "", stderr = "" } end
+fzf_wait = function() return { status = { code = tonumber(leave_status), success = false }, stdout = "", stderr = "" } end
 local active = invocation()
 check(select(2, coroutine.resume(active)) == "fzf up", "the older search opens")
 local duplicate = request("12-345-1")
@@ -318,31 +312,18 @@ state = {}
 request("12-345-9")
 check_header("12-345-9", startup_notice)
 
--- The leave key in Yazi's notation: C, A and S on PageDown, in any order.
-local function binds_leave_key(text)
-  for token in text:gmatch("<([^>]+)>") do
-    local parts = {}
-    for part in token:gmatch("[^-]+") do parts[#parts + 1] = part end
-    if #parts > 1 and parts[#parts]:lower() == "pagedown" then
-      local held = {}
-      for i = 1, #parts - 1 do held[parts[i]] = true end
-      if held.C and held.A and held.S then return true end
-    end
-  end
-  return false
+-- Status 1, EON_QUICK_LEAVE_STATUS bounds (3..=125), mismatch, unset, bare mode, and signal exit.
+for _, c in ipairs({
+  { "42", 1, true, true }, { "3", 3, true, true }, { "125", 125, true, true }, { "42", 42, true, true },
+  { "42", 43, true, false }, { "2", 2, true, false }, { "126", 126, true, false },
+  { "127", 127, true, false }, { "128", 128, true, false }, { "255", 255, true, false },
+  { nil, 42, true, false }, { "42", 42, false, false }, { nil, nil, true, false }, { "42", nil, true, false },
+}) do
+  leave_status, marker_set = c[1], c[3]
+  local n0, s0 = #notes, spawned
+  report, count = ends(c[2], "", "fzf-sentinel-err")
+  local tag = tostring(c[1]) .. "/" .. tostring(c[2]) .. "/marker=" .. tostring(c[3])
+  check(spawned == s0 + 1 and count == 0 and #notes == n0 + (c[4] and 0 or 1)
+    and (c[4] or notes[#notes] == "fzf-sentinel-err"), "leave case " .. tag)
 end
-for _, bound in ipairs({ "<C-A-S-PageDown>", "<S-C-A-PageDown>", "<A-S-C-D-PageDown>", "<C-A-S-pagedown>" }) do
-  check(binds_leave_key('{ on = "' .. bound .. '", run = "x" }'), "the check finds " .. bound)
-end
-for _, free in ipairs({ "<PageDown>", "<S-PageDown>", "<C-PageDown>", "<C-A-PageDown>", "<C-A-S-PageUp>" }) do
-  check(not binds_leave_key('{ on = "' .. free .. '", run = "x" }'), "the check passes " .. free)
-end
-for i = 3, #arg do
-  local file = assert(io.open(arg[i]))
-  local text = file:read("a")
-  file:close()
-  check(#text > 0, "keymap " .. arg[i] .. " was read")
-  check(not binds_leave_key(text), "keymap " .. arg[i] .. " binds the leave key")
-end
-check(#arg >= 4, "both keymaps were checked")
 print("quick-search guard: ok")

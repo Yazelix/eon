@@ -850,13 +850,15 @@
             EON_TEST_QUICK_YAZI = "${yaziPackage}/bin/yazi";
             EON_TEST_QUICK_ZOXIDE = "${zoxidePackage}/bin/zoxide";
             EON_TEST_QUICK_FILES_CONFIG = "${filesPopupConfig}";
+            EON_TEST_QUICK_YAZI_KEYMAP = "${yazi}/yazi-config/preset/keymap-default.toml";
           };
 
           # The Files popup's Yazi and its quick search: the EON-C18 pair, which a pending tab
           # opens on quick search, with files opening in a new editor pane. Nothing writes
           # Zoxide history; Eon records a pick. The runtime switches screens through
           # `ya emit-to`, the marker fzf creates at $EON_QUICK_MARKER, and a reserved key
-          # bound in $EON_QUICK_FZF_ARGS; quick search runs no listener (EON-C10).
+          # bound in $EON_QUICK_FZF_ARGS (exit status $EON_QUICK_LEAVE_STATUS); quick search
+          # runs no listener (EON-C10).
           filesPopupConfig = pkgs.runCommand "eon-files-popup-config" { } ''
             mkdir -p "$out/plugins/quick-search.yazi" "$out/plugins/tab-folder.yazi" "$out/plugins/smart-enter.yazi" "$out/plugins/close.yazi"
             cat > "$out/yazi.toml" <<'EOF'
@@ -964,6 +966,13 @@
               return reopen
             end)
 
+            -- Consumer guard for EON_QUICK_LEAVE_STATUS; pair::LEAVE_STATUS's const assert!
+            -- in eon-runtime owns the 3..=125 range.
+            local function parse_leave_status(raw)
+              local n = raw and raw:match("^[1-9][0-9]*$") and tonumber(raw)
+              if n and n >= 3 and n <= 125 then return n end
+            end
+
             local function search(marker, token, request)
               -- A marker an earlier fzf left says nothing: it goes before anything here can
               -- fail, so a failed search never leaves the runtime taking Files for quick
@@ -978,8 +987,9 @@
 
               -- The runtime's fzf arguments, one per line: fzf's start action creates the
               -- marker that tells the runtime quick search is up, and its reserved key ends
-              -- fzf with status 11 to switch to Files.
+              -- fzf with $EON_QUICK_LEAVE_STATUS to switch to Files.
               local arguments = {}
+              local leave_status = marker and parse_leave_status(os.getenv("EON_QUICK_LEAVE_STATUS")) or nil
               if marker then
                 for argument in (os.getenv("EON_QUICK_FZF_ARGS") or ""):gmatch("[^\n]+") do
                   arguments[#arguments + 1] = argument
@@ -1038,9 +1048,9 @@
                 fail("zoxide query exited with status " .. tostring(ended.code))
               end
               if not output then return fail(spawn_err or wait_err) end
-              -- 1 is Tab with no result, and 11 the runtime's switch to Files: Files stays
-              -- where it is.
-              if code == 130 or code == 1 or code == 11 then return end
+              -- 1 is Tab with no result, and $EON_QUICK_LEAVE_STATUS the runtime's switch
+              -- to Files: Files stays where it is.
+              if code == 130 or code == 1 or (leave_status and code == leave_status) then return end
               if not output.status.success then return fail(output.stderr) end
               if target and key == "tab" then ya.emit("cd", { target, raw = true }) end
             end
@@ -2032,16 +2042,15 @@
             lint = lintCheck;
             darwin-clippy-wrappers = darwinClippyWrappersCheck;
             pin-latest-release = pinLatestReleaseCheck;
-            # The pair's quick search against a slow stand-in fzf (EON-C18), its marker
-            # removed before fzf starts and after it ends, a pick or Esc reported while
-            # Yazi is still hidden, and the leave key bound in neither Eon's Files keymap
-            # nor Yazi's preset.
+            # The pair's quick search plugin behavior against a slow stand-in fzf (EON-C18),
+            # its marker removed before fzf starts and after it ends, and a pick or Esc
+            # reported while Yazi is still hidden. Packaged keymap freedom against
+            # pair::LEAVE_KEY runs in eon-runtime's tests (eon-tests and Darwin workspace-tests).
             quick-search-guard = pkgs.runCommand "eon-quick-search-guard" {
               nativeBuildInputs = [ pkgs.lua5_4 ];
             } ''
               lua ${./nix/quick-search-guard.lua} \
-                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/terminal-2.quick" \
-                ${filesPopupConfig}/keymap.toml ${yazi}/yazi-config/preset/keymap-default.toml
+                ${filesPopupConfig}/plugins/quick-search.yazi/main.lua "$TMPDIR/terminal-2.quick"
               touch "$out"
             '';
           } // lib.optionalAttrs pkgs.stdenv.isLinux {

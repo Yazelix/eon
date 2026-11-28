@@ -110,7 +110,7 @@ impl Pair {
                 root.join("eon.log").display()
             ),
         );
-        fs::write(root.join("fzf-args"), FZF_ARGUMENTS.join("\n")).unwrap();
+        fs::write(root.join("fzf-args"), fzf_arguments().join("\n")).unwrap();
         let yazi = tool("EON_TEST_QUICK_YAZI");
         // Only the two clients within a shared-bus test use the same socket.
         let bus = start.shared_bus.unwrap_or_else(|| root.join("r"));
@@ -145,7 +145,7 @@ impl Pair {
                 "#!/bin/sh\n\
                  export XDG_RUNTIME_DIR='{bus}' YAZI_CONFIG_HOME='{config}' _ZO_DATA_DIR='{root}/zoxide'\n\
                  export PATH='{root}/bin':\"$PATH\"\n\
-                 export EON_QUICK_MARKER='{marker}' EON_QUICK_FZF_ARGS=\"$(cat '{root}/fzf-args')\"\n\
+                 export {marker_var}='{marker}' {fzf_args_var}=\"$(cat '{root}/fzf-args')\" {leave_status_var}='{leave_status}'\n\
                  export EON_FILES_CLI='{root}/bin/eon' EON_TAB=t1 EON_TERMINAL=terminal-1.g1\n\
                  {quick}{notice}\
                  while [ -e '{gate}' ]; do sleep 0.05; done\n\
@@ -154,6 +154,10 @@ impl Pair {
                 bus = bus.display(),
                 gate = gate.display(),
                 config = tool("EON_TEST_QUICK_FILES_CONFIG").display(),
+                marker_var = crate::managed_environment::QUICK_MARKER_VARIABLE,
+                fzf_args_var = crate::managed_environment::QUICK_FZF_ARGS_VARIABLE,
+                leave_status_var = crate::managed_environment::QUICK_LEAVE_STATUS_VARIABLE,
+                leave_status = LEAVE_STATUS,
                 marker = marker.display(),
                 files = files.display(),
                 yazi = yazi.display(),
@@ -887,7 +891,7 @@ fn quick_search_keys_pick_browse_close_and_leave_with_a_query() {
             let command = fs::read(entry.path().join("cmdline")).unwrap_or_default();
             let command = String::from_utf8_lossy(&command);
             if command.contains(&*pair.marker.to_string_lossy())
-                || command.contains("ctrl-alt-shift-page-down:become")
+                || command.contains(&fzf_arguments()[2])
             {
                 seen += 1;
                 assert!(!command.contains("--listen"), "{command}");

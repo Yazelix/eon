@@ -3083,6 +3083,8 @@ pub(crate) const QUICK_MARKER_VARIABLE: &str = "EON_QUICK_MARKER";
 /// The fzf arguments the pair's quick search adds, one per line: the start
 /// action that creates the marker and the binding of the key that leaves.
 pub(crate) const QUICK_FZF_ARGS_VARIABLE: &str = "EON_QUICK_FZF_ARGS";
+/// The fzf exit status that means the runtime's leave key switched to Files.
+pub(crate) const QUICK_LEAVE_STATUS_VARIABLE: &str = "EON_QUICK_LEAVE_STATUS";
 /// The admitted startup pair's first quick-search header, empty when there are no peers to show.
 pub(crate) const FILES_NOTICE_VARIABLE: &str = "EON_FILES_NOTICE";
 
@@ -3093,6 +3095,7 @@ fn pair_launch_flags<'a>(command: &mut Command, mut arguments: &'a [OsString]) -
         .env_remove(FILES_START_VARIABLE)
         .env_remove(QUICK_MARKER_VARIABLE)
         .env_remove(QUICK_FZF_ARGS_VARIABLE)
+        .env_remove(QUICK_LEAVE_STATUS_VARIABLE)
         .env_remove(FILES_NOTICE_VARIABLE);
     loop {
         match arguments {
@@ -3101,10 +3104,16 @@ fn pair_launch_flags<'a>(command: &mut Command, mut arguments: &'a [OsString]) -
                 arguments = rest;
             }
             [flag, marker, rest @ ..] if flag == "--eon-quick-marker" => {
-                command.env(QUICK_MARKER_VARIABLE, marker).env(
-                    QUICK_FZF_ARGS_VARIABLE,
-                    crate::pair::FZF_ARGUMENTS.join("\n"),
-                );
+                command
+                    .env(QUICK_MARKER_VARIABLE, marker)
+                    .env(
+                        QUICK_FZF_ARGS_VARIABLE,
+                        crate::pair::fzf_arguments().join("\n"),
+                    )
+                    .env(
+                        QUICK_LEAVE_STATUS_VARIABLE,
+                        crate::pair::LEAVE_STATUS.to_string(),
+                    );
                 arguments = rest;
             }
             _ => return arguments,
@@ -6440,7 +6449,11 @@ label = "Browse"
         );
         assert_eq!(
             command_environment(&command, "EON_QUICK_FZF_ARGS"),
-            Some(Some(OsStr::new(&crate::pair::FZF_ARGUMENTS.join("\n"))))
+            Some(Some(OsStr::new(&crate::pair::fzf_arguments().join("\n"))))
+        );
+        assert_eq!(
+            command_environment(&command, "EON_QUICK_LEAVE_STATUS"),
+            Some(Some(OsStr::new(&crate::pair::LEAVE_STATUS.to_string())))
         );
         assert_eq!(
             command_environment(&command, "EON_FILES_NOTICE"),
@@ -6455,6 +6468,7 @@ label = "Browse"
             "EON_FILES_START",
             "EON_QUICK_MARKER",
             "EON_QUICK_FZF_ARGS",
+            "EON_QUICK_LEAVE_STATUS",
             "EON_FILES_NOTICE",
         ] {
             assert_eq!(command_environment(&command, variable), Some(None));

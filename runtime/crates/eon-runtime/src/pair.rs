@@ -59,6 +59,12 @@ const LEAVE_KEY: (PhysicalKey, Modifiers) = (
         .union(Modifiers::SHIFT),
 );
 
+/// Exit status fzf returns when `LEAVE_KEY` ends it to switch back to Files.
+/// Owned here and exported to the quick-search plugin via `EON_QUICK_LEAVE_STATUS`.
+pub(crate) const LEAVE_STATUS: u8 = 11;
+// fzf owns 0..=2 and 130, `sh` owns 126..=127, and signals are 128+.
+const _: () = assert!(LEAVE_STATUS >= 3 && LEAVE_STATUS <= 125);
+
 /// The lease input that leaves quick search.
 pub(crate) fn leave_input() -> LeaseInput {
     LeaseInput::key(LEAVE_KEY.0, LEAVE_KEY.1)
@@ -68,13 +74,15 @@ pub(crate) fn leave_input() -> LeaseInput {
 /// `EON_QUICK_FZF_ARGS`: fzf's start action, which runs once fzf holds the
 /// terminal in raw mode and before it reads input, writes the request token
 /// to `$EON_QUICK_MARKER`. Keep the marker empty if initial startup was
-/// cancelled before readiness. The leave key ends fzf with status 11.
+/// cancelled before readiness. The leave key ends fzf with `LEAVE_STATUS`.
 /// Both run under `/bin/sh`, whatever the person's shell.
-pub(crate) const FZF_ARGUMENTS: [&str; 3] = [
-    "--with-shell=/bin/sh -c",
-    "--bind=start:execute-silent(if [ \"$EON_QUICK_TOKEN\" != initial ] || [ -f \"$EON_QUICK_MARKER.initial.pending\" ]; then printf '%s' \"$EON_QUICK_TOKEN\"; fi > \"$EON_QUICK_MARKER\")",
-    "--bind=ctrl-alt-shift-page-down:become(exit 11)",
-];
+pub(crate) fn fzf_arguments() -> [String; 3] {
+    [
+        "--with-shell=/bin/sh -c".into(),
+        "--bind=start:execute-silent(if [ \"$EON_QUICK_TOKEN\" != initial ] || [ -f \"$EON_QUICK_MARKER.initial.pending\" ]; then printf '%s' \"$EON_QUICK_TOKEN\"; fi > \"$EON_QUICK_MARKER\")".into(),
+        format!("--bind=ctrl-alt-shift-page-down:become(exit {LEAVE_STATUS})"),
+    ]
+}
 
 /// The Yazi DDS client ID of the pair whose terminal listens at `endpoint`.
 /// The endpoint names the window, generation and terminal, so pairs of
@@ -1289,17 +1297,18 @@ mod tests {
     }
 
     /// The fzf arguments quick search adds: its start marks it up and the
-    /// reserved key ends it with status 11, both under `/bin/sh`; and the key
-    /// Runtime writes is the one fzf binds, which Orbit's lease takes.
+    /// reserved key ends it with `LEAVE_STATUS`, both under `/bin/sh`; and the
+    /// key Runtime writes is the one fzf binds, which Orbit's lease takes.
     #[test]
     fn the_leave_key_is_the_one_fzf_binds_and_the_lease_takes() {
-        assert_eq!(FZF_ARGUMENTS[0], "--with-shell=/bin/sh -c");
-        assert!(FZF_ARGUMENTS[1].starts_with("--bind=start:execute-silent("));
-        assert!(FZF_ARGUMENTS[1].contains("\"$EON_QUICK_MARKER\""));
-        assert!(FZF_ARGUMENTS[1].contains("\"$EON_QUICK_TOKEN\""));
+        let arguments = fzf_arguments();
+        assert_eq!(arguments[0], "--with-shell=/bin/sh -c");
+        assert!(arguments[1].starts_with("--bind=start:execute-silent("));
+        assert!(arguments[1].contains("\"$EON_QUICK_MARKER\""));
+        assert!(arguments[1].contains("\"$EON_QUICK_TOKEN\""));
         assert_eq!(
-            FZF_ARGUMENTS[2],
-            "--bind=ctrl-alt-shift-page-down:become(exit 11)"
+            arguments[2],
+            format!("--bind=ctrl-alt-shift-page-down:become(exit {LEAVE_STATUS})")
         );
         let LeaseInput::Key { key, modifiers } = leave_input() else {
             panic!("the leave is a key");
@@ -1313,8 +1322,108 @@ mod tests {
                     .union(Modifiers::SHIFT)
             ))
         );
-        for argument in FZF_ARGUMENTS {
+        for argument in arguments {
             assert!(!argument.contains('\n'));
+        }
+    }
+
+    fn check_keymap_toml(text: &str, t: (&str, Modifiers)) -> Result<usize, String> {
+        use toml::Value;
+        fn check(tok: &str, t: (&str, Modifiers), n: &mut usize) -> Result<(), String> {
+            let (mut mods, mut key) = (Modifiers::empty(), tok);
+            if let Some(mut rest) = tok.strip_prefix('<').and_then(|s| s.strip_suffix('>')) {
+                while rest.len() > 2 && rest.as_bytes()[1] == b'-' {
+                    mods = mods.union(match rest.as_bytes()[0].to_ascii_lowercase() {
+                        b'c' => Modifiers::CTRL,
+                        b'a' => Modifiers::ALT,
+                        b's' => Modifiers::SHIFT,
+                        b'd' => Modifiers::SUPER,
+                        _ => break,
+                    });
+                    rest = &rest[2..];
+                }
+                key = rest;
+            }
+            if key.is_empty() {
+                return Err("empty `on` key".into());
+            }
+            *n += 1;
+            if key.eq_ignore_ascii_case(t.0) && mods == t.1 {
+                return Err(format!("binds leave key via {tok:?}"));
+            }
+            Ok(())
+        }
+        fn visit(v: &Value, t: (&str, Modifiers), n: &mut usize) -> Result<(), String> {
+            match v {
+                Value::Array(xs) => xs.iter().try_for_each(|x| visit(x, t, n)),
+                Value::Table(map) => map.iter().try_for_each(|(k, v)| match (k.as_str(), v) {
+                    ("on", Value::String(s)) => check(s, t, n),
+                    ("on", Value::Array(xs)) if xs.is_empty() => Err("empty `on` chord".into()),
+                    ("on", Value::Array(xs)) => xs
+                        .iter()
+                        .try_for_each(|x| check(x.as_str().ok_or("non-string `on`")?, t, n)),
+                    ("on", _) => Err("`on` must be a string or array".into()),
+                    _ => visit(v, t, n),
+                }),
+                _ => Ok(()),
+            }
+        }
+        let mut n = 0;
+        visit(&toml::from_str(text).map_err(|e| e.to_string())?, t, &mut n)?;
+        (n > 0)
+            .then_some(n)
+            .ok_or_else(|| "no `on` bindings".into())
+    }
+
+    /// Neither Eon's packaged Files keymap nor Yazi's preset binds `LEAVE_KEY`.
+    #[test]
+    fn packaged_keymaps_leave_the_leave_key_free() {
+        assert_eq!(LEAVE_KEY.0, PhysicalKey::PAGE_DOWN, "update Yazi key name");
+        let check = |doc: &str| check_keymap_toml(doc, ("pagedown", LEAVE_KEY.1));
+        let is_bound = |doc: &str| matches!(check(doc), Err(e) if e.starts_with("binds leave key"));
+        let bound = "<C-A-S-PageDown> <S-C-A-PageDown> <C-A-S-pagedown> <c-a-s-pagedown>";
+        for tok in bound.split_whitespace() {
+            assert!(is_bound(&format!("[[m]]\non = {tok:?}")));
+        }
+        assert!(is_bound("[[m]]\non = [\"g\", \"<C-A-S-PageDown>\"]"));
+        let free = "<A-S-C-D-PageDown> <PageDown> <S-PageDown> <C-PageDown> <C-A-PageDown> <C-A-S-PageUp> q <Enter> <C-->";
+        for tok in free.split_whitespace() {
+            assert_eq!(check(&format!("[[m]]\non = {tok:?}")), Ok(1));
+        }
+        assert!(check("[[bad").is_err());
+        assert_eq!(check(""), Err("no `on` bindings".into()));
+        for (rhs, want) in [
+            ("\"\"", "empty `on` key"),
+            ("\"<>\"", "empty `on` key"),
+            ("[]", "empty `on` chord"),
+        ] {
+            for prefix in ["", "[[m]]\non = \"q\"\n"] {
+                let doc = format!("{prefix}[[m]]\non = {rhs}");
+                assert_eq!(check(&doc), Err(want.into()), "{doc}");
+            }
+        }
+        let path = |v| PathBuf::from(std::env::var_os(v).unwrap_or_else(|| panic!("{v} unset")));
+        for file in [
+            path("EON_TEST_QUICK_FILES_CONFIG").join("keymap.toml"),
+            path("EON_TEST_QUICK_YAZI_KEYMAP"),
+        ] {
+            let text = fs::read_to_string(&file).unwrap();
+            assert!(check(&text).unwrap_or_else(|e| panic!("{} {e}", file.display())) > 0);
+        }
+    }
+
+    /// The packaged plugin reads the variables Runtime exports.
+    #[test]
+    fn packaged_quick_search_plugin_reads_runtime_env_variables() {
+        use crate::managed_environment as me;
+        let root = PathBuf::from(std::env::var_os("EON_TEST_QUICK_FILES_CONFIG").expect("unset"));
+        let text = fs::read_to_string(root.join("plugins/quick-search.yazi/main.lua")).unwrap();
+        for var in [
+            me::QUICK_MARKER_VARIABLE,
+            me::QUICK_FZF_ARGS_VARIABLE,
+            me::QUICK_LEAVE_STATUS_VARIABLE,
+        ] {
+            assert!(text.contains(&format!("os.getenv(\"{var}\")")), "{var}");
         }
     }
 

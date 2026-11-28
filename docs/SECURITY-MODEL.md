@@ -179,13 +179,14 @@ endpoint, and Runtime left Quick search with an unauthenticated HTTP POST of
 `become` through a shell, so any client that reached the socket could run host
 commands outside its sandbox: finding 18, a route to finding 5's host
 execution outside the terminal-content switch. Now fzf binds the reserved key
-Ctrl+Alt+Shift+PageDown to `become(exit 11)`, and Runtime writes that key
-through Orbit's management lease (ORB-C5's non-text key input), which only the
-supervisor holds. fzf's start action creates a marker file beside the terminal
-endpoint so Runtime knows Quick search is up; the marker grants nothing. The
-key produces no text, and no packaged Files binding uses it, so a copy that
-reaches Yazi after fzf has ended changes nothing there beyond dismissing a
-pending chord's hint (`runtime/crates/eon-runtime/src/pair.rs`,
+Ctrl+Alt+Shift+PageDown to `become(exit <pair::LEAVE_STATUS>)`, Runtime supplies
+`EON_QUICK_LEAVE_STATUS` alongside `EON_QUICK_FZF_ARGS` to `flake.nix`'s
+quick-search plugin, and Runtime writes that key through Orbit's management lease
+(ORB-C5's non-text key input), which only the supervisor holds. fzf's start action
+creates a marker file beside the terminal endpoint so Runtime knows Quick search
+is up; the marker grants nothing. The key produces no text, and no packaged Files
+binding uses it, so a copy that reaches Yazi after fzf has ended changes nothing
+there beyond dismissing a pending chord's hint (`runtime/crates/eon-runtime/src/pair.rs`,
 `flake.nix` quick-search plugin).
 
 ## Agent launch, credentials and context
