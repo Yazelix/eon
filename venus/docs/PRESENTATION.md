@@ -586,6 +586,11 @@ request, and the window still opens.
 
 ## Agents sidebar
 
+The Agents card heading adapts its text colour to the sidebar's terminal
+background and opacity. It uses an opaque bar fill when one text colour
+cannot stay legible across the translucent backdrop or the compact framed
+title's edge.
+
 Sidebar and attention inbox rows identify Claude Code with Anthropic's standalone
 Clawd symbol, Codex with a colour vector of Codex's symbol, OpenCode
 (`app: "opencode"`) with its official transparent mark, and exact Antigravity

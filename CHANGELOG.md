@@ -5,6 +5,8 @@ installation, and proven contract changes.
 
 ## Unreleased
 
+- The Agents sidebar heading adapts to light and dark terminal backgrounds
+  (`eon-h69sg`).
 - Orbit publishes its presentation socket once it is listening. Standalone
   presentation socket names beginning with `~` are reserved (`eon-fsxwy`).
 - Pressing the Sessions shortcut twice confirms the picker even when the

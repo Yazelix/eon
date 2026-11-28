@@ -2701,6 +2701,16 @@ impl Renderer {
         );
         if let Some(sidebar) = workspace.sidebar() {
             // The card's translucent background and outline are drawn with the pane cards'.
+            let background = backgrounds
+                .last()
+                .copied()
+                .unwrap_or(palette::DARK.terminal_fallback);
+            let backing = Backing::card(
+                background,
+                self.background_opacity,
+                self.config.format.is_srgb(),
+            );
+            let primary = palette::DARK.primary_text;
             let padding = self.metrics.padding;
             let text_height = chrome_title_metrics(self.metrics).text_height;
             let width = (sidebar.width - padding * 2.0).max(0.0);
@@ -2712,15 +2722,24 @@ impl Renderer {
             let stroke = physical_outline_width(self.border_width, self.metrics.scale);
             let tab = title_tabs.last().and_then(Option::as_ref);
             let hide = workspace.heading_action(crate::HeadingAction::HideSidebar);
+            let bar = palette::DARK.bar_background;
+            // A compact framed title crosses from the opaque frame into the card.
+            let crosses_frame = self.pane_frames && tab.is_none();
+            let adapted = blend_to_contrast_pair(primary, backing.surfaces(), 4.5)
+                .filter(|&ink| !crosses_frame || contrast_ratio(ink, bar) >= 4.5);
+            let title_color = adapted.unwrap_or(primary);
             let gap = if let Some(tab) = tab {
-                self.build_frame_title(&tab.title, row, area, palette::DARK.primary_text, stroke)
+                self.build_frame_title(&tab.title, row, area, title_color, stroke)
             } else {
                 // A compact title stops before the button.
                 let width = hide.map_or(width, |hide| {
                     (hide.left - row.left - padding * 2.0).max(0.0)
                 });
-                self.build_border_title(SIDEBAR_TITLE, row, area, width, palette::DARK.primary_text)
+                self.build_border_title(SIDEBAR_TITLE, row, area, width, title_color)
             };
+            if adapted.is_none() && gap.width > padding {
+                rectangles.push_rounded(gap, tokens::inner_radius(self.metrics), bar);
+            }
             // Without its notch the button sits in a gap in the top edge.
             let button_gap = hide
                 .filter(|_| tab.is_none_or(|tab| tab.action.is_none()))
@@ -2760,12 +2779,9 @@ impl Renderer {
                 rectangles,
                 crate::HeadingAction::HideSidebar,
                 "–",
-                palette::DARK.primary_text,
+                primary,
                 area,
-                backgrounds
-                    .last()
-                    .copied()
-                    .unwrap_or(palette::DARK.terminal_fallback),
+                background,
             );
             let list = workspace.sidebar_list;
             if workspace.sidebar_empty() {
@@ -2782,11 +2798,7 @@ impl Renderer {
                 );
             }
             rectangles.clip = Some(list);
-            let background = backgrounds
-                .last()
-                .copied()
-                .unwrap_or(palette::DARK.terminal_fallback);
-            let heading_name = blend_to_contrast(palette::DARK.primary_text, background, 4.5);
+            let heading_name = blend_to_contrast(primary, background, 4.5);
             let heading_number = blend_to_contrast(palette::DARK.pane_id, background, 4.5);
             for heading in &workspace.sidebar_headings {
                 let first = self.text.len();
@@ -2809,14 +2821,9 @@ impl Renderer {
                     );
                 }
             }
-            let card = Backing::card(
-                background,
-                self.background_opacity,
-                self.config.format.is_srgb(),
-            );
             for row in workspace.sidebar_rows() {
                 let hovered = self.header.hovers(WorkspaceFocus::Sidebar, &row.target);
-                self.push_attention_row(row, list, hovered, card, background, rectangles);
+                self.push_attention_row(row, list, hovered, backing, background, rectangles);
             }
             rectangles.clip = None;
             if let Some(track) = workspace.sidebar_scroll_track(self.metrics, stroke) {
@@ -5091,9 +5098,7 @@ mod tests {
         }
     }
 
-    #[test]
-    fn pane_header_labels_contrast_with_their_painted_backing() {
-        let size = PhysicalSize::new(1280, 800);
+    fn title_contrast_renderer(size: PhysicalSize<u32>) -> Renderer {
         let (device, queue) = wgpu::Device::noop(&wgpu::DeviceDescriptor::default());
         let mut renderer = Renderer::hosted(
             device,
@@ -5105,6 +5110,87 @@ mod tests {
         )
         .unwrap();
         renderer.background_opacity = 0.8;
+        renderer
+    }
+
+    #[test]
+    fn agents_heading_contrasts_with_its_own_card() {
+        let size = PhysicalSize::new(1280, 800);
+        let mut renderer = title_contrast_renderer(size);
+        let snapshot = popup_sidebar_snapshot();
+        let metrics = renderer.metrics();
+        let workspace =
+            WorkspaceScene::from_snapshot(&snapshot, size, metrics, 0.0, 0.0, |_, text| {
+                renderer.fit_tab_text(text)
+            });
+        let dark = palette::DARK.terminal_fallback;
+        let light = grey(255);
+        for (frames, has_tab) in [(true, true), (true, false), (false, false)] {
+            renderer.pane_frames = frames;
+            let mut title_tabs = renderer.workspace_title_tabs(&workspace);
+            let pane_tabs = renderer.workspace_pane_tabs(&workspace);
+            assert_eq!(title_tabs.last().unwrap().is_some(), frames);
+            if !has_tab {
+                *title_tabs.last_mut().unwrap() = None;
+            }
+            let compact = frames && !has_tab;
+            for (opacity, pane_fill, sidebar_fill, opaque_pill) in [
+                (0.8, dark, light, compact),
+                (0.8, light, dark, false),
+                (0.1, dark, light, true),
+                (0.1, light, dark, true),
+            ] {
+                renderer.background_opacity = opacity;
+                renderer.text.clear();
+                let mut batch = RectangleBatch::new(size.width, size.height);
+                renderer.build_workspace(
+                    &workspace,
+                    WorkspaceFocus::Terminal,
+                    &mut batch,
+                    &[pane_fill, sidebar_fill],
+                    &title_tabs,
+                    &pane_tabs,
+                );
+                let text = renderer
+                    .text
+                    .iter()
+                    .find(|text| {
+                        text.buffer
+                            .layout_runs()
+                            .any(|run| run.text == SIDEBAR_TITLE)
+                    })
+                    .expect("painted Agents heading");
+                let ink = rgb(text.color);
+                let bar = palette::DARK.bar_background;
+                let pill = opaque_pill.then_some(bar);
+                let rule = crate::contour::title_rule_y(
+                    text.top,
+                    chrome_title_metrics(metrics).text_height,
+                );
+                for y in [rule - 2.5, rule + 2.5] {
+                    assert_eq!(paint_at(&batch, (text.left + 8.0, y)), pill);
+                }
+                let surfaces = pill.map_or_else(
+                    || card_surfaces(sidebar_fill, opacity, true),
+                    |fill| [fill; 2],
+                );
+                for fill in surfaces {
+                    assert!(contrast_ratio(ink, fill) >= 4.5, "{ink:?} on {fill:?}");
+                }
+                if compact {
+                    assert!(contrast_ratio(ink, bar) >= 4.5);
+                }
+                if sidebar_fill == dark {
+                    assert_eq!(ink, palette::DARK.primary_text);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn pane_header_labels_contrast_with_their_painted_backing() {
+        let size = PhysicalSize::new(1280, 800);
+        let mut renderer = title_contrast_renderer(size);
         let mut snapshot = popup_sidebar_snapshot();
         snapshot.sidebar = eon_workspace_protocol::v51::Sidebar::Closed;
         let panes = &mut snapshot.tabs[0].columns[0].panes;
@@ -5113,6 +5199,7 @@ mod tests {
         let [dark, middle, light] = [8, 160, 244].map(|v| SceneColor { r: v, g: v, b: v });
         let palette = &palette::DARK;
         for (frames, selected, hovered, background) in [
+            (true, "p1", false, grey(255)),
             (true, "p1", false, light),
             (true, "p1", false, middle),
             (true, "p1", false, dark),
